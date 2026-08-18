@@ -77,13 +77,13 @@ export function App({ controller }: Props) {
 								{turn.notice && (
 									<details class="compact-banner">
 										<summary>{turn.notice.kind === "branch" ? "Branch summary" : "History compacted"}</summary>
-										<Markdown text={turn.notice.text} />
+										<Markdown text={turn.notice.text} workspace={state.workspace} />
 									</details>
 								)}
-								<WorkLog turn={turn} />
+								<WorkLog turn={turn} workspace={state.workspace} />
 								{turn.answer && (
 									<article class={`bubble assistant${turn.streaming ? " streaming" : ""}`}>
-										<Markdown text={turn.answer} />
+										<Markdown text={turn.answer} workspace={state.workspace} />
 										{!turn.streaming && (
 											<div class="bubble-actions">
 												<CopyButton getText={() => turn.answer ?? ""} label="Copy response" />

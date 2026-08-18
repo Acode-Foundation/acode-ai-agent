@@ -1,12 +1,13 @@
 import { ChevronDown, Eye, File, Folder, FolderOpen, LoaderCircle, Pencil, Search, Sparkles, Wrench } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Markdown } from "./markdown";
+import type { WorkspaceInfo } from "../core/types";
 import { formatWorkDuration, groupWorkEntries, parseDirListing, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
 
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
 const workRowOpen = new Map<string, boolean>();
 
-export function WorkLog({ turn }: { turn: ChatTurn }) {
+export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: WorkspaceInfo }) {
 	const [expanded, setExpanded] = useState(false);
 	useEffect(() => {
 		if (turn.streaming) setExpanded(false);
@@ -20,8 +21,8 @@ export function WorkLog({ turn }: { turn: ChatTurn }) {
 		<div class={turn.streaming ? "work-stream" : "work-list"}>
 			{groups.map((group, index) => (
 				group.kind === "content"
-					? <WorkContent key={group.entry.id} turnId={turn.id} entry={group.entry} />
-					: <WorkBurst key={`burst-${group.entries[0]?.id ?? index}`} turnId={turn.id} entries={group.entries} />
+					? <WorkContent key={group.entry.id} turnId={turn.id} entry={group.entry} workspace={workspace} />
+					: <WorkBurst key={`burst-${group.entries[0]?.id ?? index}`} turnId={turn.id} entries={group.entries} workspace={workspace} />
 			))}
 		</div>
 	);
@@ -60,14 +61,14 @@ export function WorkingIndicator({ startedAt }: { startedAt?: number }) {
 	);
 }
 
-function WorkBurst({ turnId, entries }: { turnId: string; entries: WorkEntry[] }) {
+function WorkBurst({ turnId, entries, workspace }: { turnId: string; entries: WorkEntry[]; workspace?: WorkspaceInfo }) {
 	const [showPrevious, setShowPrevious] = useState(false);
 	const latest = entries[entries.length - 1];
 	if (!latest) return null;
 	const previous = entries.slice(0, -1);
 	return (
 		<div class="work-burst">
-			<WorkRow turnId={turnId} entry={latest} />
+			<WorkRow turnId={turnId} entry={latest} workspace={workspace} />
 			{previous.length > 0 && (
 				<button type="button" class="work-more" aria-expanded={showPrevious} onClick={() => setShowPrevious((value) => !value)}>
 					<ChevronDown class={showPrevious ? "open" : ""} size={14} strokeWidth={2} aria-hidden="true" />
@@ -76,19 +77,19 @@ function WorkBurst({ turnId, entries }: { turnId: string; entries: WorkEntry[] }
 			)}
 			{previous.map((entry) => (
 				<div key={entry.id} hidden={!showPrevious}>
-					<WorkRow turnId={turnId} entry={entry} />
+					<WorkRow turnId={turnId} entry={entry} workspace={workspace} />
 				</div>
 			))}
 		</div>
 	);
 }
 
-function WorkContent({ turnId, entry }: { turnId: string; entry: WorkEntry }) {
-	if (entry.type === "note") return <div class="work-note"><Markdown text={entry.output ?? ""} /></div>;
-	return <WorkRow turnId={turnId} entry={entry} />;
+function WorkContent({ turnId, entry, workspace }: { turnId: string; entry: WorkEntry; workspace?: WorkspaceInfo }) {
+	if (entry.type === "note") return <div class="work-note"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>;
+	return <WorkRow turnId={turnId} entry={entry} workspace={workspace} />;
 }
 
-function WorkRow({ turnId, entry }: { turnId: string; entry: WorkEntry }) {
+function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntry; workspace?: WorkspaceInfo }) {
 	const key = `${turnId}:${entry.id}`;
 	const [open, setOpen] = useState(() => workRowOpen.get(key) ?? false);
 	useEffect(() => {
@@ -121,7 +122,7 @@ function WorkRow({ turnId, entry }: { turnId: string; entry: WorkEntry }) {
 				{listing
 					? <DirListing entries={listing} empty={entry.output === "Directory is empty."} />
 					: entry.type === "thinking"
-						? <div class="work-body"><Markdown text={entry.output ?? ""} /></div>
+						? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
 						: <pre class="work-body">{entry.output ?? formatArgs(entry.args ?? {})}</pre>}
 			</div>
 		</div>

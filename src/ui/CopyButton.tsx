@@ -27,7 +27,7 @@ export function CopyButton({ getText, label = "Copy" }: { getText: () => string;
 	);
 }
 
-async function copyText(text: string): Promise<void> {
+export async function copyText(text: string): Promise<void> {
 	try {
 		await navigator.clipboard.writeText(text);
 	} catch {

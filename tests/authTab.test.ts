@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { openAuthTab } from "../src/platform/authTab.ts";
+import { openAuthTab, openCustomTab } from "../src/platform/authTab.ts";
 
 test("opens sign-in in Acode custom tabs with the default browser session", async () => {
 	const opened: Array<{ url: string; options?: unknown }> = [];
@@ -51,4 +51,22 @@ test("falls back to cordova CustomTabs when the global helper is missing", async
 
 test("rejects non-http sign-in URLs", async () => {
 	await assert.rejects(() => openAuthTab("javascript:alert(1)"), /http/);
+});
+
+test("opens markdown hyperlinks in the same custom tab path", async () => {
+	const opened: string[] = [];
+	const previous = (globalThis as { CustomTabs?: unknown }).CustomTabs;
+	(globalThis as { CustomTabs: { open: (url: string, _options?: unknown, success?: () => void) => void } }).CustomTabs = {
+		open(url, _options, success) {
+			opened.push(url);
+			success?.();
+		},
+	};
+	try {
+		await openCustomTab("https://example.com/docs");
+		assert.deepEqual(opened, ["https://example.com/docs"]);
+	} finally {
+		if (previous) (globalThis as { CustomTabs?: unknown }).CustomTabs = previous;
+		else delete (globalThis as { CustomTabs?: unknown }).CustomTabs;
+	}
 });
