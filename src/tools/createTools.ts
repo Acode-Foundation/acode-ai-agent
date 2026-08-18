@@ -3,6 +3,7 @@ import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { AcodeWorkspace, FileEntry } from "../workspace/acodeWorkspace";
 import { workspaceRelativeFromIndex } from "../workspace/pathSandbox";
 import { globMatcher } from "./glob";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, selectReadOutput } from "./truncate";
 import { applyExactEdit } from "./textEdits";
 
 type ToolDetails = {
@@ -22,18 +23,24 @@ export function createWorkspaceTools(
 	const readFile: AgentTool<any> = {
 		name: "read_file",
 		label: "Read file",
-		description: "Read a UTF-8 text file. Paths are relative to the active workspace.",
+		description:
+			`Read a UTF-8 text file. Paths are relative to the active workspace. ` +
+			`Output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. ` +
+			`Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		parameters: Type.Object({
 			path: Type.String({ description: "Workspace-relative file path" }),
+			offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
+			limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
 		}),
 		executionMode: workspace.info.remote ? "sequential" : "parallel",
 		execute: async (_id, params, signal) => {
-			const input = params as { path: string };
+			const input = params as { path: string; offset?: number; limit?: number };
 			throwIfAborted(signal);
 			const path = workspace.sandbox.normalize(input.path);
 			const text = await workspace.readText(path);
 			assertTextFile(path, text);
-			return result(text, { operation: "read", path });
+			const output = selectReadOutput(text, input.offset, input.limit);
+			return result(output.text, { operation: "read", path, truncated: output.truncated });
 		},
 	};
 

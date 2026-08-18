@@ -2,7 +2,7 @@ import { ChevronDown, Eye, File, Folder, FolderOpen, LoaderCircle, Pencil, Searc
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Markdown } from "./markdown";
 import type { WorkspaceInfo } from "../core/types";
-import { formatWorkDuration, groupWorkEntries, parseDirListing, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
+import { formatWorkDuration, groupWorkEntries, parseDirListing, splitReadOutput, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
 
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
 const workRowOpen = new Map<string, boolean>();
@@ -123,9 +123,21 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 					? <DirListing entries={listing} empty={entry.output === "Directory is empty."} />
 					: entry.type === "thinking"
 						? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
-						: <pre class="work-body">{entry.output ?? formatArgs(entry.args ?? {})}</pre>}
+						: entry.kind === "read"
+							? <ReadBody output={entry.output ?? ""} fallback={formatArgs(entry.args ?? {})} />
+							: <pre class="work-body">{entry.output ?? formatArgs(entry.args ?? {})}</pre>}
 			</div>
 		</div>
+	);
+}
+
+function ReadBody({ output, fallback }: { output: string; fallback: string }) {
+	const { body, notice } = splitReadOutput(output);
+	return (
+		<>
+			{notice && <div class="work-read-note">{notice}</div>}
+			<pre class="work-body">{body || fallback}</pre>
+		</>
 	);
 }
 

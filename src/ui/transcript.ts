@@ -94,12 +94,12 @@ export function turnDurationMs(turn: ChatTurn, now = Date.now()): number | undef
 	return duration > 0 && duration <= 24 * 60 * 60 * 1_000 ? duration : undefined;
 }
 
-export function presentTool(name: string, args: Record<string, unknown> = {}): { kind: ToolKind; label: string; detail?: string } {
+export function presentTool(name: string, args: Record<string, unknown> = {}, output?: string): { kind: ToolKind; label: string; detail?: string } {
 	const path = firstString(args, ["path", "file_path", "filePath", "filename", "target"]);
 	const query = firstString(args, ["query", "pattern", "search", "needle"]);
 	switch (name) {
 		case "read_file":
-			return { kind: "read", label: "Read file", detail: path };
+			return { kind: "read", label: "Read file", detail: readDetail(path, args, output) };
 		case "list_dir":
 			return { kind: "list", label: "Listed folder", detail: path && path !== "." ? path : undefined };
 		case "grep":
@@ -218,8 +218,9 @@ function projectTurn(messages: AgentMessage[], streaming: boolean): ChatTurn {
 			if (existing) {
 				existing.status = part.error ? "error" : "done";
 				existing.output = part.text;
+				existing.detail = presentTool(part.name, existing.args ?? {}, part.text).detail ?? existing.detail;
 			} else {
-				const presented = presentTool(part.name);
+				const presented = presentTool(part.name, {}, part.text);
 				work.push({
 					id: part.id,
 					type: "tool",
@@ -299,7 +300,7 @@ function mergeActivities(turn: ChatTurn, activities: ToolActivity[]): void {
 			if (activity.status === "running") existing.status = "running";
 			if (activity.status === "error") existing.status = "error";
 			if (activity.summary && (!existing.output || existing.status === "running")) existing.output = activity.summary;
-			if (!existing.detail) existing.detail = presented.detail;
+			existing.detail = presentTool(activity.name, activity.args, existing.output).detail ?? presented.detail;
 			continue;
 		}
 		turn.work.push({
@@ -339,6 +340,32 @@ function firstString(args: Record<string, unknown>, keys: string[]): string | un
 		if (typeof value === "string" && value.trim()) return value.trim();
 	}
 	return undefined;
+}
+
+export function splitReadOutput(output?: string): { body: string; notice?: string } {
+	if (!output) return { body: "" };
+	const leading = /^\[((?:Showing lines |\d+ more lines in file|Line \d+ exceeds)[^\]]*)\]\n\n/.exec(output);
+	if (leading) return { body: output.slice(leading[0].length), notice: leading[1] };
+	const trailing = /\n\n\[((?:Showing lines |\d+ more lines in file|Line \d+ exceeds)[^\]]*)\]\s*$/.exec(output);
+	if (trailing) return { body: output.slice(0, trailing.index), notice: trailing[1] };
+	return { body: output };
+}
+
+function readDetail(path: string | undefined, args: Record<string, unknown>, output?: string): string | undefined {
+	if (!path) return undefined;
+	const showing = /Showing lines (\d+)-(\d+) of (\d+)/.exec(output ?? "");
+	if (showing) return `${path}:${showing[1]}-${showing[2]} of ${showing[3]}`;
+	const offset = asPositiveInt(args.offset);
+	const limit = asPositiveInt(args.limit);
+	if (offset === undefined && limit === undefined) return path;
+	const start = offset ?? 1;
+	return limit === undefined ? `${path}:${start}` : `${path}:${start}-${start + limit - 1}`;
+}
+
+function asPositiveInt(value: unknown): number | undefined {
+	const number = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+	if (!Number.isFinite(number) || number < 1) return undefined;
+	return Math.floor(number);
 }
 
 function humanize(value: string): string {

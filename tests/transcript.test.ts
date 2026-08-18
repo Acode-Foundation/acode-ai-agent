@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { buildTurns, formatWorkDuration, groupWorkEntries, parseDirListing, presentTool } from "../src/ui/transcript.ts";
+import { buildTurns, formatWorkDuration, groupWorkEntries, parseDirListing, presentTool, splitReadOutput } from "../src/ui/transcript.ts";
 
 function user(text: string, timestamp = 1): AgentMessage {
 	return { role: "user", content: text, timestamp };
@@ -50,6 +50,22 @@ test("projects a tool turn into a work log plus the trailing answer", () => {
 	assert.equal(turns[0]?.answer, "The header is unused. I'll remove it.");
 });
 
+test("shows the read window on the work row after the tool result arrives", () => {
+	const turns = buildTurns([
+		user("read it"),
+		assistant([{ type: "toolCall", id: "t1", name: "read_file", arguments: { path: "src/a.ts" } }], 2),
+		{
+			role: "toolResult",
+			toolCallId: "t1",
+			toolName: "read_file",
+			content: [{ type: "text", text: "[Showing lines 1-2000 of 8432. Use offset=2001 to continue.]\n\nconst x = 1;" }],
+			isError: false,
+			timestamp: 3,
+		},
+	]);
+	assert.equal(turns[0]?.work[0]?.detail, "src/a.ts:1-2000 of 8432");
+});
+
 test("renders a compaction summary as a notice, not as a chat bubble", () => {
 	const turns = buildTurns([
 		{
@@ -78,6 +94,22 @@ test("keeps a text-only reply as the answer with no work log", () => {
 test("labels common tools", () => {
 	assert.deepEqual(presentTool("grep", { query: "TODO" }), { kind: "search", label: "Searched files", detail: "TODO" });
 	assert.deepEqual(presentTool("edit_file", { path: "a.ts" }), { kind: "change", label: "Changed files", detail: "a.ts" });
+	assert.deepEqual(presentTool("read_file", { path: "src/a.ts", offset: 10, limit: 31 }), {
+		kind: "read",
+		label: "Read file",
+		detail: "src/a.ts:10-40",
+	});
+	assert.deepEqual(
+		presentTool("read_file", { path: "src/a.ts" }, "[Showing lines 1-2000 of 8432. Use offset=2001 to continue.]\n\nalpha"),
+		{ kind: "read", label: "Read file", detail: "src/a.ts:1-2000 of 8432" },
+	);
+});
+
+test("splits the read truncation notice out of the file body", () => {
+	assert.deepEqual(
+		splitReadOutput("[Showing lines 1-2 of 9. Use offset=3 to continue.]\n\none\ntwo"),
+		{ body: "one\ntwo", notice: "Showing lines 1-2 of 9. Use offset=3 to continue." },
+	);
 });
 
 test("groups consecutive tools into one burst", () => {
