@@ -1,0 +1,22 @@
+{
+  "$schema": "https://acode.app/schema/plugin/v0.1.0.json",
+  "id": "acode.ai.agent",
+  "name": "Acode AI Agent",
+  "main": "main.js",
+  "version": "1.0.0",
+  "readme": "readme.md",
+  "changelogs": "changelogs.md",
+  "repository": "https://github.com/Acode-Foundation/Acode",
+  "icon": "icon-ai.png",
+  "files": [],
+  "minVersionCode": 1002,
+  "license": "MIT",
+  "keywords": ["ai", "agent", "pi", "openrouter", "coding", "preact"],
+  "price": 0,
+  "permissions": [],
+  "author": {
+    "name": "Acode Foundation",
+    "email": "",
+    "github": "Acode-Foundation"
+  }
+}
