@@ -206,6 +206,30 @@ test("keeps the last turn live while the run is active even without a streaming 
 	expect(turns[0]?.work[0]?.label).toBe("Listed folder");
 });
 
+test("keeps in-flight tools running only while the turn is live", () => {
+	const live = buildTurns(
+		[
+			user("read it", 1),
+			assistant([{ type: "toolCall", id: "t1", name: "read_file", arguments: { path: "a.ts" } }], 2),
+		],
+		undefined,
+		[{ id: "t1", name: "read_file", args: { path: "a.ts" }, status: "running", startedAt: 2 }],
+		true,
+	);
+	expect(live[0]?.streaming).toBe(true);
+	expect(live[0]?.work[0]?.status).toBe("running");
+});
+
+test("settles tools that never got a result after the agent stops", () => {
+	const turns = buildTurns([
+		user("read it", 1),
+		assistant([{ type: "toolCall", id: "t1", name: "read_file", arguments: { path: "a.ts" } }], 2),
+	]);
+	expect(turns[0]?.streaming).toBeFalsy();
+	expect(turns[0]?.work[0]?.status).toBe("done");
+	expect(turns[0]?.work[0]?.id).toBe("t1");
+});
+
 function toolResult(id: string, name: string, text: string, timestamp: number): AgentMessage {
 	return {
 		role: "toolResult",

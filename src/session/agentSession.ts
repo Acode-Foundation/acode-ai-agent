@@ -177,23 +177,18 @@ export class AgentSession {
 	async abort(): Promise<RestoredPrompt[]> {
 		const harness = this.#harness;
 		this.#runAbort.abort();
-		if (!harness) {
-			this.#running = false;
-			this.#publish();
-			return [];
-		}
+		this.#running = false;
+		this.#queued = [];
+		this.#settleActivities();
+		this.#publish();
+		if (!harness) return [];
 		try {
 			const result = await harness.abort();
 			const restored = [...result.clearedSteer, ...result.clearedFollowUp].map(restorePrompt).filter((item) => item.text || item.images.length);
-			this.#queued = [];
-			this.#running = false;
-			this.#settleActivities();
 			await this.#refreshContext();
 			this.#publish();
 			return restored;
 		} catch (error) {
-			this.#running = false;
-			this.#queued = [];
 			this.#publish({ error: error instanceof Error ? error.message : String(error) });
 			return [];
 		}

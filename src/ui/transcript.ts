@@ -76,8 +76,16 @@ export function buildTurns(
 		const priorWorkIds = new Set(turns.slice(0, -1).flatMap((turn) => turn.work.map((entry) => entry.id)));
 		mergeActivities(last, activities, priorWorkIds);
 	}
+	for (const turn of turns) settleStoppedWork(turn);
 
 	return turns;
+}
+
+function settleStoppedWork(turn: ChatTurn): void {
+	if (turn.streaming) return;
+	for (const entry of turn.work) {
+		if (entry.status === "running") entry.status = "done";
+	}
 }
 
 function isLiveCurrentTurn(turn: ChatTurn, transcript: AgentMessage[]): boolean {
