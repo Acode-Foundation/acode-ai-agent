@@ -3,7 +3,7 @@
   "id": "acode.ai.agent",
   "name": "Acode AI Agent",
   "main": "main.js",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "readme": "readme.md",
   "changelogs": "changelogs.md",
   "repository": "https://github.com/Acode-Foundation/Acode",
@@ -11,7 +11,7 @@
   "files": [],
   "minVersionCode": 1002,
   "license": "MIT",
-  "keywords": ["ai", "agent", "pi", "openrouter", "coding", "preact"],
+  "keywords": ["ai", "agent", "pi", "openrouter", "coding"],
   "price": 0,
   "permissions": [],
   "author": {
