@@ -150,6 +150,22 @@ export function parseDirListing(output?: string): DirEntry[] | undefined {
 	return entries.length ? entries : undefined;
 }
 
+export function splitWorkBurst(entries: WorkEntry[], live: boolean): { featured: WorkEntry[]; grouped: WorkEntry[] } {
+	if (!entries.length) return { featured: [], grouped: [] };
+	const running = live ? entries.filter((entry) => entry.status === "running") : [];
+	if (running.length) {
+		const featuredIds = new Set(running.map((entry) => entry.id));
+		return {
+			featured: running,
+			grouped: entries.filter((entry) => !featuredIds.has(entry.id)),
+		};
+	}
+	return {
+		featured: [entries[entries.length - 1]!],
+		grouped: entries.slice(0, -1),
+	};
+}
+
 export function groupWorkEntries(entries: WorkEntry[]): WorkGroup[] {
 	const groups: WorkGroup[] = [];
 	let burst: WorkEntry[] = [];

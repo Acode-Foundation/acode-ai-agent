@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { buildTurns, formatWorkDuration, groupWorkEntries, parseDirListing, presentTool, splitReadOutput } from "../src/ui/transcript.ts";
+import { buildTurns, formatWorkDuration, groupWorkEntries, parseDirListing, presentTool, splitReadOutput, splitWorkBurst, type WorkEntry } from "../src/ui/transcript.ts";
 
 function user(text: string, timestamp = 1): AgentMessage {
 	return { role: "user", content: text, timestamp };
@@ -119,6 +119,40 @@ test("groups consecutive tools into one burst", () => {
 	expect(groups[0]?.kind).toBe("actions");
 	expect(groups[0] && groups[0].kind === "actions" ? groups[0].entries.length : 0).toBe(2);
 	expect(groups[1]?.kind).toBe("content");
+});
+
+function tool(id: string, status: WorkEntry["status"] = "done"): WorkEntry {
+	return { id, type: "tool", kind: "read", name: "read_file", label: "Read file", status };
+}
+
+test("while live, groups finished tools and keeps the running tool featured", () => {
+	const split = splitWorkBurst([tool("t1"), tool("t2"), tool("t3", "running")], true);
+	expect(split.featured.map((entry) => entry.id)).toEqual(["t3"]);
+	expect(split.grouped.map((entry) => entry.id)).toEqual(["t1", "t2"]);
+});
+
+test("while live, folds a finished latest tool into the group once a later tool is running", () => {
+	const afterFirst = splitWorkBurst([tool("t1"), tool("t2")], true);
+	expect(afterFirst.featured.map((entry) => entry.id)).toEqual(["t2"]);
+	expect(afterFirst.grouped.map((entry) => entry.id)).toEqual(["t1"]);
+
+	const nextRunning = splitWorkBurst([tool("t1"), tool("t2"), tool("t3", "running")], true);
+	expect(nextRunning.featured.map((entry) => entry.id)).toEqual(["t3"]);
+	expect(nextRunning.grouped.map((entry) => entry.id)).toEqual(["t1", "t2"]);
+});
+
+test("while live, shows every running tool and groups the rest", () => {
+	const split = splitWorkBurst([tool("t1"), tool("t2", "running"), tool("t3", "error"), tool("t4", "running")], true);
+	expect(split.featured.map((entry) => entry.id)).toEqual(["t2", "t4"]);
+	expect(split.grouped.map((entry) => entry.id)).toEqual(["t1", "t3"]);
+});
+
+test("when nothing is running, keeps the last tool featured like the settled burst", () => {
+	const liveIdle = splitWorkBurst([tool("t1"), tool("t2"), tool("t3")], true);
+	const settled = splitWorkBurst([tool("t1"), tool("t2"), tool("t3")], false);
+	expect(liveIdle).toEqual(settled);
+	expect(settled.featured.map((entry) => entry.id)).toEqual(["t3"]);
+	expect(settled.grouped.map((entry) => entry.id)).toEqual(["t1", "t2"]);
 });
 
 test("formats short work durations", () => {

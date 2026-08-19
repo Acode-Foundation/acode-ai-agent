@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { Collapse, RotateIcon } from "./Collapse";
 import { Markdown } from "./markdown";
 import type { WorkspaceInfo } from "../core/types";
-import { formatWorkDuration, groupWorkEntries, parseDirListing, splitReadOutput, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
+import { formatWorkDuration, groupWorkEntries, parseDirListing, splitReadOutput, splitWorkBurst, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
 
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
 const workRowOpen = new Map<string, boolean>();
@@ -23,7 +23,7 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
 			{groups.map((group, index) => (
 				group.kind === "content"
 					? <WorkContent key={group.entry.id} turnId={turn.id} entry={group.entry} workspace={workspace} />
-					: <WorkBurst key={`burst-${group.entries[0]?.id ?? index}`} turnId={turn.id} entries={group.entries} workspace={workspace} />
+					: <WorkBurst key={`burst-${group.entries[0]?.id ?? index}`} turnId={turn.id} entries={group.entries} workspace={workspace} live={turn.streaming} />
 			))}
 		</div>
 	);
@@ -64,25 +64,26 @@ export function WorkingIndicator({ startedAt }: { startedAt?: number }) {
 	);
 }
 
-function WorkBurst({ turnId, entries, workspace }: { turnId: string; entries: WorkEntry[]; workspace?: WorkspaceInfo }) {
+function WorkBurst({ turnId, entries, workspace, live }: { turnId: string; entries: WorkEntry[]; workspace?: WorkspaceInfo; live?: boolean }) {
 	const [showPrevious, setShowPrevious] = useState(false);
-	const latest = entries[entries.length - 1];
-	if (!latest) return null;
-	const previous = entries.slice(0, -1);
+	const { featured, grouped } = splitWorkBurst(entries, Boolean(live));
+	if (!featured.length) return null;
 	return (
 		<div class="work-burst">
 			<Collapse open={showPrevious}>
-				{previous.map((entry) => (
+				{grouped.map((entry) => (
 					<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
 				))}
 			</Collapse>
-			<WorkRow key={latest.id} turnId={turnId} entry={latest} workspace={workspace} />
-			{previous.length > 0 && (
+			{featured.map((entry) => (
+				<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
+			))}
+			{grouped.length > 0 && (
 				<button type="button" class="work-more" aria-expanded={showPrevious} onClick={() => setShowPrevious((value) => !value)}>
 					<RotateIcon open={showPrevious} degrees={180} class="work-more-icon">
 						<ChevronDown size={14} strokeWidth={2} />
 					</RotateIcon>
-					<span>{showPrevious ? "Show fewer tool calls" : `+${previous.length} previous tool ${previous.length === 1 ? "call" : "calls"}`}</span>
+					<span>{showPrevious ? "Show fewer tool calls" : `+${grouped.length} previous tool ${grouped.length === 1 ? "call" : "calls"}`}</span>
 				</button>
 			)}
 		</div>
