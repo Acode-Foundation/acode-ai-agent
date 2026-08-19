@@ -82,6 +82,20 @@ test("renders a compaction summary as a notice, not as a chat bubble", () => {
 	expect(turns[1]?.user).toBe("continue");
 });
 
+test("surfaces a failed model request instead of an empty turn", () => {
+	const failed = assistant([], 2);
+	failed.stopReason = "error";
+	failed.errorMessage = "Provider returned error: No available channel";
+	const turns = buildTurns([user("hello"), failed]);
+	expect(turns[0]?.answer).toBeUndefined();
+	expect(turns[0]?.error).toBe("Provider returned error: No available channel");
+});
+
+test("surfaces an empty completion so the turn is not silent", () => {
+	const turns = buildTurns([user("hello"), assistant([], 2)]);
+	expect(turns[0]?.error).toMatch(/empty response/i);
+});
+
 test("keeps a text-only reply as the answer with no work log", () => {
 	const turns = buildTurns([
 		user("hi"),

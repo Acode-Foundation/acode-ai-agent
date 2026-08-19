@@ -73,7 +73,7 @@
 }
 
 .conversation { position: relative; min-height: 0; overflow: auto; padding: 16px 14px 20px; overscroll-behavior: contain; overflow-anchor: none; -webkit-overflow-scrolling: touch; }
-.conversation, .md, .bubble, .work-body, .work-prose, .dir-list, .work-note, .work-detail, .composer-input, .mention-chip {
+.conversation, .md, .bubble, .work-body, .work-prose, .dir-list, .work-note, .work-detail, .web-search, .composer-input, .mention-chip {
 	-webkit-user-select: text;
 	user-select: text;
 }
@@ -227,6 +227,7 @@
 }
 .work-kind.read { color: var(--muted); }
 .work-kind.search { color: var(--muted); }
+.work-kind.web { color: var(--accent); opacity: .85; }
 .work-kind.change { color: var(--fg); }
 .work-kind.think { color: var(--muted); }
 .work-kind.running { color: var(--accent); opacity: 1; }
@@ -268,6 +269,58 @@
 	background: var(--surface);
 }
 .dir-list.empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
+.web-search {
+	margin: 0 0 8px 19px;
+	padding: 8px 10px;
+	border-radius: 8px;
+	background: var(--surface);
+}
+.web-search-answer {
+	margin: 0 0 8px;
+	color: var(--fg);
+	font-size: 12.5px;
+	line-height: 1.5;
+	display: -webkit-box;
+	-webkit-line-clamp: 6;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+.web-sources { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.web-source { min-width: 0; }
+.web-source-link {
+	display: grid;
+	gap: 1px;
+	width: 100%;
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.web-source-title {
+	color: var(--fg);
+	font-size: 13px;
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.web-source small {
+	color: var(--muted);
+	font-size: 11px;
+}
+.web-source p {
+	margin: 3px 0 0;
+	color: var(--muted);
+	font-size: 12px;
+	line-height: 1.4;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
 .dir-entry {
 	display: grid;
 	grid-template-columns: 16px minmax(0, 1fr);
@@ -1023,6 +1076,14 @@ span.file-glyph.file {
 .credential { display: grid; gap: 8px; margin-bottom: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; }
 .credential p { margin: 0; color: var(--muted); font-size: 12px; }
 .credential p.ok { color: var(--ok); }
+.credential a {
+	width: max-content;
+	color: var(--accent);
+	font-size: 12px;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	text-decoration-thickness: 1px;
+}
 .key-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
 .key-input input, .model-search {
 	min-width: 0;

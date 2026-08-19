@@ -1,8 +1,10 @@
-import { ChevronDown, ChevronRight, Eye, File, Folder, FolderOpen, LoaderCircle, Pencil, Search, Sparkles, Wrench } from "lucide-preact";
+import { ChevronDown, ChevronRight, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, Wrench } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Collapse, RotateIcon } from "./Collapse";
 import { Markdown } from "./markdown";
 import type { WorkspaceInfo } from "../core/types";
+import { openCustomTab } from "../platform/authTab";
+import { parseWebSearchOutput } from "../tools/web/format";
 import { formatWorkDuration, groupWorkEntries, parseDirListing, splitReadOutput, splitWorkBurst, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
 
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
@@ -102,7 +104,8 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 		setOpen(workRowOpen.get(key) ?? false);
 	}, [key]);
 	const listing = entry.kind === "list" ? parseDirListing(entry.output) : undefined;
-	const hasBody = Boolean(listing?.length || (listing && entry.output === "Directory is empty.") || entry.output || (entry.args && Object.keys(entry.args).length));
+	const webSearch = entry.name === "web_search" ? parseWebSearchOutput(entry.output) : undefined;
+	const hasBody = Boolean(listing?.length || (listing && entry.output === "Directory is empty.") || webSearch?.results.length || entry.output || (entry.args && Object.keys(entry.args).length));
 	const toggle = () => {
 		setOpen((current) => {
 			const next = !current;
@@ -127,11 +130,15 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 			<Collapse open={open}>
 				{listing
 					? <DirListing entries={listing} empty={entry.output === "Directory is empty."} />
-					: entry.type === "thinking"
-						? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
-						: entry.kind === "read"
-							? <ReadBody output={entry.output ?? ""} fallback={formatArgs(entry.args ?? {})} />
-							: <pre class="work-body">{entry.output ?? formatArgs(entry.args ?? {})}</pre>}
+					: webSearch?.results.length
+						? <WebSearchBody parsed={webSearch} />
+						: entry.type === "thinking"
+							? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
+							: entry.kind === "read"
+								? <ReadBody output={entry.output ?? ""} fallback={formatArgs(entry.args ?? {})} />
+								: entry.name === "fetch_content"
+									? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
+									: <pre class="work-body">{entry.output ?? formatArgs(entry.args ?? {})}</pre>}
 			</Collapse>
 		</div>
 	);
@@ -161,6 +168,33 @@ function DirListing({ entries, empty }: { entries: DirEntry[]; empty: boolean })
 	);
 }
 
+function WebSearchBody({ parsed }: { parsed: NonNullable<ReturnType<typeof parseWebSearchOutput>> }) {
+	return (
+		<div class="web-search">
+			{parsed.answer && <p class="web-search-answer">{parsed.answer}</p>}
+			<ol class="web-sources">
+				{parsed.results.map((result) => (
+					<li class="web-source" key={result.url}>
+						<button type="button" class="web-source-link" onClick={() => void openCustomTab(result.url).catch(() => undefined)}>
+							<span class="web-source-title">{result.title}</span>
+							<small>{hostOf(result.url)}</small>
+						</button>
+						{result.snippet && <p>{result.snippet}</p>}
+					</li>
+				))}
+			</ol>
+		</div>
+	);
+}
+
+function hostOf(url: string): string {
+	try {
+		return new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return url;
+	}
+}
+
 function kindIcon(kind: ToolKind) {
 	const props = { size: 13, strokeWidth: 2 } as const;
 	switch (kind) {
@@ -170,6 +204,8 @@ function kindIcon(kind: ToolKind) {
 			return <Pencil {...props} />;
 		case "search":
 			return <Search {...props} />;
+		case "web":
+			return <Globe {...props} />;
 		case "list":
 			return <FolderOpen {...props} />;
 		case "think":

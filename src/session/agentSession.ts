@@ -22,6 +22,8 @@ import type { ProviderRegistry } from "../providers/providerRegistry";
 import type { SessionStore } from "../platform/sessionStore";
 import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
 import { createWorkspaceTools } from "../tools/createTools";
+import { createWebSearchContext } from "../tools/web/context";
+import { createWebTools } from "../tools/web/createWebTools";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 
 export type AgentSessionSnapshot = {
@@ -125,7 +127,7 @@ export class AgentSession {
 			thinkingLevel: settings.thinkingLevel,
 			tools: toHarnessTools(this.#tools()),
 			systemPrompt: () => this.#systemPrompt(),
-			streamOptions: { transport: "sse" },
+			streamOptions: { transport: "sse", timeoutMs: 180_000 },
 		});
 		this.#unsubscribe = this.#harness.subscribe((event) => this.#onEvent(event));
 		this.#harness.on("tool_call", async (event) => this.mutationGate.request(
@@ -259,7 +261,15 @@ export class AgentSession {
 			if (event.message.role === "assistant") this.#streaming = event.message;
 			if (event.message.role === "user") this.#rememberUserMessage(event.message);
 		}
-		if (event.type === "message_end") this.#streaming = undefined;
+		if (event.type === "message_end") {
+			this.#streaming = undefined;
+			if (event.message.role === "assistant" && (event.message.stopReason === "error" || event.message.stopReason === "aborted")) {
+				this.#snapshot = {
+					...this.#snapshot,
+					error: event.message.errorMessage?.trim() || (event.message.stopReason === "aborted" ? "The model request was cancelled." : "The model request failed."),
+				};
+			}
+		}
 		if (event.type === "tool_execution_start") {
 			this.#activities.set(event.toolCallId, {
 				id: event.toolCallId,
@@ -323,6 +333,7 @@ export class AgentSession {
 		this.#running = true;
 		this.#activities.clear();
 		this.#streaming = undefined;
+		this.#snapshot = { ...this.#snapshot, error: undefined };
 	}
 
 	#rememberUserMessage(message: AgentMessage): void {
@@ -354,6 +365,10 @@ export class AgentSession {
 	#tools(): AgentTool[] {
 		return [
 			...createWorkspaceTools(this.workspace, { maxWalkFiles: () => this.#settings().maxWalkFiles }),
+			...createWebTools(createWebSearchContext({
+				models: this.#providers.models,
+				settings: this.#settings,
+			})),
 			...this.#extensions.tools,
 		];
 	}

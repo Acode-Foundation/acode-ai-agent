@@ -3,7 +3,7 @@ import type { ToolActivity } from "../core/types";
 import { userPartsFromMessage, type UserPart } from "./composerDraft";
 
 export type WorkStatus = "running" | "done" | "error";
-export type ToolKind = "read" | "change" | "search" | "list" | "think" | "other";
+export type ToolKind = "read" | "change" | "search" | "web" | "list" | "think" | "other";
 
 export type WorkEntry = {
 	id: string;
@@ -24,6 +24,7 @@ export type ChatTurn = {
 	work: WorkEntry[];
 	answer?: string;
 	notice?: { kind: "compaction" | "branch"; text: string };
+	error?: string;
 	streaming?: boolean;
 	startedAt?: number;
 	endedAt?: number;
@@ -130,6 +131,10 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 			return { kind: "search", label: "Searched files", detail: query };
 		case "glob":
 			return { kind: "search", label: "Found files", detail: query ?? path };
+		case "web_search":
+			return { kind: "web", label: "Searched the web", detail: webSearchDetail(args, query, output) };
+		case "fetch_content":
+			return { kind: "web", label: "Fetched page", detail: firstString(args, ["url"]) ?? fetchTitle(output) };
 		case "write_file":
 			return { kind: "change", label: "Wrote file", detail: path };
 		case "edit_file":
@@ -290,16 +295,35 @@ function projectTurn(messages: AgentMessage[], streaming: boolean): ChatTurn {
 	}
 
 	const lastMessage = messages[messages.length - 1];
+	const visibleAnswer = answer.join("\n\n").trim() || undefined;
 	return {
 		id: user ? `user-${user.timestamp}` : `turn-${messages[0]?.timestamp ?? 0}`,
 		user: user ? userText(user) : undefined,
 		userParts: user ? userPartsFromMessage(user.content) : undefined,
 		work,
-		answer: answer.join("\n\n").trim() || undefined,
+		answer: visibleAnswer,
+		error: turnError(messages, work, visibleAnswer, streaming),
 		streaming,
 		startedAt: user?.timestamp ?? messages[0]?.timestamp,
 		endedAt: lastMessage && "timestamp" in lastMessage ? lastMessage.timestamp : undefined,
 	};
+}
+
+function turnError(messages: AgentMessage[], work: WorkEntry[], answer: string | undefined, streaming: boolean): string | undefined {
+	if (streaming) return undefined;
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index]!;
+		if (message.role !== "assistant") continue;
+		if (message.stopReason === "error" || message.stopReason === "aborted") {
+			return message.errorMessage?.trim()
+				|| (message.stopReason === "aborted" ? "The model request was cancelled." : "The model request failed.");
+		}
+		if ((message.stopReason === "stop" || message.stopReason === "length") && !answer && !work.length) {
+			return "The model returned an empty response. Try another model, or turn thinking off.";
+		}
+		break;
+	}
+	return undefined;
 }
 
 type FlatPart =
@@ -374,6 +398,22 @@ function toolMessageText(message: Extract<AgentMessage, { role: "toolResult" }>)
 		.map((part) => part.text)
 		.join("")
 		.trim();
+}
+
+function webSearchDetail(args: Record<string, unknown>, query?: string, output?: string): string | undefined {
+	const header = output ? /^Web search via (\S+)/.exec(output) : undefined;
+	const via = header?.[1];
+	if (query && via) return `${query} · ${via}`;
+	return query ?? via;
+}
+
+function fetchTitle(output?: string): string | undefined {
+	if (!output) return undefined;
+	const first = output.split("\n").find((line) => {
+		const trimmed = line.trim();
+		return trimmed && !/^https?:\/\//i.test(trimmed) && !trimmed.startsWith("Error:");
+	});
+	return first?.trim().slice(0, 80);
 }
 
 function firstString(args: Record<string, unknown>, keys: string[]): string | undefined {

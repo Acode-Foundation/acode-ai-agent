@@ -15,6 +15,7 @@ import { Sheet } from "./Sheet";
 import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
+import { openCustomTab } from "../platform/authTab";
 import { previewImageInAcode } from "../platform/deviceImage";
 import { modelAcceptsImages } from "../platform/promptImages";
 import type { ComposerDraft } from "./composerDraft";
@@ -113,6 +114,7 @@ export function App({ controller }: Props) {
 										)}
 									</article>
 								)}
+								{turn.error && <div class="inline-error">{turn.error}</div>}
 								{turn.streaming && <WorkingIndicator startedAt={turn.startedAt} />}
 							</section>
 						))}
@@ -318,7 +320,7 @@ function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: bool
 			<h1>{hasWorkspace ? "What should we work on?" : "Open a folder first"}</h1>
 			<p>
 				{hasWorkspace
-					? "The agent can read the workspace, search files, and propose edits."
+					? "The agent can read the workspace, search the web, search files, and propose edits."
 					: "Add a project folder in the Acode sidebar so the agent has a sandbox."}
 			</p>
 			{hasWorkspace && (
@@ -370,7 +372,17 @@ function SettingsSheet({ controller, state, onClose, onToast }: { controller: Ag
 									onToast("Credential saved");
 								}).catch((error) => onToast(String(error)))}>Save</button>
 							</div>
-							{provider.keyUrl && <a href={provider.keyUrl} target="_blank" rel="noreferrer">Get an API key</a>}
+							{provider.keyUrl && (
+								<a
+									href={provider.keyUrl}
+									onClick={(event) => {
+										event.preventDefault();
+										void openCustomTab(provider.keyUrl!).catch((error) => onToast(error instanceof Error ? error.message : String(error)));
+									}}
+								>
+									Get an API key
+								</a>
+							)}
 						</>
 					)}
 					{provider.subscriptionLabel && (
