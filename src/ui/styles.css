@@ -176,7 +176,7 @@
 }
 .work-summary:hover { opacity: 1; }
 .work-chevron { margin-left: 2px; opacity: .7; transition: transform .16s ease; }
-.work-chevron.open { transform: rotate(180deg); }
+.work-chevron.open { transform: rotate(90deg); }
 .work-list { margin: 2px 0 4px 8px; padding: 2px 0 2px 10px; border-left: 1px solid var(--line); display: flex; flex-direction: column; }
 .work-burst { display: flex; flex-direction: column; min-width: 0; }
 .work-row { display: block; width: 100%; min-width: 0; }

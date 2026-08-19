@@ -125,8 +125,11 @@ test("groups consecutive tools into one burst", () => {
 
 test("formats short work durations", () => {
 	assert.equal(formatWorkDuration(400), "under a second");
+	assert.equal(formatWorkDuration(5_700), "6s");
 	assert.equal(formatWorkDuration(12_000), "12s");
 	assert.equal(formatWorkDuration(75_000), "1m 15s");
+	assert.equal(formatWorkDuration(3_600_000), "1h");
+	assert.equal(formatWorkDuration(3_721_000), "1h 2m");
 });
 
 test("keeps the turn id stable as the assistant turn grows", () => {

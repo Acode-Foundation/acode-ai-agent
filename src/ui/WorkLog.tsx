@@ -1,4 +1,4 @@
-import { ChevronDown, Eye, File, Folder, FolderOpen, LoaderCircle, Pencil, Search, Sparkles, Wrench } from "lucide-preact";
+import { ChevronDown, ChevronRight, Eye, File, Folder, FolderOpen, LoaderCircle, Pencil, Search, Sparkles, Wrench } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Markdown } from "./markdown";
 import type { WorkspaceInfo } from "../core/types";
@@ -33,7 +33,7 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
 		<section class="work-log settled" aria-label="Work log">
 			<button type="button" class="work-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
 				<span>{duration === undefined ? "Worked" : `Worked for ${formatWorkDuration(duration)}`}</span>
-				<ChevronDown class={`work-chevron${expanded ? " open" : ""}`} size={14} strokeWidth={2} aria-hidden="true" />
+				<ChevronRight class={`work-chevron${expanded ? " open" : ""}`} size={14} strokeWidth={2} aria-hidden="true" />
 			</button>
 			{expanded && body}
 		</section>
@@ -66,20 +66,18 @@ function WorkBurst({ turnId, entries, workspace }: { turnId: string; entries: Wo
 	const latest = entries[entries.length - 1];
 	if (!latest) return null;
 	const previous = entries.slice(0, -1);
+	const visible = showPrevious ? entries : [latest];
 	return (
 		<div class="work-burst">
-			<WorkRow turnId={turnId} entry={latest} workspace={workspace} />
+			{visible.map((entry) => (
+				<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
+			))}
 			{previous.length > 0 && (
 				<button type="button" class="work-more" aria-expanded={showPrevious} onClick={() => setShowPrevious((value) => !value)}>
 					<ChevronDown class={showPrevious ? "open" : ""} size={14} strokeWidth={2} aria-hidden="true" />
 					<span>{showPrevious ? "Show fewer tool calls" : `+${previous.length} previous tool ${previous.length === 1 ? "call" : "calls"}`}</span>
 				</button>
 			)}
-			{previous.map((entry) => (
-				<div key={entry.id} hidden={!showPrevious}>
-					<WorkRow turnId={turnId} entry={entry} workspace={workspace} />
-				</div>
-			))}
 		</div>
 	);
 }
