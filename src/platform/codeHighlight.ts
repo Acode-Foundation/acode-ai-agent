@@ -42,7 +42,9 @@ export async function highlightCodeBlocks(
 				const html = await api.highlightCodeBlock(source, language || undefined);
 				if (options.cancelled?.() || !code.isConnected) return;
 				if (!html) return;
-				code.classList.add(api.HIGHLIGHT_CLASS || "cm-highlighted");
+				const highlightClass = api.HIGHLIGHT_CLASS || "cm-highlighted";
+				code.classList.add(highlightClass);
+				code.closest("pre")?.classList.add(highlightClass);
 				code.innerHTML = html;
 				code.dataset.cmHighlighted = "1";
 			} catch {

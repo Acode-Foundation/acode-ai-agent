@@ -25,11 +25,11 @@ marked.use({
 			const langAttr = info.lang ? ` data-lang="${escapeHtml(info.lang)}"` : "";
 			const title = info.title || info.lang || "code";
 			return [
-				`<figure class="md-code"${langAttr}>`,
+				`<figure class="md-code is-wrap"${langAttr}>`,
 				`<figcaption class="md-code-head">`,
 				`<span class="md-code-lang">${escapeHtml(title)}</span>`,
 				`<span class="md-code-actions">`,
-				`<button type="button" class="md-code-action" data-wrap aria-label="Wrap code" aria-pressed="false" title="Wrap">`,
+				`<button type="button" class="md-code-action is-on" data-wrap aria-label="Unwrap code" aria-pressed="true" title="Unwrap">`,
 				`<span class="md-code-icon md-code-icon-wrap" aria-hidden="true"></span>`,
 				`</button>`,
 				`<button type="button" class="md-code-action md-code-copy" data-copy aria-label="Copy code" title="Copy">`,

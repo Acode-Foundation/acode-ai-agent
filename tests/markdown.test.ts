@@ -25,9 +25,11 @@ test("renders headings, lists, fences, quotes, and emphasis through marked", () 
 	expect(html).toMatch(/<ul>/);
 	expect(html).toMatch(/<blockquote>/);
 	expect(html).toMatch(/data-lang="ts"/);
-	expect(html).toMatch(/class="md-code"/);
+	expect(html).toMatch(/class="md-code is-wrap"/);
 	expect(html).toMatch(/data-copy/);
 	expect(html).toMatch(/data-wrap/);
+	expect(html).toMatch(/aria-pressed="true"/);
+	expect(html).toMatch(/aria-label="Unwrap code"/);
 	expect(html).toMatch(/md-code-icon-copy/);
 	expect(html).toMatch(/const x = 1;/);
 	expect(html).toMatch(/class="md-ref md-ref--web"/);

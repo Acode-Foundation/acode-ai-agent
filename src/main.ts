@@ -73,7 +73,7 @@ class AcodeAiAgentPlugin {
 			Object.assign(fileOptions, { highlightStyles: true });
 		}
 		const file = new EditorFile(plugin.name, fileOptions);
-		file.setCustomTitle(() => "In-process coding agent");
+		file.setCustomTitle(() => "ai coding agent");
 		file.onclose = () => {
 			this.#unmount();
 			this.#file = null;

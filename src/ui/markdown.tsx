@@ -14,7 +14,7 @@ export function Markdown({ text, workspace }: { text: string; workspace?: Worksp
 		const host = root.current;
 		if (!host) return;
 		host.querySelectorAll(".md-code").forEach((block, index) => {
-			if (wrapByIndex.current[index]) setCodeWrap(block as HTMLElement, true);
+			setCodeWrap(block as HTMLElement, wrapByIndex.current[index] ?? true);
 		});
 		let cancelled = false;
 		void highlightCodeBlocks(host, { cancelled: () => cancelled });

@@ -57,6 +57,7 @@ test("highlights fenced blocks when the host API exists", async () => {
 	await highlightCodeBlocks(fakeRoot([code]));
 	expect(code.innerHTML).toBe('<span class="tok-keyword">const</span> x = 1;');
 	expect(code.classList.added).toContain("cm-highlighted");
+	expect(code.closest("pre")?.classList.added).toContain("cm-highlighted");
 	expect(code.dataset.cmHighlighted).toBe("1");
 	expect(applied).toHaveLength(1);
 });
@@ -79,6 +80,14 @@ test("keeps escaped source if highlighting throws", async () => {
 });
 
 function fakeCode(source: string, language: string) {
+	const pre = {
+		classList: {
+			added: [] as string[],
+			add(name: string) {
+				this.added.push(name);
+			},
+		},
+	};
 	return {
 		dataset: {} as Record<string, string>,
 		textContent: source,
@@ -90,7 +99,8 @@ function fakeCode(source: string, language: string) {
 				this.added.push(name);
 			},
 		},
-		closest() {
+		closest(selector: string) {
+			if (selector === "pre") return pre;
 			return { getAttribute: () => language };
 		},
 	};
