@@ -1,5 +1,5 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, Model, Provider } from "@earendil-works/pi-ai";
+import type { AuthEvent, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import { Signal } from "../core/events";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";
 import { SettingsStore } from "../core/settings";
@@ -11,8 +11,11 @@ import type {
 	MutationDecision,
 	ProviderId,
 	PublicAgentState,
+	RestoredPrompt,
 	WorkspaceInfo,
 } from "../core/types";
+import { openAcodeUri } from "../platform/deviceImage";
+import { collectPromptImages } from "../platform/promptImages";
 import { MutationGate } from "../permissions/mutationGate";
 import { openAuthTab } from "../platform/authTab";
 import { PortableCredentialStore } from "../platform/credentials";
@@ -23,6 +26,7 @@ import { AgentSession } from "../session/agentSession";
 import { sanitizeModelId } from "../providers/customModels";
 import { clampThinkingLevel } from "../providers/thinkingLevels";
 import { AcodeWorkspace } from "../workspace/acodeWorkspace";
+import { searchWorkspaceFiles, type MentionFile } from "../workspace/fileMentions";
 import { getAvailableWorkspaces, subscribeToSidebarFolders } from "../workspace/sidebarFolders";
 import { subscribeToSourceFiles } from "../workspace/sourceFile";
 
@@ -86,6 +90,24 @@ export class AgentController {
 		return getAvailableWorkspaces();
 	}
 
+	async searchFiles(query: string): Promise<MentionFile[]> {
+		const workspace = this.#activeSession()?.workspace;
+		if (!workspace) return [];
+		try {
+			return await searchWorkspaceFiles(workspace, query);
+		} catch (error) {
+			console.warn("AI file mention search failed", error);
+			return [];
+		}
+	}
+
+	async openWorkspaceFile(path: string): Promise<void> {
+		const workspace = this.#activeSession()?.workspace;
+		if (!workspace) throw new Error("Open a project folder first.");
+		const { uri } = workspace.sandbox.resolve(path);
+		await openAcodeUri(uri);
+	}
+
 	async initialize(): Promise<void> {
 		await this.#sessionStore.hydrate();
 		const workspaces = this.workspaces;
@@ -98,14 +120,16 @@ export class AgentController {
 		}
 	}
 
-	async send(text: string, mode: "steer" | "followUp" = "steer"): Promise<void> {
+	async send(text: string, mode: "steer" | "followUp" = "steer", images?: ImageContent[]): Promise<void> {
 		const prompt = text.trim();
-		if (!prompt) return;
-		if (!this.#activeSession()) throw new Error("Open a project folder before starting the agent.");
+		const session = this.#activeSession();
+		if (!session) throw new Error("Open a project folder before starting the agent.");
+		const attached = await collectPromptImages(prompt, images ?? [], session.workspace);
+		if (!prompt && !attached.length) return;
 		const auth = await this.providers.models.checkAuth(this.settings.value.providerId);
 		if (!auth) throw new Error(`Add a ${this.settings.value.providerId} credential before sending a message.`);
 		try {
-			await this.#activeSession()?.prompt(prompt, mode);
+			await session.prompt(prompt, mode, attached);
 		} catch (error) {
 			this.#state.error = error instanceof Error ? error.message : String(error);
 			this.#state.status = "error";
@@ -114,7 +138,7 @@ export class AgentController {
 		}
 	}
 
-	async abort(): Promise<string[]> {
+	async abort(): Promise<RestoredPrompt[]> {
 		return await this.#activeSession()?.abort() ?? [];
 	}
 

@@ -1,5 +1,5 @@
 import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import type { PermissionMode } from "./schema";
 
 /** Built-ins use known IDs; extensions may register any stable provider ID. */
@@ -62,6 +62,12 @@ export type MutationDecision = "allow" | "allow-session" | "deny";
 export type QueuedPrompt = {
 	text: string;
 	mode: "steer" | "followUp";
+	images?: number;
+};
+
+export type RestoredPrompt = {
+	text: string;
+	images: ImageContent[];
 };
 
 export type PublicAgentState = {

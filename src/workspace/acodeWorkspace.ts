@@ -35,6 +35,12 @@ export class AcodeWorkspace {
 		return acode.fsOperation(uri).readFile("utf-8");
 	}
 
+	async readBinary(path: string): Promise<Uint8Array> {
+		const { uri } = this.sandbox.resolve(path);
+		const buffer = await acode.fsOperation(uri).readFile();
+		return new Uint8Array(buffer);
+	}
+
 	async writeText(path: string, content: string): Promise<"buffer" | "disk"> {
 		const { relativePath, uri } = this.sandbox.resolve(path);
 		if (!relativePath) throw new Error("A file path is required.");

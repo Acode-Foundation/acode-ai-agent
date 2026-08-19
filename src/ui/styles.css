@@ -22,14 +22,14 @@
 
 .acode-agent-root *, .acode-agent-root *::before, .acode-agent-root *::after { box-sizing: border-box; }
 .acode-agent-root svg.lucide { flex: none; overflow: visible; }
-.acode-agent-root button, .acode-agent-root input, .acode-agent-root textarea, .acode-agent-root select { font: inherit; color: inherit; }
+.acode-agent-root button, .acode-agent-root input, .acode-agent-root textarea, .acode-agent-root select, .acode-agent-root [contenteditable] { font: inherit; color: inherit; }
 .acode-agent-root button {
 	appearance: none;
 	-webkit-appearance: none;
 	border: 0;
 	box-shadow: none;
 }
-.agent-shell { height: 100%; min-height: 0; overflow: hidden; display: grid; grid-template-rows: 44px minmax(0, 1fr) auto auto; }
+.agent-shell { height: 100%; min-height: 0; min-width: 0; overflow: hidden; display: grid; grid-template-rows: 44px minmax(0, 1fr) auto auto; }
 
 .agent-header {
 	display: grid;
@@ -73,7 +73,7 @@
 }
 
 .conversation { position: relative; min-height: 0; overflow: auto; padding: 16px 14px 20px; overscroll-behavior: contain; overflow-anchor: none; -webkit-overflow-scrolling: touch; }
-.conversation, .md, .bubble, .work-body, .work-prose, .dir-list, .work-note, .work-detail {
+.conversation, .md, .bubble, .work-body, .work-prose, .dir-list, .work-note, .work-detail, .composer-input, .mention-chip {
 	-webkit-user-select: text;
 	user-select: text;
 }
@@ -109,7 +109,13 @@
 	background: var(--accent);
 	color: var(--accent-ink);
 }
-.bubble.user p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble.user p, .user-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.user-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble.user .mention-chip {
+	border: 0;
+	cursor: pointer;
+	vertical-align: middle;
+}
 .bubble.assistant { width: 100%; }
 .bubble-actions { display: flex; align-items: center; height: 28px; margin-top: 4px; }
 .copy-btn {
@@ -609,11 +615,14 @@
 }
 .approval-actions .primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
 
-.composer { padding: 8px 10px max(10px, env(safe-area-inset-bottom)); background: transparent; }
+.composer { position: relative; z-index: 6; min-width: 0; max-width: 100%; overflow-x: hidden; padding: 8px 10px max(10px, env(safe-area-inset-bottom)); background: transparent; }
 .composer-dock {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
+	min-width: 0;
+	max-width: 100%;
+	overflow-x: hidden;
 	padding: 10px 12px 8px;
 	border: 1px solid var(--line);
 	border-radius: 16px;
@@ -655,21 +664,177 @@
 }
 .compact-banner .md { margin-top: 8px; }
 .compact-status { color: var(--muted); font-size: 12px; padding: 4px 2px; }
-.composer-dock textarea {
+.composer-field {
+	position: relative;
+	min-width: 0;
+	max-width: 100%;
+}
+.composer-placeholder {
+	position: absolute;
+	inset: 2px auto auto 2px;
+	max-width: calc(100% - 4px);
+	overflow: hidden;
+	color: color-mix(in srgb, var(--muted) 75%, transparent);
+	pointer-events: none;
+	user-select: none;
+	-webkit-user-select: none;
+	z-index: 0;
+}
+.composer-dock textarea, .composer-input {
+	position: relative;
+	z-index: 1;
 	width: 100%;
-	height: 52px;
+	max-width: 100%;
+	min-width: 0;
 	min-height: 52px;
-	max-height: 120px;
+	max-height: 160px;
 	resize: none;
+	overflow-x: hidden;
 	overflow-y: hidden;
 	border: 0;
 	outline: 0;
 	padding: 2px 2px 0;
 	background: transparent;
 	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+	caret-color: var(--accent);
 }
 .composer-dock textarea::placeholder { color: color-mix(in srgb, var(--muted) 75%, transparent); }
-.composer-toolbar { display: flex; align-items: center; gap: 8px; min-height: 34px; }
+.composer-hint { margin: 0; color: #d4a017; font-size: 11px; }
+.composer-toolbar { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; min-height: 34px; }
+.composer-tool {
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	flex: none;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+}
+.composer-tool:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); }
+.composer-tool:disabled { opacity: .35; }
+.file-glyph,
+span.file-glyph.file {
+	display: inline-block !important;
+	width: 16px !important;
+	min-width: 16px !important;
+	max-width: 16px !important;
+	height: 16px !important;
+	flex: none;
+	overflow: hidden;
+	font-size: 16px !important;
+	line-height: 16px !important;
+	background: none !important;
+	vertical-align: middle;
+}
+.file-glyph::before {
+	display: block;
+	font-size: 16px;
+	line-height: 16px;
+}
+.mention-chip {
+	display: inline-flex !important;
+	align-items: center;
+	gap: 6px;
+	width: auto !important;
+	height: auto !important;
+	max-width: 220px;
+	margin: 1px 2px;
+	padding: 3px 10px 3px 7px;
+	border: 1px solid color-mix(in srgb, var(--fg) 10%, var(--line));
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--fg) 7%, var(--surface));
+	color: var(--fg);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 650;
+	line-height: 1.2;
+	vertical-align: middle;
+	white-space: nowrap;
+	cursor: pointer;
+}
+.mention-chip.chip-image { padding-left: 4px; }
+.mention-chip svg,
+.mention-chip img,
+.mention-chip .file-glyph,
+.mention-chip .chip-thumb {
+	width: 16px !important;
+	height: 16px !important;
+	max-width: 16px;
+	max-height: 16px;
+	flex: none;
+}
+.mention-chip .chip-thumb { border-radius: 4px; object-fit: cover; }
+.mention-chip .chip-name {
+	display: inline-block;
+	flex: none;
+	max-width: 11rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.mention-chip.in-bubble {
+	background: color-mix(in srgb, var(--accent-ink) 12%, transparent);
+	border-color: color-mix(in srgb, var(--accent-ink) 16%, transparent);
+	color: var(--accent-ink);
+}
+.mention-menu {
+	display: flex;
+	flex-direction: column;
+	max-height: 260px;
+	max-width: 100%;
+	overflow: auto;
+	margin: 0 0 6px;
+	padding: 4px 0;
+}
+.mention-empty {
+	margin: 0;
+	padding: 10px 8px;
+	color: var(--muted);
+	font-size: 12px;
+}
+.mention-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-width: 0;
+	padding: 7px 8px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.mention-row.active, .mention-row:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }
+.mention-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 600;
+}
+.mention-name mark {
+	background: color-mix(in srgb, var(--accent) 24%, transparent);
+	color: inherit;
+	border-radius: 3px;
+}
+.mention-dir {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 500;
+}
 .config-chip {
 	display: flex;
 	align-items: center;

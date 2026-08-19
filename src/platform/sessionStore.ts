@@ -354,8 +354,16 @@ function redactDeep<T>(value: T): T {
 	if (typeof value === "string") return redact(value) as T;
 	if (Array.isArray(value)) return value.map(redactDeep) as T;
 	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		if (record.type === "image" && typeof record.data === "string") {
+			return {
+				...record,
+				mimeType: typeof record.mimeType === "string" ? record.mimeType : "image/jpeg",
+				data: record.data,
+			} as T;
+		}
 		return Object.fromEntries(
-			Object.entries(value).map(([key, item]) => [
+			Object.entries(record).map(([key, item]) => [
 				key,
 				/(?:api.?key|authorization|access.?token|refresh.?token|password|passphrase|secret|credential)/i.test(key)
 					? "[REDACTED_SECRET]"

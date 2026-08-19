@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolActivity } from "../core/types";
+import { userPartsFromMessage, type UserPart } from "./composerDraft";
 
 export type WorkStatus = "running" | "done" | "error";
 export type ToolKind = "read" | "change" | "search" | "list" | "think" | "other";
@@ -19,6 +20,7 @@ export type WorkEntry = {
 export type ChatTurn = {
 	id: string;
 	user?: string;
+	userParts?: UserPart[];
 	work: WorkEntry[];
 	answer?: string;
 	notice?: { kind: "compaction" | "branch"; text: string };
@@ -257,6 +259,7 @@ function projectTurn(messages: AgentMessage[], streaming: boolean): ChatTurn {
 	return {
 		id: user ? `user-${user.timestamp}` : `turn-${messages[0]?.timestamp ?? 0}`,
 		user: user ? userText(user) : undefined,
+		userParts: user ? userPartsFromMessage(user.content) : undefined,
 		work,
 		answer: answer.join("\n\n").trim() || undefined,
 		streaming,

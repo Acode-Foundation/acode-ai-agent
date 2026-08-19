@@ -1,30 +1,34 @@
-import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, Ellipsis, Folder, ListPlus, Plus, Send, Settings, Square, Trash2, X } from "lucide-preact";
+import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, Ellipsis, Folder, Plus, Trash2, X } from "lucide-preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
-import { PERMISSION_MODES, type PermissionMode } from "../core/schema";
-import type { ChatSummary, MutationDecision, MutationRequest, ProviderId, PublicAgentState, QueuedPrompt, WorkspaceInfo } from "../core/types";
+import { PERMISSION_MODES } from "../core/schema";
+import type { ChatSummary, MutationDecision, MutationRequest, ProviderId, PublicAgentState, WorkspaceInfo } from "../core/types";
 import { PROVIDERS } from "../providers/providerRegistry";
 import { thinkingLevelsFor } from "../providers/thinkingLevels";
 import { backActionId, useBackAction } from "./actionStack";
 import { Collapse } from "./Collapse";
+import { Composer, UserMessage, type ComposerHandle } from "./Composer";
 import { CopyButton } from "./CopyButton";
-import { animateHeight, fadeInUp, fadeSlide, playMotion } from "./motion";
+import { fadeInUp, fadeSlide, playMotion } from "./motion";
 import { Markdown } from "./markdown";
 import { Sheet } from "./Sheet";
 import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
+import { previewImageInAcode } from "../platform/deviceImage";
+import { modelAcceptsImages } from "../platform/promptImages";
+import type { ComposerDraft } from "./composerDraft";
 
 type Props = { controller: AgentController };
 
 export function App({ controller }: Props) {
 	const [state, setState] = useState<PublicAgentState>(controller.state);
-	const [composer, setComposer] = useState("");
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [configOpen, setConfigOpen] = useState(false);
 	const [chatsOpen, setChatsOpen] = useState(false);
 	const [toast, setToast] = useState("");
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const composerRef = useRef<ComposerHandle>(null);
 
 	useEffect(() => controller.changes.subscribe(setState), [controller]);
 	const running = state.status === "running";
@@ -36,22 +40,29 @@ export function App({ controller }: Props) {
 		[state.messages, state.streamingMessage, state.activities, running],
 	);
 
-	const send = useCallback(async (mode: "steer" | "followUp" = "steer") => {
-		const message = composer.trim();
-		if (!message) return;
-		setComposer("");
+	const send = useCallback(async (draft: ComposerDraft, mode: "steer" | "followUp" = "steer") => {
+		if (!draft.text.trim() && !draft.images.length) return;
 		pin();
 		try {
-			await controller.send(message, mode);
+			await controller.send(draft.text, mode, draft.images);
 		} catch (error) {
-			setComposer(message);
+			composerRef.current?.restore(draft);
 			setToast(error instanceof Error ? error.message : String(error));
+			throw error;
 		}
-	}, [composer, controller, pin]);
+	}, [controller, pin]);
 
 	const stop = useCallback(async () => {
 		const restored = await controller.abort();
-		if (restored.length) setComposer((current) => [current, ...restored].filter(Boolean).join("\n"));
+		if (!restored.length) return;
+		composerRef.current?.restore({
+			text: restored.map((item) => item.text).filter(Boolean).join("\n"),
+			images: restored.flatMap((item, index) => item.images.map((image) => ({
+				...image,
+				id: `${index}-${image.mimeType}-${image.data.length}`,
+				name: "image",
+			}))),
+		});
 	}, [controller]);
 
 	return (
@@ -67,12 +78,27 @@ export function App({ controller }: Props) {
 
 			<main class="conversation" ref={scrollRef}>
 				{turns.length === 0 ? (
-					<EmptyState hasWorkspace={Boolean(state.workspace)} onPrompt={setComposer} onSettings={() => setSettingsOpen(true)} />
+					<EmptyState
+						hasWorkspace={Boolean(state.workspace)}
+						onPrompt={(value) => composerRef.current?.setText(value)}
+						onSettings={() => setSettingsOpen(true)}
+					/>
 				) : (
 					<div class="thread">
 						{turns.map((turn) => (
 							<section class="turn" key={turn.id}>
-								{turn.user && <article class="bubble user"><p>{turn.user}</p></article>}
+								{(turn.userParts?.length || turn.user) && (
+									<UserMessage
+										parts={turn.userParts}
+										text={turn.user}
+										onOpenFile={(path) => void controller.openWorkspaceFile(path).catch((error) => setToast(error instanceof Error ? error.message : String(error)))}
+										onPreviewImage={(image) => {
+											void previewImageInAcode({ ...image, name: image.name || "image" }).catch((error) => {
+												setToast(error instanceof Error ? error.message : String(error));
+											});
+										}}
+									/>
+								)}
 								{turn.notice && (
 									<CompactNotice kind={turn.notice.kind} text={turn.notice.text} workspace={state.workspace} />
 								)}
@@ -103,22 +129,24 @@ export function App({ controller }: Props) {
 			)}
 
 			<Composer
-				value={composer}
-				onChange={setComposer}
-				onSend={(mode) => void send(mode)}
-				onStop={() => void stop()}
+				ref={composerRef}
+				controller={controller}
 				running={running}
 				disabled={!state.workspace}
 				permissionMode={state.settings.permissionMode}
 				effort={state.settings.thinkingLevel}
 				effortLevels={thinkingLevelsFor(state.model)}
 				modelName={state.model?.name ?? "Model"}
+				acceptsImages={modelAcceptsImages(state.model)}
 				onOpenConfig={() => setConfigOpen(true)}
 				usage={state.usage}
 				contextTokens={state.contextTokens}
 				contextWindow={state.model?.contextWindow}
 				queued={state.queued}
 				onFocusComposer={captureThread}
+				onSubmit={send}
+				onStop={() => void stop()}
+				onToast={setToast}
 			/>
 
 			{chatsOpen && <ChatSheet controller={controller} state={state} onClose={() => setChatsOpen(false)} onError={setToast} />}
@@ -284,125 +312,6 @@ function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: bool
 				</div>
 			)}
 		</section>
-	);
-}
-
-function keepPagePinned(from: HTMLElement) {
-	const pin = () => {
-		const root = from.closest(".acode-agent-root");
-		if (root instanceof HTMLElement) root.scrollTop = 0;
-		if (root?.parentElement) root.parentElement.scrollTop = 0;
-		const host = from.getRootNode();
-		if (host instanceof ShadowRoot && host.host instanceof HTMLElement) host.host.scrollTop = 0;
-		window.scrollTo(0, 0);
-	};
-	pin();
-	requestAnimationFrame(pin);
-}
-
-function Composer(props: {
-	value: string;
-	onChange: (value: string) => void;
-	onSend: (mode?: "steer" | "followUp") => void;
-	onStop: () => void;
-	running: boolean;
-	disabled: boolean;
-	permissionMode: PermissionMode;
-	effort: string;
-	effortLevels: Array<{ id: string; label: string }>;
-	modelName: string;
-	onOpenConfig: () => void;
-	usage: { tokens: number; cost: number };
-	contextTokens: number;
-	contextWindow?: number;
-	queued: QueuedPrompt[];
-	onFocusComposer: () => void;
-}) {
-	const textarea = useRef<HTMLTextAreaElement>(null);
-	const primed = useRef(false);
-	const canSend = Boolean(props.value.trim()) && !props.disabled;
-	const showStop = props.running && !props.value.trim();
-	useLayoutEffect(() => {
-		const element = textarea.current;
-		if (!element) return;
-		const current = element.style.height;
-		element.style.height = "auto";
-		const next = Math.min(120, Math.max(52, element.scrollHeight));
-		element.style.height = current || "52px";
-		element.style.overflowY = next >= 120 ? "auto" : "hidden";
-		const first = !primed.current;
-		primed.current = true;
-		void animateHeight(element, next, first);
-	}, [props.value]);
-	const used = props.contextWindow ? Math.min(100, Math.round((props.contextTokens / props.contextWindow) * 100)) : 0;
-	return (
-		<footer class="composer">
-			<div class="composer-dock">
-				{props.queued.length > 0 && (
-					<div class="queue-list" aria-label="Queued prompts">
-						{props.queued.map((item, index) => (
-							<span class={`queue-chip ${item.mode}`} key={`${item.mode}-${index}`}>
-								{item.mode === "followUp" ? "After" : "Steer"}
-								{" "}
-								{item.text}
-							</span>
-						))}
-					</div>
-				)}
-				<textarea
-					ref={textarea}
-					value={props.value}
-					placeholder={props.disabled ? "Open a folder to begin" : props.running ? "Steer now, or queue a follow-up…" : "Ask anything…"}
-					rows={1}
-					onInput={(event) => props.onChange(event.currentTarget.value)}
-					onTouchStart={() => props.onFocusComposer()}
-					onFocus={(event) => {
-						props.onFocusComposer();
-						keepPagePinned(event.currentTarget);
-					}}
-					onKeyDown={(event) => {
-						if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSend) {
-							event.preventDefault();
-							props.onSend(event.shiftKey ? "followUp" : "steer");
-						}
-					}}
-				/>
-				<div class="composer-toolbar">
-					<button class="config-chip" type="button" onClick={props.onOpenConfig} aria-label="Session configuration">
-						<Settings size={16} strokeWidth={2} aria-hidden="true" />
-						<span class="mode">{PERMISSION_MODES.find((mode) => mode.id === props.permissionMode)?.label ?? "Ask"}</span>
-						<span class="sep">·</span>
-						<span class="effort">{props.effortLevels.find((level) => level.id === props.effort)?.label ?? props.effort}</span>
-						<span class="sep">·</span>
-						<span class="model">{props.modelName}</span>
-					</button>
-					{props.contextWindow ? (
-						<span
-							class={`context-meter${used >= 90 ? " danger" : used >= 70 ? " warn" : ""}`}
-							style={{ "--used": `${used}%` } as Record<string, string>}
-							title={`${formatTokens(props.contextTokens)} of ${formatTokens(props.contextWindow)}`}
-							aria-label="Context window"
-						/>
-					) : null}
-					{showStop ? (
-						<button class="composer-action stop" type="button" onClick={props.onStop} aria-label="Stop generation">
-							<Square size={16} strokeWidth={2.4} aria-hidden="true" />
-						</button>
-					) : (
-						<>
-							{props.running && (
-								<button class="composer-action follow" type="button" onClick={() => props.onSend("followUp")} disabled={!canSend} aria-label="Queue follow-up">
-									<ListPlus size={16} strokeWidth={2} aria-hidden="true" />
-								</button>
-							)}
-							<button class="composer-action send" type="button" onClick={() => props.onSend("steer")} disabled={!canSend} aria-label={props.running ? "Steer agent" : "Send"}>
-								<Send size={16} strokeWidth={2} aria-hidden="true" />
-							</button>
-						</>
-					)}
-				</div>
-			</div>
-		</footer>
 	);
 }
 
@@ -790,10 +699,6 @@ function ApprovalPanel({ approval, onApprove }: { approval: MutationRequest; onA
 			</div>
 		</section>
 	);
-}
-
-function formatTokens(tokens: number): string {
-	return tokens >= 1000 ? `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k tokens` : `${tokens} tokens`;
 }
 
 function workspaceLabel(chat: ChatSummary, workspaces: WorkspaceInfo[]): string {

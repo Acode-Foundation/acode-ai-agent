@@ -11,15 +11,16 @@ import {
 	type AgentTool,
 	type Session,
 } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { ImageContent, Model } from "@earendil-works/pi-ai";
 import { Signal } from "../core/events";
 import type { ExtensionRegistry } from "../core/extensionRegistry";
-import type { AgentSettings, QueuedPrompt, ToolActivity } from "../core/types";
+import type { AgentSettings, QueuedPrompt, RestoredPrompt, ToolActivity } from "../core/types";
+import { toPiImages } from "../platform/promptImages";
 import { buildSystemPrompt } from "../context/contextBuilder";
 import { MutationGate } from "../permissions/mutationGate";
 import type { ProviderRegistry } from "../providers/providerRegistry";
 import type { SessionStore } from "../platform/sessionStore";
-import { messagePlainText, titleFromMessages } from "./sessionText";
+import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
 import { createWorkspaceTools } from "../tools/createTools";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 
@@ -143,15 +144,16 @@ export class AgentSession {
 		await this.#harness.setTools(toHarnessTools(this.#tools()));
 	}
 
-	async prompt(text: string, mode: "steer" | "followUp" = "steer"): Promise<void> {
+	async prompt(text: string, mode: "steer" | "followUp" = "steer", images?: ImageContent[]): Promise<void> {
 		const harness = this.#requireHarness();
 		if (this.#compactPromise) await this.#compactPromise;
+		const options = promptImages(images);
 		try {
 			if (mode === "followUp") {
-				await harness.followUp(text);
+				await harness.followUp(text, options);
 				return;
 			}
-			await harness.steer(text);
+			await harness.steer(text, options);
 		} catch (error) {
 			if (!(error instanceof AgentHarnessError) || error.code !== "invalid_state") throw error;
 			this.#runAbort = new AbortController();
@@ -160,7 +162,7 @@ export class AgentSession {
 			this.#publish();
 			try {
 				await this.#compactIfNeeded();
-				await harness.prompt(text);
+				await harness.prompt(text, options);
 				await this.#compactIfNeeded();
 			} finally {
 				this.#running = false;
@@ -172,7 +174,7 @@ export class AgentSession {
 		}
 	}
 
-	async abort(): Promise<string[]> {
+	async abort(): Promise<RestoredPrompt[]> {
 		const harness = this.#harness;
 		this.#runAbort.abort();
 		if (!harness) {
@@ -182,7 +184,7 @@ export class AgentSession {
 		}
 		try {
 			const result = await harness.abort();
-			const restored = [...result.clearedSteer, ...result.clearedFollowUp].map(messagePlainText).filter(Boolean);
+			const restored = [...result.clearedSteer, ...result.clearedFollowUp].map(restorePrompt).filter((item) => item.text || item.images.length);
 			this.#queued = [];
 			this.#running = false;
 			this.#settleActivities();
@@ -237,9 +239,9 @@ export class AgentSession {
 		if (isAgentEvent(event)) this.#onAgentEvent(event);
 		if (event.type === "queue_update") {
 			this.#queued = [
-				...event.steer.map((message) => ({ text: messagePlainText(message), mode: "steer" as const })),
-				...event.followUp.map((message) => ({ text: messagePlainText(message), mode: "followUp" as const })),
-			].filter((item) => item.text.trim());
+				...event.steer.map((message) => queuedFromMessage(message, "steer")),
+				...event.followUp.map((message) => queuedFromMessage(message, "followUp")),
+			].filter((item) => item.text.trim() || item.images);
 		}
 		if (event.type === "agent_start") this.#running = true;
 		if (event.type === "settled" || event.type === "abort") {
@@ -388,6 +390,20 @@ function isAgentEvent(event: AgentHarnessEvent): event is AgentEvent {
 		|| event.type === "tool_execution_start"
 		|| event.type === "tool_execution_update"
 		|| event.type === "tool_execution_end";
+}
+
+function promptImages(images?: ImageContent[]): { images: ImageContent[] } | undefined {
+	const next = toPiImages(images ?? []);
+	return next.length ? { images: next } : undefined;
+}
+
+function restorePrompt(message: AgentMessage): RestoredPrompt {
+	return { text: messagePlainText(message), images: messageImages(message) };
+}
+
+function queuedFromMessage(message: AgentMessage, mode: QueuedPrompt["mode"]): QueuedPrompt {
+	const images = messageImages(message).length;
+	return { text: messagePlainText(message), mode, images: images || undefined };
 }
 
 function sanitizeArgs(args: unknown): Record<string, unknown> {

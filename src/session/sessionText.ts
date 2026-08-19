@@ -48,6 +48,15 @@ export function titleFromMessages(messages: Array<{ role?: string; content?: unk
 	return compact ? compact.slice(0, 48) : "New chat";
 }
 
+export function messageImages(message: AgentMessage): Array<{ type: "image"; data: string; mimeType: string }> {
+	if (message.role !== "user" || typeof message.content === "string") return [];
+	return message.content.flatMap((part) => (
+		part.type === "image" && part.data && part.mimeType
+			? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }]
+			: []
+	));
+}
+
 export function messagePlainText(message: AgentMessage): string {
 	if (message.role === "user") {
 		return typeof message.content === "string"

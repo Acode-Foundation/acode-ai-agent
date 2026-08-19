@@ -40,6 +40,7 @@ test("projects a tool turn into a work log plus the trailing answer", () => {
 
 	expect(turns).toHaveLength(1);
 	expect(turns[0]?.user).toBe("fix the header");
+	expect(turns[0]?.userParts).toEqual([{ type: "text", text: "fix the header" }]);
 	expect(turns[0]?.work[0]?.type).toBe("thinking");
 	expect(turns[0]?.work[1]?.type).toBe("note");
 	expect(turns[0]?.work[2]?.label).toBe("Read file");
