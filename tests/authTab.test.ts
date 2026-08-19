@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import { openAuthTab, openCustomTab } from "../src/platform/authTab.ts";
 
 test("opens sign-in in Acode custom tabs with the default browser session", async () => {
@@ -13,7 +12,7 @@ test("opens sign-in in Acode custom tabs with the default browser session", asyn
 	};
 	try {
 		await openAuthTab("https://auth.example.test/device");
-		assert.deepEqual(opened, [{
+		expect(opened).toEqual([{
 			url: "https://auth.example.test/device",
 			options: { showTitle: true },
 		}]);
@@ -36,7 +35,7 @@ test("falls back to cordova CustomTabs when the global helper is missing", async
 	};
 	try {
 		await openAuthTab("https://auth.openai.com/codex/device");
-		assert.deepEqual(calls, [[
+		expect(calls).toEqual([[
 			"CustomTabs",
 			"open",
 			["https://auth.openai.com/codex/device", { showTitle: true }],
@@ -50,7 +49,7 @@ test("falls back to cordova CustomTabs when the global helper is missing", async
 });
 
 test("rejects non-http sign-in URLs", async () => {
-	await assert.rejects(() => openAuthTab("javascript:alert(1)"), /http/);
+	await expect(openAuthTab("javascript:alert(1)")).rejects.toThrow(/http/);
 });
 
 test("opens markdown hyperlinks in the same custom tab path", async () => {
@@ -64,7 +63,7 @@ test("opens markdown hyperlinks in the same custom tab path", async () => {
 	};
 	try {
 		await openCustomTab("https://example.com/docs");
-		assert.deepEqual(opened, ["https://example.com/docs"]);
+		expect(opened).toEqual(["https://example.com/docs"]);
 	} finally {
 		if (previous) (globalThis as { CustomTabs?: unknown }).CustomTabs = previous;
 		else delete (globalThis as { CustomTabs?: unknown }).CustomTabs;

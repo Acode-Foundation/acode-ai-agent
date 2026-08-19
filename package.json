@@ -24,13 +24,14 @@
     "@types/picomatch": "^4.0.3",
     "esbuild": "^0.28.1",
     "jszip": "^3.10.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
   },
   "scripts": {
     "dev": "node esbuild.config.mjs --serve",
     "build": "tsc --noEmit && node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types tests/*.test.ts"
+    "test": "vitest run"
   },
   "browserslist": "cover 100%,not android < 5"
 }

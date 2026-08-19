@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { buildTurns, formatWorkDuration, groupWorkEntries, parseDirListing, presentTool, splitReadOutput } from "../src/ui/transcript.ts";
 
@@ -39,15 +38,15 @@ test("projects a tool turn into a work log plus the trailing answer", () => {
 		assistant([{ type: "text", text: "The header is unused. I'll remove it." }], 4),
 	]);
 
-	assert.equal(turns.length, 1);
-	assert.equal(turns[0]?.user, "fix the header");
-	assert.equal(turns[0]?.work[0]?.type, "thinking");
-	assert.equal(turns[0]?.work[1]?.type, "note");
-	assert.equal(turns[0]?.work[2]?.label, "Read file");
-	assert.equal(turns[0]?.work[2]?.detail, "src/ui/App.tsx");
-	assert.equal(turns[0]?.work[2]?.status, "done");
-	assert.equal(turns[0]?.work[2]?.output, "export function App() {}");
-	assert.equal(turns[0]?.answer, "The header is unused. I'll remove it.");
+	expect(turns).toHaveLength(1);
+	expect(turns[0]?.user).toBe("fix the header");
+	expect(turns[0]?.work[0]?.type).toBe("thinking");
+	expect(turns[0]?.work[1]?.type).toBe("note");
+	expect(turns[0]?.work[2]?.label).toBe("Read file");
+	expect(turns[0]?.work[2]?.detail).toBe("src/ui/App.tsx");
+	expect(turns[0]?.work[2]?.status).toBe("done");
+	expect(turns[0]?.work[2]?.output).toBe("export function App() {}");
+	expect(turns[0]?.answer).toBe("The header is unused. I'll remove it.");
 });
 
 test("shows the read window on the work row after the tool result arrives", () => {
@@ -63,7 +62,7 @@ test("shows the read window on the work row after the tool result arrives", () =
 			timestamp: 3,
 		},
 	]);
-	assert.equal(turns[0]?.work[0]?.detail, "src/a.ts:1-2000 of 8432");
+	expect(turns[0]?.work[0]?.detail).toBe("src/a.ts:1-2000 of 8432");
 });
 
 test("renders a compaction summary as a notice, not as a chat bubble", () => {
@@ -77,9 +76,9 @@ test("renders a compaction summary as a notice, not as a chat bubble", () => {
 		user("continue"),
 		assistant([{ type: "text", text: "Next I will edit App.tsx." }]),
 	]);
-	assert.equal(turns[0]?.notice?.kind, "compaction");
-	assert.equal(turns[0]?.notice?.text, "Earlier turns covered the header rewrite.");
-	assert.equal(turns[1]?.user, "continue");
+	expect(turns[0]?.notice?.kind).toBe("compaction");
+	expect(turns[0]?.notice?.text).toBe("Earlier turns covered the header rewrite.");
+	expect(turns[1]?.user).toBe("continue");
 });
 
 test("keeps a text-only reply as the answer with no work log", () => {
@@ -87,29 +86,27 @@ test("keeps a text-only reply as the answer with no work log", () => {
 		user("hi"),
 		assistant([{ type: "text", text: "Hello. Open a file and I can help." }]),
 	]);
-	assert.equal(turns[0]?.work.length, 0);
-	assert.equal(turns[0]?.answer, "Hello. Open a file and I can help.");
+	expect(turns[0]?.work).toHaveLength(0);
+	expect(turns[0]?.answer).toBe("Hello. Open a file and I can help.");
 });
 
 test("labels common tools", () => {
-	assert.deepEqual(presentTool("grep", { query: "TODO" }), { kind: "search", label: "Searched files", detail: "TODO" });
-	assert.deepEqual(presentTool("edit_file", { path: "a.ts" }), { kind: "change", label: "Changed files", detail: "a.ts" });
-	assert.deepEqual(presentTool("read_file", { path: "src/a.ts", offset: 10, limit: 31 }), {
+	expect(presentTool("grep", { query: "TODO" })).toEqual({ kind: "search", label: "Searched files", detail: "TODO" });
+	expect(presentTool("edit_file", { path: "a.ts" })).toEqual({ kind: "change", label: "Changed files", detail: "a.ts" });
+	expect(presentTool("read_file", { path: "src/a.ts", offset: 10, limit: 31 })).toEqual({
 		kind: "read",
 		label: "Read file",
 		detail: "src/a.ts:10-40",
 	});
-	assert.deepEqual(
+	expect(
 		presentTool("read_file", { path: "src/a.ts" }, "[Showing lines 1-2000 of 8432. Use offset=2001 to continue.]\n\nalpha"),
-		{ kind: "read", label: "Read file", detail: "src/a.ts:1-2000 of 8432" },
-	);
+	).toEqual({ kind: "read", label: "Read file", detail: "src/a.ts:1-2000 of 8432" });
 });
 
 test("splits the read truncation notice out of the file body", () => {
-	assert.deepEqual(
+	expect(
 		splitReadOutput("[Showing lines 1-2 of 9. Use offset=3 to continue.]\n\none\ntwo"),
-		{ body: "one\ntwo", notice: "Showing lines 1-2 of 9. Use offset=3 to continue." },
-	);
+	).toEqual({ body: "one\ntwo", notice: "Showing lines 1-2 of 9. Use offset=3 to continue." });
 });
 
 test("groups consecutive tools into one burst", () => {
@@ -118,18 +115,18 @@ test("groups consecutive tools into one burst", () => {
 		{ id: "t2", type: "tool", kind: "search", name: "grep", label: "Searched files", status: "done" },
 		{ id: "n1", type: "note", kind: "other", name: "note", label: "Note", status: "done", output: "ok" },
 	]);
-	assert.equal(groups[0]?.kind, "actions");
-	assert.equal(groups[0] && groups[0].kind === "actions" ? groups[0].entries.length : 0, 2);
-	assert.equal(groups[1]?.kind, "content");
+	expect(groups[0]?.kind).toBe("actions");
+	expect(groups[0] && groups[0].kind === "actions" ? groups[0].entries.length : 0).toBe(2);
+	expect(groups[1]?.kind).toBe("content");
 });
 
 test("formats short work durations", () => {
-	assert.equal(formatWorkDuration(400), "under a second");
-	assert.equal(formatWorkDuration(5_700), "6s");
-	assert.equal(formatWorkDuration(12_000), "12s");
-	assert.equal(formatWorkDuration(75_000), "1m 15s");
-	assert.equal(formatWorkDuration(3_600_000), "1h");
-	assert.equal(formatWorkDuration(3_721_000), "1h 2m");
+	expect(formatWorkDuration(400)).toBe("under a second");
+	expect(formatWorkDuration(5_700)).toBe("6s");
+	expect(formatWorkDuration(12_000)).toBe("12s");
+	expect(formatWorkDuration(75_000)).toBe("1m 15s");
+	expect(formatWorkDuration(3_600_000)).toBe("1h");
+	expect(formatWorkDuration(3_721_000)).toBe("1h 2m");
 });
 
 test("keeps the turn id stable as the assistant turn grows", () => {
@@ -144,22 +141,22 @@ test("keeps the turn id stable as the assistant turn grows", () => {
 			{ type: "toolCall", id: "t2", name: "edit_file", arguments: { path: "a.ts" } },
 		], 12),
 	], undefined, [], true);
-	assert.equal(first[0]?.id, "user-10");
-	assert.equal(second[0]?.id, first[0]?.id);
-	assert.equal(second[0]?.work[0]?.id, "t1");
-	assert.equal(second[0]?.work[1]?.id, "t2");
-	assert.equal(second[0]?.streaming, true);
+	expect(first[0]?.id).toBe("user-10");
+	expect(second[0]?.id).toBe(first[0]?.id);
+	expect(second[0]?.work[0]?.id).toBe("t1");
+	expect(second[0]?.work[1]?.id).toBe("t2");
+	expect(second[0]?.streaming).toBe(true);
 });
 
 test("parses list_dir output into basenames without host class names", () => {
 	const entries = parseDirListing("d  utils\nd  www\nf  package.json\nf  src/main.ts");
-	assert.deepEqual(entries, [
+	expect(entries).toEqual([
 		{ kind: "dir", name: "utils" },
 		{ kind: "dir", name: "www" },
 		{ kind: "file", name: "package.json" },
 		{ kind: "file", name: "main.ts" },
 	]);
-	assert.equal(parseDirListing("Directory is empty.")?.length, 0);
+	expect(parseDirListing("Directory is empty.")).toHaveLength(0);
 });
 
 test("keeps the last turn live while the run is active even without a streaming message", () => {
@@ -169,7 +166,7 @@ test("keeps the last turn live while the run is active even without a streaming 
 		[{ id: "t1", name: "list_dir", args: { path: "." }, status: "running", startedAt: 5 }],
 		true,
 	);
-	assert.equal(turns[0]?.streaming, true);
-	assert.equal(turns[0]?.work[0]?.id, "t1");
-	assert.equal(turns[0]?.work[0]?.label, "Listed folder");
+	expect(turns[0]?.streaming).toBe(true);
+	expect(turns[0]?.work[0]?.id).toBe("t1");
+	expect(turns[0]?.work[0]?.label).toBe("Listed folder");
 });

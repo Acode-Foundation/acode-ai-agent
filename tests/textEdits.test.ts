@@ -1,43 +1,41 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import { globMatcher } from "../src/tools/glob.ts";
 import { applyExactEdit } from "../src/tools/textEdits.ts";
 
 test("applies one unique exact edit", () => {
-	assert.deepEqual(applyExactEdit("alpha beta", "beta", "gamma"), {
+	expect(applyExactEdit("alpha beta", "beta", "gamma")).toEqual({
 		text: "alpha gamma",
 		replacements: 1,
 	});
 });
 
 test("rejects missing, empty, and ambiguous matches", () => {
-	assert.throws(() => applyExactEdit("alpha", "", "x"), /cannot be empty/);
-	assert.throws(() => applyExactEdit("alpha", "beta", "x"), /No exact match/);
-	assert.throws(() => applyExactEdit("x x", "x", "y"), /found 2/);
+	expect(() => applyExactEdit("alpha", "", "x")).toThrow(/cannot be empty/);
+	expect(() => applyExactEdit("alpha", "beta", "x")).toThrow(/No exact match/);
+	expect(() => applyExactEdit("x x", "x", "y")).toThrow(/found 2/);
 });
 
 test("glob patterns match nested files even without **/", () => {
 	const ts = globMatcher("*.ts");
-	assert.equal(ts.test("src/ui/App.tsx"), false);
-	assert.equal(ts.test("src/main.ts"), true);
-	assert.equal(ts.test("main.ts"), true);
-	assert.equal(globMatcher("src/**").test("src/ui/App.tsx"), true);
-	assert.equal(globMatcher("**/*.css").test("src/ui/styles.css"), true);
+	expect(ts.test("src/ui/App.tsx")).toBe(false);
+	expect(ts.test("src/main.ts")).toBe(true);
+	expect(ts.test("main.ts")).toBe(true);
+	expect(globMatcher("src/**").test("src/ui/App.tsx")).toBe(true);
+	expect(globMatcher("**/*.css").test("src/ui/styles.css")).toBe(true);
 });
 
 test("glob braces match any listed extension", () => {
 	const matcher = globMatcher("**/*.{md,json,js,xml}");
-	assert.equal(matcher.test("readme.md"), true);
-	assert.equal(matcher.test("plugin.json"), true);
-	assert.equal(matcher.test("src/main.js"), true);
-	assert.equal(matcher.test("AndroidManifest.xml"), true);
-	assert.equal(matcher.test("src/main.ts"), false);
+	expect(matcher.test("readme.md")).toBe(true);
+	expect(matcher.test("plugin.json")).toBe(true);
+	expect(matcher.test("src/main.js")).toBe(true);
+	expect(matcher.test("AndroidManifest.xml")).toBe(true);
+	expect(matcher.test("src/main.ts")).toBe(false);
 });
 
 test("replace_all deliberately replaces every non-overlapping match", () => {
-	assert.deepEqual(applyExactEdit("x x x", "x", "", true), {
+	expect(applyExactEdit("x x x", "x", "", true)).toEqual({
 		text: "  ",
 		replacements: 3,
 	});
 });
-

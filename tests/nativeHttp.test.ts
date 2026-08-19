@@ -1,15 +1,14 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import { getCordovaHttp, nativeFetch } from "../src/platform/nativeHttp.ts";
 
 test("falls back to global fetch when Cordova HTTP is missing", async () => {
-	assert.equal(getCordovaHttp(), undefined);
+	expect(getCordovaHttp()).toBeUndefined();
 	const previous = globalThis.fetch;
 	globalThis.fetch = async () => new Response("ok", { status: 201 });
 	try {
 		const response = await nativeFetch("https://example.test/fallback");
-		assert.equal(response.status, 201);
-		assert.equal(await response.text(), "ok");
+		expect(response.status).toBe(201);
+		expect(await response.text()).toBe("ok");
 	} finally {
 		globalThis.fetch = previous;
 	}
@@ -35,18 +34,18 @@ test("sends through cordova.plugin.http and maps error statuses to Response", as
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ grant_type: "refresh_token" }),
 		});
-		assert.equal(ok.status, 200);
-		assert.deepEqual(await ok.json(), { ok: true });
-		assert.equal(calls[0]?.options.method, "post");
-		assert.equal(calls[0]?.options.serializer, "utf8");
-		assert.equal(calls[0]?.options.responseType, "text");
+		expect(ok.status).toBe(200);
+		expect(await ok.json()).toEqual({ ok: true });
+		expect(calls[0]?.options.method).toBe("post");
+		expect(calls[0]?.options.serializer).toBe("utf8");
+		expect(calls[0]?.options.responseType).toBe("text");
 
 		const denied = await nativeFetch("https://api.example.test/token", {
 			method: "POST",
 			body: "fail",
 		});
-		assert.equal(denied.status, 401);
-		assert.equal(denied.ok, false);
+		expect(denied.status).toBe(401);
+		expect(denied.ok).toBe(false);
 	} finally {
 		delete (globalThis as { cordova?: unknown }).cordova;
 	}
@@ -66,8 +65,8 @@ test("aborts the native request when the signal fires", async () => {
 	const pending = nativeFetch("https://api.example.test/slow", { signal: controller.signal });
 	controller.abort();
 	try {
-		await assert.rejects(() => pending, { name: "AbortError" });
-		assert.equal(aborted, 1);
+		await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+		expect(aborted).toBe(1);
 	} finally {
 		delete (globalThis as { cordova?: unknown }).cordova;
 	}

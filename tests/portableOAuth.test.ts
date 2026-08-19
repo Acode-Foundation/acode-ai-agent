@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import { portableCodexOAuth, portableXaiOAuth } from "../src/providers/portableOAuth.ts";
 
 test("xAI refresh keeps a non-rotated refresh token", async () => {
@@ -11,9 +10,9 @@ test("xAI refresh keeps a non-rotated refresh token", async () => {
 			refresh: "stable-refresh",
 			expires: 0,
 		});
-		assert.equal(credential.access, "next-access");
-		assert.equal(credential.refresh, "stable-refresh");
-		assert.deepEqual(await portableXaiOAuth.toAuth(credential), { apiKey: "next-access" });
+		expect(credential.access).toBe("next-access");
+		expect(credential.refresh).toBe("stable-refresh");
+		expect(await portableXaiOAuth.toAuth(credential)).toEqual({ apiKey: "next-access" });
 	} finally {
 		restore();
 	}
@@ -29,9 +28,9 @@ test("Codex refresh extracts the ChatGPT account claim", async () => {
 			refresh: "old-refresh",
 			expires: 0,
 		});
-		assert.equal(credential.accountId, "account-123");
-		assert.equal(credential.refresh, "next-refresh");
-		assert.deepEqual(await portableCodexOAuth.toAuth(credential), { apiKey: access });
+		expect(credential.accountId).toBe("account-123");
+		expect(credential.refresh).toBe("next-refresh");
+		expect(await portableCodexOAuth.toAuth(credential)).toEqual({ apiKey: access });
 	} finally {
 		restore();
 	}

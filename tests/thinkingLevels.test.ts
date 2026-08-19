@@ -1,5 +1,4 @@
-import assert from "node:assert/strict";
-import test from "node:test";
+import { expect, test } from "vitest";
 import type { Model } from "@earendil-works/pi-ai";
 import { CATALOG_OVERLAY, mergeCatalogOverlay } from "../src/providers/catalogOverlay.ts";
 import { clampThinkingLevel, thinkingLevelsFor } from "../src/providers/thinkingLevels.ts";
@@ -19,19 +18,19 @@ const grok45 = {
 } as Model<any>;
 
 test("Grok 4.5 only offers low, medium, and high", () => {
-	assert.deepEqual(thinkingLevelsFor(grok45).map((level) => level.id), ["low", "medium", "high"]);
-	assert.equal(clampThinkingLevel(grok45, "xhigh"), "high");
-	assert.equal(clampThinkingLevel(grok45, "off"), "high");
+	expect(thinkingLevelsFor(grok45).map((level) => level.id)).toEqual(["low", "medium", "high"]);
+	expect(clampThinkingLevel(grok45, "xhigh")).toBe("high");
+	expect(clampThinkingLevel(grok45, "off")).toBe("high");
 });
 
 test("Grok 4.6 overlay adds xhigh and is merged into the frozen catalog", () => {
 	const overlay = CATALOG_OVERLAY.xai?.find((model) => model.id === "grok-4.6");
-	assert.ok(overlay);
-	assert.deepEqual(thinkingLevelsFor(overlay).map((level) => level.id), ["low", "medium", "high", "xhigh"]);
+	expect(overlay).toBeTruthy();
+	expect(thinkingLevelsFor(overlay!).map((level) => level.id)).toEqual(["low", "medium", "high", "xhigh"]);
 	const merged = mergeCatalogOverlay("xai", [grok45]);
-	assert.deepEqual(merged.map((model) => model.id).sort(), ["grok-4.5", "grok-4.6"]);
+	expect(merged.map((model) => model.id).sort()).toEqual(["grok-4.5", "grok-4.6"]);
 });
 
 test("models without reasoning only offer off", () => {
-	assert.deepEqual(thinkingLevelsFor({ ...grok45, reasoning: false, thinkingLevelMap: undefined }).map((level) => level.id), ["off"]);
+	expect(thinkingLevelsFor({ ...grok45, reasoning: false, thinkingLevelMap: undefined }).map((level) => level.id)).toEqual(["off"]);
 });
