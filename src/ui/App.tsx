@@ -1,4 +1,4 @@
-import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, Ellipsis, Folder, Plus, Trash2, X } from "lucide-preact";
+import { ArrowDownToLine, Check, ChevronDown, ChevronLeft, ChevronRight, Ellipsis, Folder, Plus, Trash2, X } from "lucide-preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
 import { PERMISSION_MODES } from "../core/schema";
@@ -161,13 +161,20 @@ function ChatSheet({ controller, state, onClose, onError }: { controller: AgentC
 	const workspaces = controller.workspaces;
 	const [confirmId, setConfirmId] = useState<string | null>(null);
 	const [filter, setFilter] = useState<string>(state.workspace?.id ?? "all");
-	const showFilters = workspaces.length > 0 || state.chats.length > 0;
+	const showFilter = workspaces.length > 0;
+	useEffect(() => {
+		if (filter !== "all" && !workspaces.some((workspace) => workspace.id === filter)) setFilter("all");
+	}, [filter, workspaces]);
 	const chats = useMemo(
 		() => filter === "all" ? state.chats : state.chats.filter((chat) => chat.workspaceId === filter),
 		[state.chats, filter],
 	);
 	const groups = useMemo(() => groupChatsByRecency(chats), [chats]);
 	const fail = (error: unknown) => onError(error instanceof Error ? error.message : String(error));
+	const chooseFilter = (next: string) => {
+		setConfirmId(null);
+		setFilter(next);
+	};
 	const startNew = (close: () => void) => {
 		const create = () => controller.newConversation().then(close).catch(fail);
 		if (filter !== "all" && filter !== state.workspace?.id) {
@@ -176,7 +183,6 @@ function ChatSheet({ controller, state, onClose, onError }: { controller: AgentC
 		}
 		void create();
 	};
-	const projectName = (chat: ChatSummary) => workspaceLabel(chat, workspaces);
 	return (
 		<Sheet class="chats" onClose={onClose}>
 			{(close) => (
@@ -192,37 +198,8 @@ function ChatSheet({ controller, state, onClose, onError }: { controller: AgentC
 						</div>
 					</header>
 					<div class="chats-body">
-						{showFilters && (
-							<div class="workspace-chips" role="tablist" aria-label="Filter sessions">
-								<button
-									type="button"
-									role="tab"
-									aria-selected={filter === "all"}
-									class={filter === "all" ? "selected" : ""}
-									onClick={() => {
-										setConfirmId(null);
-										setFilter("all");
-									}}
-								>
-									<span>All</span>
-								</button>
-								{workspaces.map((workspace) => (
-									<button
-										type="button"
-										role="tab"
-										aria-selected={filter === workspace.id}
-										class={filter === workspace.id ? "selected" : ""}
-										key={workspace.id}
-										onClick={() => {
-											setConfirmId(null);
-											setFilter(workspace.id);
-										}}
-									>
-										<Folder size={13} strokeWidth={2} aria-hidden="true" />
-										<span>{workspace.name}</span>
-									</button>
-								))}
-							</div>
+						{showFilter && (
+							<ProjectFilter workspaces={workspaces} value={filter} onChange={chooseFilter} />
 						)}
 						{chats.length === 0 ? (
 							<div class="chat-empty">
@@ -256,11 +233,15 @@ function ChatSheet({ controller, state, onClose, onError }: { controller: AgentC
 												>
 													<span class="chat-copy">
 														<b>{chat.title}</b>
-														<small>
-															<span class="chat-project">{projectName(chat)}</span>
-															<span class="chat-sep">·</span>
-															{chat.running ? "Running" : formatChatTime(chat.updatedAt)}
-															{chat.id === state.activeChatId ? " · current" : ""}
+														<small class="chat-meta">
+															{filter === "all" && (
+																<>
+																	<span class="chat-project">{workspaceLabel(chat, workspaces)}</span>
+																	<span class="chat-sep">·</span>
+																</>
+															)}
+															<span class="chat-time">{chat.running ? "Running" : formatChatTime(chat.updatedAt)}</span>
+															{chat.id === state.activeChatId ? <span class="chat-current">· current</span> : null}
 														</small>
 													</span>
 													{chat.running && <i class="run-dot" aria-hidden="true" />}
@@ -284,6 +265,42 @@ function ChatSheet({ controller, state, onClose, onError }: { controller: AgentC
 				</>
 			)}
 		</Sheet>
+	);
+}
+
+function ProjectFilter({ workspaces, value, onChange }: { workspaces: WorkspaceInfo[]; value: string; onChange: (id: string) => void }) {
+	const label = value === "all"
+		? "All folders"
+		: workspaces.find((workspace) => workspace.id === value)?.name ?? "Folder";
+	const native = typeof acode?.select !== "function";
+	const open = () => {
+		void pickAcodeSelect("Folder", [
+			{ value: "all", text: "All folders", icon: "folder-outline" },
+			...workspaces.map((workspace) => ({ value: workspace.id, text: workspace.name, icon: "folder" })),
+		], value).then((picked) => {
+			if (picked) onChange(picked);
+		});
+	};
+	if (native) {
+		return (
+			<label class="project-select">
+				<Folder size={14} strokeWidth={2} aria-hidden="true" />
+				<select value={value} aria-label="Filter sessions by folder" onChange={(event) => onChange(event.currentTarget.value)}>
+					<option value="all">All folders</option>
+					{workspaces.map((workspace) => (
+						<option value={workspace.id} key={workspace.id}>{workspace.name}</option>
+					))}
+				</select>
+				<ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
+			</label>
+		);
+	}
+	return (
+		<button type="button" class="project-select" title={label} aria-haspopup="listbox" aria-label="Filter sessions by folder" onClick={open}>
+			<Folder size={14} strokeWidth={2} aria-hidden="true" />
+			<span>{label}</span>
+			<ChevronDown size={14} strokeWidth={2} aria-hidden="true" />
+		</button>
 	);
 }
 
@@ -705,6 +722,23 @@ function workspaceLabel(chat: ChatSummary, workspaces: WorkspaceInfo[]): string 
 	return workspaces.find((workspace) => workspace.id === chat.workspaceId)?.name
 		|| chat.workspaceName
 		|| "Closed folder";
+}
+
+function pickAcodeSelect(title: string, items: Acode.SelectItem[], current: string): Promise<string | undefined> {
+	if (typeof acode?.select !== "function") return Promise.resolve(undefined);
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = (value?: string) => {
+			if (settled) return;
+			settled = true;
+			resolve(value);
+		};
+		void acode.select(title, items, {
+			default: current,
+			textTransform: false,
+			onCancel: () => finish(),
+		}).then(finish, () => finish());
+	});
 }
 
 function formatChatTime(timestamp: number): string {
