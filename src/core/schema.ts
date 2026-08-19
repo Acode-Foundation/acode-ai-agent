@@ -24,6 +24,7 @@ export const chatMetaSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1).catch("New chat"),
 	workspaceId: z.string(),
+	workspaceName: z.string().catch(""),
 	updatedAt: z.number().int().nonnegative(),
 });
 
@@ -35,6 +36,7 @@ export const storedChatSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1),
 	workspaceId: z.string(),
+	workspaceName: z.string().catch(""),
 	providerId: z.string(),
 	modelId: z.string(),
 	messages: z.array(z.unknown()),
@@ -45,6 +47,7 @@ export const storedSessionSchema = z.object({
 	id: z.string().min(1),
 	title: z.string().min(1),
 	workspaceId: z.string(),
+	workspaceName: z.string().catch(""),
 	providerId: z.string(),
 	modelId: z.string(),
 	createdAt: z.string().min(1).catch(""),

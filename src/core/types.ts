@@ -24,6 +24,7 @@ export type ChatSummary = {
 	id: string;
 	title: string;
 	workspaceId: string;
+	workspaceName: string;
 	updatedAt: number;
 	running: boolean;
 };

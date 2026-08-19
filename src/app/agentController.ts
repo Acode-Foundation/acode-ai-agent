@@ -16,7 +16,8 @@ import type {
 import { MutationGate } from "../permissions/mutationGate";
 import { openAuthTab } from "../platform/authTab";
 import { PortableCredentialStore } from "../platform/credentials";
-import { BrowserSessionStore, createChatId } from "../platform/browserStorage";
+import { createSessionStore, type SessionStore } from "../platform/sessionStore";
+import { createChatId } from "../session/sessionText";
 import { ProviderRegistry } from "../providers/providerRegistry";
 import { AgentSession } from "../session/agentSession";
 import { sanitizeModelId } from "../providers/customModels";
@@ -31,7 +32,7 @@ export class AgentController {
 	readonly credentials: PortableCredentialStore;
 	readonly providers: ProviderRegistry;
 	readonly extensions = new ExtensionRegistry();
-	#sessionStore = new BrowserSessionStore();
+	#sessionStore: SessionStore;
 	#sessions = new Map<string, AgentSession>();
 	#sessionListeners = new Map<string, () => void>();
 	#activeId?: string;
@@ -43,6 +44,7 @@ export class AgentController {
 	constructor(ctx: Acode.PluginContext | null) {
 		this.credentials = new PortableCredentialStore(ctx);
 		this.providers = new ProviderRegistry(this.credentials, () => this.settings.value.customModels);
+		this.#sessionStore = createSessionStore(ctx);
 		this.#state = {
 			status: "booting",
 			messages: [],
@@ -85,6 +87,7 @@ export class AgentController {
 	}
 
 	async initialize(): Promise<void> {
+		await this.#sessionStore.hydrate();
 		const workspaces = this.workspaces;
 		const selected = workspaces.find((workspace) => workspace.id === this.settings.value.activeWorkspaceId)
 			?? workspaces[0];
@@ -121,6 +124,7 @@ export class AgentController {
 	}
 
 	async selectChat(chatId: string): Promise<void> {
+		await this.#sessionStore.hydrate();
 		const meta = this.#sessionStore.list().find((item) => item.id === chatId);
 		const workspaceId = this.#sessions.get(chatId)?.workspace.info.id ?? meta?.workspaceId ?? this.#state.workspace?.id;
 		if (!workspaceId) throw new Error("That chat is no longer available.");
@@ -130,12 +134,13 @@ export class AgentController {
 	}
 
 	async deleteChat(chatId: string): Promise<void> {
+		await this.#sessionStore.hydrate();
 		const session = this.#sessions.get(chatId);
 		this.#sessionListeners.get(chatId)?.();
 		this.#sessionListeners.delete(chatId);
 		this.#sessions.delete(chatId);
 		await session?.dispose();
-		this.#sessionStore.remove(chatId);
+		await this.#sessionStore.remove(chatId);
 		if (this.#activeId === chatId) {
 			this.#activeId = undefined;
 			const next = this.#sessionStore.list()[0];
@@ -153,6 +158,7 @@ export class AgentController {
 	}
 
 	async selectWorkspace(workspaceIdOrUri: string): Promise<void> {
+		await this.#sessionStore.hydrate();
 		const info = this.workspaces.find((workspace) => workspace.id === workspaceIdOrUri || workspace.rootUri === workspaceIdOrUri);
 		if (!info) throw new Error("The selected Acode workspace is no longer open.");
 		this.settings.update({ activeWorkspaceId: info.id });
@@ -381,10 +387,18 @@ export class AgentController {
 		const seen = new Set(stored.map((item) => item.id));
 		const extras = [...this.#sessions.values()]
 			.filter((session) => !seen.has(session.id))
-			.map((session) => ({ id: session.id, title: session.title, workspaceId: session.workspace.info.id, updatedAt: Date.now(), running: session.snapshot.isRunning }));
+			.map((session) => ({
+				id: session.id,
+				title: session.title,
+				workspaceId: session.workspace.info.id,
+				workspaceName: session.workspace.info.name,
+				updatedAt: Date.now(),
+				running: session.snapshot.isRunning,
+			}));
 		return [
 			...stored.map((item) => ({
 				...item,
+				workspaceName: this.#sessions.get(item.id)?.workspace.info.name || item.workspaceName || this.workspaces.find((workspace) => workspace.id === item.workspaceId)?.name || "",
 				running: this.#sessions.get(item.id)?.snapshot.isRunning ?? false,
 			})),
 			...extras,

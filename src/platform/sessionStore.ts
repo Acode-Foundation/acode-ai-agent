@@ -2,6 +2,7 @@ import type { AgentMessage, SessionMetadata, SessionStorage, SessionTreeEntry } 
 import { InMemorySessionStorage, Session } from "@earendil-works/pi-agent-core";
 import { parseChatIndex, parseStoredChat, parseStoredSession } from "../core/schema";
 import { sessionEntriesFromMessages, titleFromEntries, titleFromMessages } from "../session/sessionText";
+import { createKvStore, MemoryKvStore, type KvStore } from "./kvStore";
 
 export { createChatId, messagePlainText, sessionEntriesFromMessages, titleFromEntries, titleFromMessages } from "../session/sessionText";
 
@@ -10,11 +11,13 @@ const SESSION_PREFIX = "acode.ai-agent.session.v3:";
 const V2_INDEX_KEY = "acode.ai-agent.chats.v2";
 const V2_PREFIX = "acode.ai-agent.chat.v2:";
 const LEGACY_PREFIX = "acode.ai-agent.session.v1:";
+const INDEX_LIMIT = 40;
 
 export type ChatMeta = {
 	id: string;
 	title: string;
 	workspaceId: string;
+	workspaceName: string;
 	updatedAt: number;
 };
 
@@ -28,53 +31,75 @@ export type StoredSessionRecord = ChatMeta & {
 
 export type SessionMetaPatch = Partial<Pick<StoredSessionRecord, "title" | "providerId" | "modelId">>;
 
-export class BrowserSessionStore {
+export function createSessionStore(ctx?: Acode.PluginContext | null): SessionStore {
+	return new SessionStore(createKvStore(ctx));
+}
+
+export class SessionStore {
+	#kv: KvStore;
+	#index: ChatMeta[] = [];
+	#ready?: Promise<void>;
+	#queue: Promise<void> = Promise.resolve();
+
+	constructor(kv: KvStore = new MemoryKvStore()) {
+		this.#kv = kv;
+	}
+
+	get driver(): KvStore["driver"] {
+		return this.#kv.driver;
+	}
+
 	list(): ChatMeta[] {
-		this.#migrate();
-		try {
-			return parseChatIndex(JSON.parse(localStorage.getItem(INDEX_KEY) ?? "null"));
-		} catch {
-			return [];
-		}
+		return this.#index.map((item) => ({ ...item }));
 	}
 
-	load(id: string): Omit<StoredSessionRecord, "entries" | "leafId"> | undefined {
-		const record = this.#read(id);
-		if (!record) return undefined;
-		const { entries: _entries, leafId: _leafId, ...meta } = record;
-		return meta;
+	load(id: string): ChatMeta | undefined {
+		const item = this.#index.find((chat) => chat.id === id);
+		return item ? { ...item } : undefined;
 	}
 
-	open(options: {
+	async hydrate(): Promise<void> {
+		this.#ready ??= this.#hydrate().catch((error) => {
+			this.#kv = new MemoryKvStore();
+			this.#index = [];
+			console.warn("AI session storage failed; chats will not persist", error);
+		});
+		await this.#ready;
+	}
+
+	async open(options: {
 		id: string;
 		workspaceId: string;
+		workspaceName?: string;
 		providerId: string;
 		modelId: string;
 		title?: string;
-	}): {
+	}): Promise<{
 		session: Session<SessionMetadata>;
 		record: Omit<StoredSessionRecord, "entries" | "leafId">;
 		update(patch: SessionMetaPatch): void;
 		persist(): Promise<void>;
-	} {
-		this.#migrate();
-		const existing = this.#read(options.id);
+	}> {
+		await this.hydrate();
+		const existing = await this.#read(options.id);
 		const record: Omit<StoredSessionRecord, "entries" | "leafId"> = {
 			id: options.id,
 			title: existing?.title || options.title || "New chat",
 			workspaceId: existing?.workspaceId || options.workspaceId,
+			workspaceName: options.workspaceName || existing?.workspaceName || "",
 			providerId: existing?.providerId || options.providerId,
 			modelId: existing?.modelId || options.modelId,
 			createdAt: existing?.createdAt || new Date().toISOString(),
 			updatedAt: existing?.updatedAt ?? Date.now(),
 		};
+		this.#upsertIndex(record);
 		const inner = new InMemorySessionStorage({
 			entries: existing?.entries ?? [],
 			metadata: { id: record.id, createdAt: record.createdAt },
 		});
 		const persist = async () => {
 			const [entries, leafId] = await Promise.all([inner.getEntries(), inner.getLeafId()]);
-			this.#write({ ...record, entries, leafId, updatedAt: Date.now() });
+			await this.#write({ ...record, entries, leafId, updatedAt: Date.now() });
 		};
 		let flush = Promise.resolve();
 		const schedule = () => {
@@ -96,52 +121,78 @@ export class BrowserSessionStore {
 		};
 	}
 
-	remove(id: string): void {
-		try {
-			localStorage.removeItem(`${SESSION_PREFIX}${id}`);
-			localStorage.setItem(INDEX_KEY, JSON.stringify({ chats: this.list().filter((item) => item.id !== id) }));
-		} catch {
-			// Live chats can continue without storage.
-		}
+	async remove(id: string): Promise<void> {
+		await this.hydrate();
+		this.#index = this.#index.filter((item) => item.id !== id);
+		await this.#enqueue(async () => {
+			await this.#kv.delete(`${SESSION_PREFIX}${id}`);
+			await this.#kv.set(INDEX_KEY, { chats: this.#index });
+		});
 	}
 
-	#read(id: string): StoredSessionRecord | undefined {
+	async #hydrate(): Promise<void> {
+		await this.#migrate();
+		this.#index = parseChatIndex(await this.#kv.get(INDEX_KEY));
+	}
+
+	async #read(id: string): Promise<StoredSessionRecord | undefined> {
 		try {
-			const parsed = parseStoredSession(JSON.parse(localStorage.getItem(`${SESSION_PREFIX}${id}`) ?? "null"));
+			const parsed = parseStoredSession(await this.#kv.get(`${SESSION_PREFIX}${id}`));
 			return parsed ? { ...parsed, entries: parsed.entries as SessionTreeEntry[] } : undefined;
 		} catch {
 			return undefined;
 		}
 	}
 
-	#write(record: StoredSessionRecord): void {
+	async #write(record: StoredSessionRecord): Promise<void> {
 		const safe = redactDeep({
 			...record,
 			title: record.title || titleFromEntries(record.entries) || "New chat",
 			updatedAt: Date.now(),
 		});
+		this.#upsertIndex(safe);
 		try {
-			localStorage.setItem(`${SESSION_PREFIX}${record.id}`, JSON.stringify(safe));
-			const index = this.list().filter((item) => item.id !== record.id);
-			index.unshift({ id: record.id, title: safe.title, workspaceId: safe.workspaceId, updatedAt: safe.updatedAt });
-			localStorage.setItem(INDEX_KEY, JSON.stringify({ chats: index.slice(0, 40) }));
+			await this.#enqueue(async () => {
+				await this.#kv.set(`${SESSION_PREFIX}${record.id}`, safe);
+				await this.#kv.set(INDEX_KEY, { chats: this.#index.slice(0, INDEX_LIMIT) });
+			});
 		} catch (error) {
 			console.warn("AI session could not be persisted", error);
 		}
 	}
 
-	#migrate(): void {
-		try {
-			if (localStorage.getItem(INDEX_KEY)) return;
-			const chats: ChatMeta[] = [];
-			for (const record of collectLegacySessions()) {
-				localStorage.setItem(`${SESSION_PREFIX}${record.id}`, JSON.stringify(record));
-				chats.push({ id: record.id, title: record.title, workspaceId: record.workspaceId, updatedAt: record.updatedAt });
-			}
-			if (chats.length) localStorage.setItem(INDEX_KEY, JSON.stringify({ chats }));
-		} catch {
-			// Ignore corrupt legacy records.
+	#upsertIndex(record: Pick<StoredSessionRecord, "id" | "title" | "workspaceId" | "workspaceName" | "updatedAt">): void {
+		const next: ChatMeta = {
+			id: record.id,
+			title: record.title || "New chat",
+			workspaceId: record.workspaceId,
+			workspaceName: record.workspaceName || "",
+			updatedAt: record.updatedAt,
+		};
+		this.#index = [next, ...this.#index.filter((item) => item.id !== record.id)].slice(0, INDEX_LIMIT);
+	}
+
+	async #migrate(): Promise<void> {
+		const existing = parseChatIndex(await this.#kv.get(INDEX_KEY));
+		if (existing.length) {
+			this.#index = existing;
+			return;
 		}
+		const records = collectLegacySessions();
+		if (!records.length) return;
+		const chats: ChatMeta[] = [];
+		for (const record of records) {
+			await this.#kv.set(`${SESSION_PREFIX}${record.id}`, record);
+			chats.push({ id: record.id, title: record.title, workspaceId: record.workspaceId, workspaceName: record.workspaceName || "", updatedAt: record.updatedAt });
+		}
+		this.#index = chats;
+		await this.#kv.set(INDEX_KEY, { chats });
+		clearLegacyLocalStorage();
+	}
+
+	#enqueue(task: () => Promise<void>): Promise<void> {
+		this.#queue = this.#queue.then(task, task);
+		return this.#queue;
 	}
 }
 
@@ -178,18 +229,27 @@ class PersistedSessionStorage implements SessionStorage<SessionMetadata> {
 
 function collectLegacySessions(): StoredSessionRecord[] {
 	const records: StoredSessionRecord[] = [];
-	const v2Index = parseChatIndex(JSON.parse(localStorage.getItem(V2_INDEX_KEY) ?? "null"));
+	const v3Index = parseChatIndex(readLocalJson(INDEX_KEY));
 	const seen = new Set<string>();
-	for (const meta of v2Index) {
-		const parsed = parseStoredChat(JSON.parse(localStorage.getItem(`${V2_PREFIX}${meta.id}`) ?? "null"));
+	for (const meta of v3Index) {
+		const parsed = parseStoredSession(readLocalJson(`${SESSION_PREFIX}${meta.id}`));
 		if (!parsed) continue;
+		seen.add(parsed.id);
+		records.push({ ...parsed, entries: parsed.entries as SessionTreeEntry[] });
+	}
+	const v2Index = parseChatIndex(readLocalJson(V2_INDEX_KEY));
+	for (const meta of v2Index) {
+		const parsed = parseStoredChat(readLocalJson(`${V2_PREFIX}${meta.id}`));
+		if (!parsed || seen.has(parsed.id)) continue;
 		seen.add(parsed.id);
 		records.push(recordFromMessages({ ...parsed, messages: parsed.messages as AgentMessage[] }));
 	}
-	for (let index = 0; index < localStorage.length; index += 1) {
-		const key = localStorage.key(index);
+	const storage = localStorageOrNull();
+	if (!storage) return records;
+	for (let index = 0; index < storage.length; index += 1) {
+		const key = storage.key(index);
 		if (!key?.startsWith(LEGACY_PREFIX)) continue;
-		const raw = JSON.parse(localStorage.getItem(key) ?? "null") as {
+		const raw = readLocalJson(key) as {
 			workspaceId?: string;
 			providerId?: string;
 			modelId?: string;
@@ -226,6 +286,7 @@ function recordFromMessages(chat: {
 		id: chat.id,
 		title: chat.title || titleFromMessages(chat.messages) || "Imported chat",
 		workspaceId: chat.workspaceId,
+		workspaceName: "",
 		providerId: chat.providerId,
 		modelId: chat.modelId,
 		createdAt: new Date(chat.updatedAt).toISOString(),
@@ -233,6 +294,50 @@ function recordFromMessages(chat: {
 		leafId: entries.at(-1)?.id ?? null,
 		entries,
 	};
+}
+
+function clearLegacyLocalStorage(): void {
+	const storage = localStorageOrNull();
+	if (!storage) return;
+	const keys: string[] = [];
+	for (let index = 0; index < storage.length; index += 1) {
+		const key = storage.key(index);
+		if (!key) continue;
+		if (
+			key === INDEX_KEY
+			|| key === V2_INDEX_KEY
+			|| key.startsWith(SESSION_PREFIX)
+			|| key.startsWith(V2_PREFIX)
+			|| key.startsWith(LEGACY_PREFIX)
+		) {
+			keys.push(key);
+		}
+	}
+	for (const key of keys) {
+		try {
+			storage.removeItem(key);
+		} catch {
+			// Ignore quota or private-mode failures.
+		}
+	}
+}
+
+function readLocalJson(key: string): unknown {
+	const storage = localStorageOrNull();
+	if (!storage) return null;
+	try {
+		return JSON.parse(storage.getItem(key) ?? "null");
+	} catch {
+		return null;
+	}
+}
+
+function localStorageOrNull(): Storage | null {
+	try {
+		return globalThis.localStorage ?? null;
+	} catch {
+		return null;
+	}
 }
 
 function redact(text: string): string {
@@ -260,5 +365,3 @@ function redactDeep<T>(value: T): T {
 	}
 	return value;
 }
-
-

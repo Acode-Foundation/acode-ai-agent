@@ -18,7 +18,8 @@ import type { AgentSettings, QueuedPrompt, ToolActivity } from "../core/types";
 import { buildSystemPrompt } from "../context/contextBuilder";
 import { MutationGate } from "../permissions/mutationGate";
 import type { ProviderRegistry } from "../providers/providerRegistry";
-import { BrowserSessionStore, messagePlainText, titleFromMessages } from "../platform/browserStorage";
+import type { SessionStore } from "../platform/sessionStore";
+import { messagePlainText, titleFromMessages } from "./sessionText";
 import { createWorkspaceTools } from "../tools/createTools";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 
@@ -43,7 +44,7 @@ export class AgentSession {
 	#providers: ProviderRegistry;
 	#extensions: ExtensionRegistry;
 	#settings: () => AgentSettings;
-	#store: BrowserSessionStore;
+	#store: SessionStore;
 	#pi?: Session;
 	#harness?: AgentHarness;
 	#unsubscribe?: () => void;
@@ -74,7 +75,7 @@ export class AgentSession {
 		providers: ProviderRegistry;
 		extensions: ExtensionRegistry;
 		settings: () => AgentSettings;
-		store: BrowserSessionStore;
+		store: SessionStore;
 		mutationGate: MutationGate;
 	}) {
 		this.id = options.id;
@@ -102,10 +103,11 @@ export class AgentSession {
 
 	async initialize(): Promise<void> {
 		const settings = this.#settings();
-		const opened = this.#store.open({
+		const opened = await this.#store.open({
 			id: this.id,
 			title: this.title,
 			workspaceId: this.workspace.info.id,
+			workspaceName: this.workspace.info.name,
 			providerId: settings.providerId,
 			modelId: settings.modelId,
 		});

@@ -1,8 +1,8 @@
-import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, Ellipsis, ListPlus, Plus, Send, Settings, Square, X } from "lucide-preact";
+import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, Ellipsis, Folder, ListPlus, Plus, Send, Settings, Square, Trash2, X } from "lucide-preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
 import { PERMISSION_MODES, type PermissionMode } from "../core/schema";
-import type { MutationDecision, MutationRequest, ProviderId, PublicAgentState, QueuedPrompt } from "../core/types";
+import type { ChatSummary, MutationDecision, MutationRequest, ProviderId, PublicAgentState, QueuedPrompt, WorkspaceInfo } from "../core/types";
 import { PROVIDERS } from "../providers/providerRegistry";
 import { thinkingLevelsFor } from "../providers/thinkingLevels";
 import { Collapse } from "./Collapse";
@@ -130,40 +130,127 @@ export function App({ controller }: Props) {
 
 function ChatSheet({ controller, state, onClose, onError }: { controller: AgentController; state: PublicAgentState; onClose: () => void; onError: (message: string) => void }) {
 	const workspaces = controller.workspaces;
+	const [confirmId, setConfirmId] = useState<string | null>(null);
+	const [filter, setFilter] = useState<string>(state.workspace?.id ?? "all");
+	const showFilters = workspaces.length > 0 || state.chats.length > 0;
+	const chats = useMemo(
+		() => filter === "all" ? state.chats : state.chats.filter((chat) => chat.workspaceId === filter),
+		[state.chats, filter],
+	);
+	const groups = useMemo(() => groupChatsByRecency(chats), [chats]);
+	const fail = (error: unknown) => onError(error instanceof Error ? error.message : String(error));
+	const startNew = (close: () => void) => {
+		const create = () => controller.newConversation().then(close).catch(fail);
+		if (filter !== "all" && filter !== state.workspace?.id) {
+			void controller.selectWorkspace(filter).then(create).catch(fail);
+			return;
+		}
+		void create();
+	};
+	const projectName = (chat: ChatSummary) => workspaceLabel(chat, workspaces);
 	return (
 		<Sheet class="chats" onClose={onClose}>
 			{(close) => (
 				<>
-					<header class="sheet-header">
-						<h2>Chats</h2>
-						<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+					<div class="sheet-handle" />
+					<header class="sheet-header chats-header">
+						<h2>Sessions{chats.length > 0 && <small>{chats.length}</small>}</h2>
+						<div class="sheet-header-actions">
+							<button type="button" onClick={() => startNew(close)} aria-label="New session">
+								<Plus size={16} strokeWidth={2} />
+							</button>
+							<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+						</div>
 					</header>
-					{workspaces.length > 0 && (
-						<label class="field-label">
-							Workspace
-							<select
-								class="workspace-select"
-								value={state.workspace?.id ?? ""}
-								onChange={(event) => void controller.selectWorkspace(event.currentTarget.value).catch((error) => onError(String(error)))}
-							>
-								{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}
-							</select>
-						</label>
-					)}
-					<button class="use-query" type="button" onClick={() => void controller.newConversation().then(close).catch((error) => onError(String(error)))}>New chat</button>
-					<div class="chat-list">
-						{state.chats.map((chat) => (
-							<div class={`chat-row${chat.id === state.activeChatId ? " selected" : ""}`} key={chat.id}>
-								<button type="button" onClick={() => void controller.selectChat(chat.id).then(close).catch((error) => onError(String(error)))}>
-									<span>
-										<b>{chat.title}</b>
-										<small>{chat.running ? "running" : new Date(chat.updatedAt).toLocaleString()}</small>
-									</span>
-									{chat.running && <i class="run-dot" />}
+					<div class="chats-body">
+						{showFilters && (
+							<div class="workspace-chips" role="tablist" aria-label="Filter sessions">
+								<button
+									type="button"
+									role="tab"
+									aria-selected={filter === "all"}
+									class={filter === "all" ? "selected" : ""}
+									onClick={() => {
+										setConfirmId(null);
+										setFilter("all");
+									}}
+								>
+									<span>All</span>
 								</button>
-								<button type="button" class="model-remove" aria-label={`Delete ${chat.title}`} onClick={() => void controller.deleteChat(chat.id)}><X size={14} strokeWidth={2} /></button>
+								{workspaces.map((workspace) => (
+									<button
+										type="button"
+										role="tab"
+										aria-selected={filter === workspace.id}
+										class={filter === workspace.id ? "selected" : ""}
+										key={workspace.id}
+										onClick={() => {
+											setConfirmId(null);
+											setFilter(workspace.id);
+										}}
+									>
+										<Folder size={13} strokeWidth={2} aria-hidden="true" />
+										<span>{workspace.name}</span>
+									</button>
+								))}
 							</div>
-						))}
+						)}
+						{chats.length === 0 ? (
+							<div class="chat-empty">
+								<p>
+									{!state.workspace
+										? "Open a folder to start a session."
+										: filter === "all"
+											? "No sessions yet."
+											: "No sessions in this folder yet."}
+								</p>
+								{state.workspace && (
+									<button class="chat-empty-new" type="button" onClick={() => startNew(close)}>Start a session</button>
+								)}
+							</div>
+						) : (
+							<div class="chat-list">
+								{groups.map((group) => (
+									<section class="chat-group" key={group.id}>
+										<h3>{group.label}</h3>
+										{group.chats.map((chat) => (
+											<div
+												class={`chat-row${chat.id === state.activeChatId ? " selected" : ""}${chat.running ? " running" : ""}`}
+												key={chat.id}
+											>
+												<button
+													type="button"
+													onClick={() => {
+														setConfirmId(null);
+														void controller.selectChat(chat.id).then(close).catch(fail);
+													}}
+												>
+													<span class="chat-copy">
+														<b>{chat.title}</b>
+														<small>
+															<span class="chat-project">{projectName(chat)}</span>
+															<span class="chat-sep">·</span>
+															{chat.running ? "Running" : formatChatTime(chat.updatedAt)}
+															{chat.id === state.activeChatId ? " · current" : ""}
+														</small>
+													</span>
+													{chat.running && <i class="run-dot" aria-hidden="true" />}
+												</button>
+												{confirmId === chat.id ? (
+													<button type="button" class="chat-delete confirm" onClick={() => void controller.deleteChat(chat.id).then(() => setConfirmId(null)).catch(fail)}>
+														Delete
+													</button>
+												) : (
+													<button type="button" class="chat-delete" aria-label={`Delete ${chat.title}`} onClick={() => setConfirmId(chat.id)}>
+														<Trash2 size={14} strokeWidth={2} />
+													</button>
+												)}
+											</div>
+										))}
+									</section>
+								))}
+							</div>
+						)}
 					</div>
 				</>
 			)}
@@ -705,4 +792,43 @@ function ApprovalPanel({ approval, onApprove }: { approval: MutationRequest; onA
 
 function formatTokens(tokens: number): string {
 	return tokens >= 1000 ? `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k tokens` : `${tokens} tokens`;
+}
+
+function workspaceLabel(chat: ChatSummary, workspaces: WorkspaceInfo[]): string {
+	return workspaces.find((workspace) => workspace.id === chat.workspaceId)?.name
+		|| chat.workspaceName
+		|| "Closed folder";
+}
+
+function formatChatTime(timestamp: number): string {
+	const delta = Date.now() - timestamp;
+	if (delta < 45_000) return "Just now";
+	if (delta < 3_600_000) return `${Math.max(1, Math.round(delta / 60_000))}m ago`;
+	if (delta < 22 * 3_600_000) return `${Math.max(1, Math.round(delta / 3_600_000))}h ago`;
+	const now = new Date();
+	const date = new Date(timestamp);
+	const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	if (timestamp >= startToday - 86_400_000) return "Yesterday";
+	if (now.getFullYear() === date.getFullYear()) {
+		return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+	}
+	return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function groupChatsByRecency(chats: ChatSummary[]): Array<{ id: string; label: string; chats: ChatSummary[] }> {
+	const now = new Date();
+	const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	const buckets = {
+		today: { id: "today", label: "Today", chats: [] as ChatSummary[] },
+		yesterday: { id: "yesterday", label: "Yesterday", chats: [] as ChatSummary[] },
+		week: { id: "week", label: "This week", chats: [] as ChatSummary[] },
+		older: { id: "older", label: "Earlier", chats: [] as ChatSummary[] },
+	};
+	for (const chat of chats) {
+		if (chat.updatedAt >= startToday) buckets.today.chats.push(chat);
+		else if (chat.updatedAt >= startToday - 86_400_000) buckets.yesterday.chats.push(chat);
+		else if (chat.updatedAt >= startToday - 6 * 86_400_000) buckets.week.chats.push(chat);
+		else buckets.older.chats.push(chat);
+	}
+	return Object.values(buckets).filter((group) => group.chats.length);
 }

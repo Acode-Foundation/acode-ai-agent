@@ -14,6 +14,9 @@ test("settings accept permission modes and migrate unknown junk", () => {
 });
 
 test("chat index drops malformed rows", () => {
-	expect(parseChatIndex({ chats: [{ id: "1", title: "Hi", workspaceId: "w", updatedAt: 1 }] })).toHaveLength(1);
+	expect(parseChatIndex({ chats: [{ id: "1", title: "Hi", workspaceId: "w", workspaceName: "Demo", updatedAt: 1 }] })).toEqual([
+		{ id: "1", title: "Hi", workspaceId: "w", workspaceName: "Demo", updatedAt: 1 },
+	]);
+	expect(parseChatIndex({ chats: [{ id: "2", title: "Legacy", workspaceId: "w", updatedAt: 1 }] })[0]?.workspaceName).toBe("");
 	expect(parseChatIndex({ chats: [{ title: "bad" }] })).toEqual([]);
 });
