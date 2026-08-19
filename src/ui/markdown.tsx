@@ -1,24 +1,47 @@
-import { useMemo } from "preact/hooks";
+import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import type { WorkspaceInfo } from "../core/types";
 import { openCustomTab } from "../platform/authTab";
 import { PathSandbox } from "../workspace/pathSandbox";
-import { copyText } from "./CopyButton";
+import { copyText, playCopiedFeedback, swapCopyGlyphs } from "./CopyButton";
 import { renderMarkdown } from "./markdownRender";
 
 export function Markdown({ text, workspace }: { text: string; workspace?: WorkspaceInfo }) {
+	const root = useRef<HTMLDivElement>(null);
+	const wrapByIndex = useRef<boolean[]>([]);
 	const html = useMemo(() => renderMarkdown(text), [text]);
+	useLayoutEffect(() => {
+		const host = root.current;
+		if (!host) return;
+		host.querySelectorAll(".md-code").forEach((block, index) => {
+			if (wrapByIndex.current[index]) setCodeWrap(block as HTMLElement, true);
+		});
+	}, [html]);
 	return (
 		<div
+			ref={root}
 			class="md"
 			dangerouslySetInnerHTML={{ __html: html }}
-			onClick={(event) => onMarkdownClick(event, workspace)}
+			onClick={(event) => onMarkdownClick(event, workspace, wrapByIndex.current)}
 		/>
 	);
 }
 
-function onMarkdownClick(event: MouseEvent, workspace?: WorkspaceInfo): void {
+function onMarkdownClick(event: MouseEvent, workspace: WorkspaceInfo | undefined, wrapByIndex: boolean[]): void {
 	const target = event.target;
 	if (!(target instanceof Element)) return;
+
+	const wrapButton = target.closest<HTMLButtonElement>("[data-wrap]");
+	if (wrapButton) {
+		event.preventDefault();
+		const block = wrapButton.closest(".md-code");
+		if (!(block instanceof HTMLElement)) return;
+		const next = !block.classList.contains("is-wrap");
+		setCodeWrap(block, next);
+		const index = [...(block.parentElement?.querySelectorAll(".md-code") ?? [])].indexOf(block);
+		if (index >= 0) wrapByIndex[index] = next;
+		playCopiedFeedback(wrapButton);
+		return;
+	}
 
 	const copyButton = target.closest<HTMLButtonElement>("[data-copy]");
 	if (copyButton) {
@@ -55,13 +78,29 @@ function classifyClickedHref(href: string): "web" | "file" | "plain" {
 	return "file";
 }
 
+function setCodeWrap(block: HTMLElement, wrap: boolean): void {
+	block.classList.toggle("is-wrap", wrap);
+	const button = block.querySelector<HTMLButtonElement>("[data-wrap]");
+	if (!button) return;
+	button.classList.toggle("is-on", wrap);
+	button.setAttribute("aria-pressed", wrap ? "true" : "false");
+	button.setAttribute("aria-label", wrap ? "Unwrap code" : "Wrap code");
+	button.title = wrap ? "Unwrap" : "Wrap";
+}
+
 function markCopied(button: HTMLButtonElement): void {
-	const previous = button.textContent;
+	const copy = button.querySelector<HTMLElement>(".md-code-icon-copy");
+	const check = button.querySelector<HTMLElement>(".md-code-icon-check");
 	button.classList.add("copied");
-	button.textContent = "Copied";
+	button.setAttribute("aria-label", "Copied");
+	button.title = "Copied";
+	if (copy && check) swapCopyGlyphs(copy, check, true);
+	playCopiedFeedback(button);
 	window.setTimeout(() => {
 		button.classList.remove("copied");
-		button.textContent = previous || "Copy";
+		button.setAttribute("aria-label", "Copy code");
+		button.title = "Copy";
+		if (copy && check) swapCopyGlyphs(copy, check, false);
 	}, 1200);
 }
 

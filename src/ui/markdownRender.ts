@@ -28,7 +28,17 @@ marked.use({
 				`<figure class="md-code"${langAttr}>`,
 				`<figcaption class="md-code-head">`,
 				`<span class="md-code-lang">${escapeHtml(title)}</span>`,
-				`<button type="button" class="md-code-copy" data-copy aria-label="Copy code">Copy</button>`,
+				`<span class="md-code-actions">`,
+				`<button type="button" class="md-code-action" data-wrap aria-label="Wrap code" aria-pressed="false" title="Wrap">`,
+				`<span class="md-code-icon md-code-icon-wrap" aria-hidden="true"></span>`,
+				`</button>`,
+				`<button type="button" class="md-code-action md-code-copy" data-copy aria-label="Copy code" title="Copy">`,
+				`<span class="md-code-icons" aria-hidden="true">`,
+				`<span class="md-code-icon md-code-icon-copy"></span>`,
+				`<span class="md-code-icon md-code-icon-check"></span>`,
+				`</span>`,
+				`</button>`,
+				`</span>`,
 				`</figcaption>`,
 				`<pre><code>${escapeHtml(text)}</code></pre>`,
 				`</figure>\n`,
@@ -84,7 +94,7 @@ function sanitize(html: string): string {
 	if (typeof window === "undefined") return html;
 	return DOMPurify.sanitize(html, {
 		ADD_TAGS: ["figure", "figcaption", "aside", "input"],
-		ADD_ATTR: ["data-lang", "data-path", "data-kind", "data-copy", "target", "rel", "disabled", "checked", "type"],
+		ADD_ATTR: ["data-lang", "data-path", "data-kind", "data-copy", "data-wrap", "target", "rel", "disabled", "checked", "type"],
 	});
 }
 

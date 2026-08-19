@@ -1,12 +1,15 @@
 import { ArrowDownToLine, Check, ChevronLeft, ChevronRight, Ellipsis, ListPlus, Plus, Send, Settings, Square, X } from "lucide-preact";
-import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
 import { PERMISSION_MODES, type PermissionMode } from "../core/schema";
-import type { ProviderId, PublicAgentState, QueuedPrompt } from "../core/types";
+import type { MutationDecision, MutationRequest, ProviderId, PublicAgentState, QueuedPrompt } from "../core/types";
 import { PROVIDERS } from "../providers/providerRegistry";
 import { thinkingLevelsFor } from "../providers/thinkingLevels";
+import { Collapse } from "./Collapse";
 import { CopyButton } from "./CopyButton";
+import { animateHeight, fadeInUp, fadeSlide, playMotion } from "./motion";
 import { Markdown } from "./markdown";
+import { Sheet } from "./Sheet";
 import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
@@ -26,11 +29,6 @@ export function App({ controller }: Props) {
 	const running = state.status === "running";
 	const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}`;
 	const { showLatest, jumpToLatest, pin } = useChatScroll(scrollRef, followKey);
-	useEffect(() => {
-		if (!toast) return;
-		const timer = window.setTimeout(() => setToast(""), 2600);
-		return () => window.clearTimeout(timer);
-	}, [toast]);
 
 	const turns = useMemo(
 		() => buildTurns(state.messages, running ? state.streamingMessage : undefined, state.activities, running),
@@ -75,10 +73,7 @@ export function App({ controller }: Props) {
 							<section class="turn" key={turn.id}>
 								{turn.user && <article class="bubble user"><p>{turn.user}</p></article>}
 								{turn.notice && (
-									<details class="compact-banner">
-										<summary>{turn.notice.kind === "branch" ? "Branch summary" : "History compacted"}</summary>
-										<Markdown text={turn.notice.text} workspace={state.workspace} />
-									</details>
+									<CompactNotice kind={turn.notice.kind} text={turn.notice.text} workspace={state.workspace} />
 								)}
 								<WorkLog turn={turn} workspace={state.workspace} />
 								{turn.answer && (
@@ -99,31 +94,11 @@ export function App({ controller }: Props) {
 					</div>
 				)}
 				{state.error && <div class="inline-error">{state.error}</div>}
-				<button
-					type="button"
-					class={`jump-latest${showLatest && running ? " visible" : ""}`}
-					onClick={jumpToLatest}
-					aria-hidden={!(showLatest && running)}
-					tabIndex={showLatest && running ? 0 : -1}
-					aria-label="Jump to latest"
-				>
-					<ArrowDownToLine size={18} strokeWidth={2} aria-hidden="true" />
-				</button>
+				<JumpLatest visible={showLatest} onJump={jumpToLatest} />
 			</main>
 
 			{state.approval && (
-				<section class="approval" role="alertdialog" aria-label="Approve agent edit">
-					<header>
-						<span>Edit</span>
-						<strong>{state.approval.title}</strong>
-					</header>
-					<pre>{state.approval.preview}</pre>
-					<div class="approval-actions">
-						<button type="button" onClick={() => controller.approve("deny")}>Deny</button>
-						<button type="button" onClick={() => controller.approve("allow-session")}>Allow this session</button>
-						<button class="primary" type="button" onClick={() => controller.approve("allow")}>Allow once</button>
-					</div>
-				</section>
+				<ApprovalPanel approval={state.approval} onApprove={(decision) => controller.approve(decision)} />
 			)}
 
 			<Composer
@@ -147,7 +122,7 @@ export function App({ controller }: Props) {
 			{chatsOpen && <ChatSheet controller={controller} state={state} onClose={() => setChatsOpen(false)} onError={setToast} />}
 			{settingsOpen && <SettingsSheet controller={controller} state={state} onClose={() => setSettingsOpen(false)} onToast={setToast} />}
 			{configOpen && <ConfigSheet controller={controller} state={state} onClose={() => setConfigOpen(false)} />}
-			{toast && <div class="agent-toast" role="status">{toast}</div>}
+			{toast && <Toast message={toast} onDone={() => setToast("")} />}
 		</div>
 	);
 }
@@ -155,45 +130,55 @@ export function App({ controller }: Props) {
 function ChatSheet({ controller, state, onClose, onError }: { controller: AgentController; state: PublicAgentState; onClose: () => void; onError: (message: string) => void }) {
 	const workspaces = controller.workspaces;
 	return (
-		<div class="sheet-backdrop" onClick={onClose}>
-			<section class="sheet chats" onClick={(event) => event.stopPropagation()}>
-				<header class="sheet-header">
-					<h2>Chats</h2>
-					<button type="button" onClick={onClose} aria-label="Close"><X size={16} strokeWidth={2} /></button>
-				</header>
-				{workspaces.length > 0 && (
-					<label class="field-label">
-						Workspace
-						<select
-							class="workspace-select"
-							value={state.workspace?.id ?? ""}
-							onChange={(event) => void controller.selectWorkspace(event.currentTarget.value).catch((error) => onError(String(error)))}
-						>
-							{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}
-						</select>
-					</label>
-				)}
-				<button class="use-query" type="button" onClick={() => void controller.newConversation().then(onClose).catch((error) => onError(String(error)))}>New chat</button>
-				<div class="chat-list">
-					{state.chats.map((chat) => (
-						<div class={`chat-row${chat.id === state.activeChatId ? " selected" : ""}`} key={chat.id}>
-							<button type="button" onClick={() => void controller.selectChat(chat.id).then(onClose).catch((error) => onError(String(error)))}>
-								<span>
-									<b>{chat.title}</b>
-									<small>{chat.running ? "running" : new Date(chat.updatedAt).toLocaleString()}</small>
-								</span>
-								{chat.running && <i class="run-dot" />}
-							</button>
-							<button type="button" class="model-remove" aria-label={`Delete ${chat.title}`} onClick={() => void controller.deleteChat(chat.id)}><X size={14} strokeWidth={2} /></button>
-						</div>
-					))}
-				</div>
-			</section>
-		</div>
+		<Sheet class="chats" onClose={onClose}>
+			{(close) => (
+				<>
+					<header class="sheet-header">
+						<h2>Chats</h2>
+						<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+					</header>
+					{workspaces.length > 0 && (
+						<label class="field-label">
+							Workspace
+							<select
+								class="workspace-select"
+								value={state.workspace?.id ?? ""}
+								onChange={(event) => void controller.selectWorkspace(event.currentTarget.value).catch((error) => onError(String(error)))}
+							>
+								{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}
+							</select>
+						</label>
+					)}
+					<button class="use-query" type="button" onClick={() => void controller.newConversation().then(close).catch((error) => onError(String(error)))}>New chat</button>
+					<div class="chat-list">
+						{state.chats.map((chat) => (
+							<div class={`chat-row${chat.id === state.activeChatId ? " selected" : ""}`} key={chat.id}>
+								<button type="button" onClick={() => void controller.selectChat(chat.id).then(close).catch((error) => onError(String(error)))}>
+									<span>
+										<b>{chat.title}</b>
+										<small>{chat.running ? "running" : new Date(chat.updatedAt).toLocaleString()}</small>
+									</span>
+									{chat.running && <i class="run-dot" />}
+								</button>
+								<button type="button" class="model-remove" aria-label={`Delete ${chat.title}`} onClick={() => void controller.deleteChat(chat.id)}><X size={14} strokeWidth={2} /></button>
+							</div>
+						))}
+					</div>
+				</>
+			)}
+		</Sheet>
 	);
 }
 
 function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: boolean; onPrompt: (value: string) => void; onSettings: () => void }) {
+	const suggestions = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const buttons = suggestions.current?.querySelectorAll("button");
+		if (!buttons?.length) return;
+		buttons.forEach((button, index) => {
+			void fadeInUp(button, index * 0.05);
+		});
+	}, [hasWorkspace]);
 	return (
 		<section class="empty-state">
 			<h1>{hasWorkspace ? "What should we work on?" : "Open a folder first"}</h1>
@@ -203,7 +188,7 @@ function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: bool
 					: "Add a project folder in the Acode sidebar so the agent has a sandbox."}
 			</p>
 			{hasWorkspace && (
-				<div class="suggestions">
+				<div class="suggestions" ref={suggestions}>
 					<button type="button" onClick={() => onPrompt("Map this project and explain how the main pieces fit together.")}>Map the project</button>
 					<button type="button" onClick={() => onPrompt("Review the active file and fix the highest-impact issue.")}>Review the open file</button>
 					<button type="button" onClick={onSettings}>Add a provider key</button>
@@ -231,13 +216,20 @@ function Composer(props: {
 	queued: QueuedPrompt[];
 }) {
 	const textarea = useRef<HTMLTextAreaElement>(null);
+	const primed = useRef(false);
 	const canSend = Boolean(props.value.trim()) && !props.disabled;
 	const showStop = props.running && !props.value.trim();
-	useEffect(() => {
+	useLayoutEffect(() => {
 		const element = textarea.current;
 		if (!element) return;
-		element.style.height = "0";
-		element.style.height = `${Math.min(120, Math.max(52, element.scrollHeight))}px`;
+		const current = element.style.height;
+		element.style.height = "auto";
+		const next = Math.min(120, Math.max(52, element.scrollHeight));
+		element.style.height = current || "52px";
+		element.style.overflowY = next >= 120 ? "auto" : "hidden";
+		const first = !primed.current;
+		primed.current = true;
+		void animateHeight(element, next, first);
 	}, [props.value]);
 	const used = props.contextWindow ? Math.min(100, Math.round((props.contextTokens / props.contextWindow) * 100)) : 0;
 	return (
@@ -314,11 +306,12 @@ function SettingsSheet({ controller, state, onClose, onToast }: { controller: Ag
 	const provider = PROVIDERS.find((item) => item.id === providerId)!;
 	const authFlow = state.authFlow?.providerId === providerId ? state.authFlow : undefined;
 	return (
-		<div class="sheet-backdrop" onClick={onClose}>
-			<section class="sheet" onClick={(event) => event.stopPropagation()}>
+		<Sheet onClose={onClose}>
+			{(close) => (
+				<>
 				<header class="sheet-header">
 					<h2>Settings</h2>
-					<button type="button" onClick={onClose} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+					<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
 				</header>
 
 				<label class="field-label">Provider</label>
@@ -378,108 +371,125 @@ function SettingsSheet({ controller, state, onClose, onToast }: { controller: Ag
 					<span>Include current selection</span>
 					<input type="checkbox" checked={state.settings.includeSelection} onChange={(event) => controller.settings.update({ includeSelection: event.currentTarget.checked })} />
 				</label>
-			</section>
-		</div>
+				</>
+			)}
+		</Sheet>
 	);
 }
 
 function ConfigSheet({ controller, state, onClose }: { controller: AgentController; state: PublicAgentState; onClose: () => void }) {
 	const [view, setView] = useState<"main" | "providers" | "models">("main");
 	const [error, setError] = useState("");
+	const bodyRef = useRef<HTMLDivElement>(null);
+	const firstView = useRef(true);
 	const provider = PROVIDERS.find((item) => item.id === state.settings.providerId);
 	const modelId = state.model?.id ?? state.settings.modelId;
 	const modelName = state.model?.name ?? "Choose model";
+	useLayoutEffect(() => {
+		const body = bodyRef.current;
+		if (!body) return;
+		if (firstView.current) {
+			firstView.current = false;
+			return;
+		}
+		void fadeInUp(body);
+	}, [view]);
+	const go = (next: typeof view) => setView(next);
 	return (
-		<div class="sheet-backdrop" onClick={onClose}>
-			<section class={`sheet config${view === "main" ? "" : " picker"}`} onClick={(event) => event.stopPropagation()}>
-				<div class="sheet-handle" />
-				{view === "providers" ? (
-					<>
-						<header class="sheet-header with-back">
-							<button type="button" class="sheet-back" onClick={() => setView("main")} aria-label="Back">
-								<ChevronLeft size={20} strokeWidth={2} />
-							</button>
-							<h2>Provider</h2>
-							<button type="button" onClick={onClose} aria-label="Close"><X size={16} strokeWidth={2} /></button>
-						</header>
-						<div class="picker-body">
-							<ProviderPicker
-								state={state}
-								error={error}
-								onPick={(providerId) => {
-									setError("");
-									void controller.selectProvider(providerId).then(() => setView("models")).catch((caught) => {
-										setError(caught instanceof Error ? caught.message : String(caught));
-									});
-								}}
-							/>
-						</div>
-					</>
-				) : view === "models" ? (
-					<>
-						<header class="sheet-header with-back">
-							<button type="button" class="sheet-back" onClick={() => setView("main")} aria-label="Back">
-								<ChevronLeft size={20} strokeWidth={2} />
-							</button>
-							<h2>Model</h2>
-							<button type="button" onClick={onClose} aria-label="Close"><X size={16} strokeWidth={2} /></button>
-						</header>
-						<div class="picker-body">
-							<ModelPicker controller={controller} state={state} onPicked={onClose} />
-						</div>
-					</>
-				) : (
-					<>
-						<header class="sheet-header">
-							<h2>Session</h2>
-							<button type="button" onClick={onClose} aria-label="Close"><X size={16} strokeWidth={2} /></button>
-						</header>
-						<div class="config-row">
-							<div>
-								<b>Permission</b>
-								<small>{PERMISSION_MODES.find((mode) => mode.id === state.settings.permissionMode)?.hint}</small>
-							</div>
-							<div class="config-pills">
-								{PERMISSION_MODES.map((mode) => (
-									<button type="button" class={state.settings.permissionMode === mode.id ? "selected mode" : ""} key={mode.id} onClick={() => controller.setPermissionMode(mode.id)}>
-										{mode.label}
+		<Sheet class={`config${view === "main" ? "" : " picker"}`} onClose={onClose}>
+			{(close) => (
+				<>
+					<div class="sheet-handle" />
+					<div ref={bodyRef} class="sheet-view">
+						{view === "providers" ? (
+							<>
+								<header class="sheet-header with-back">
+									<button type="button" class="sheet-back" onClick={() => go("main")} aria-label="Back">
+										<ChevronLeft size={20} strokeWidth={2} />
 									</button>
-								))}
-							</div>
-						</div>
-						<div class="config-row">
-							<div>
-								<b>Effort</b>
-								<small>{thinkingLevelsFor(state.model).length > 1 ? "Levels this model actually supports" : "This model does not expose effort controls"}</small>
-							</div>
-							<div class="config-pills">
-								{thinkingLevelsFor(state.model).map((level) => (
-									<button type="button" class={state.settings.thinkingLevel === level.id ? "selected effort" : ""} key={level.id} onClick={() => controller.setThinkingLevel(level.id)}>
-										{level.label}
+									<h2>Provider</h2>
+									<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+								</header>
+								<div class="picker-body">
+									<ProviderPicker
+										state={state}
+										error={error}
+										onPick={(providerId) => {
+											setError("");
+											void controller.selectProvider(providerId).then(() => go("models")).catch((caught) => {
+												setError(caught instanceof Error ? caught.message : String(caught));
+											});
+										}}
+									/>
+								</div>
+							</>
+						) : view === "models" ? (
+							<>
+								<header class="sheet-header with-back">
+									<button type="button" class="sheet-back" onClick={() => go("main")} aria-label="Back">
+										<ChevronLeft size={20} strokeWidth={2} />
 									</button>
-								))}
-							</div>
-						</div>
-						<button type="button" class="config-nav" onClick={() => setView("providers")}>
-							<div>
-								<b>Provider</b>
-								<small>{provider?.hint ?? "Choose a provider"}</small>
-							</div>
-							<span class="config-nav-value">{provider?.name ?? state.settings.providerId}</span>
-							<ChevronRight size={18} strokeWidth={2} aria-hidden="true" />
-						</button>
-						<button type="button" class="config-nav" onClick={() => setView("models")}>
-							<div>
-								<b>Model</b>
-								{modelName !== modelId && <small>{modelId}</small>}
-							</div>
-							<span class="config-nav-value">{modelName}</span>
-							<ChevronRight size={18} strokeWidth={2} aria-hidden="true" />
-						</button>
-					</>
-				)}
-			</section>
-		</div>
+									<h2>Model</h2>
+									<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+								</header>
+								<div class="picker-body">
+									<ModelPicker controller={controller} state={state} onPicked={close} />
+								</div>
+							</>
+						) : (
+							<>
+								<header class="sheet-header">
+									<h2>Session</h2>
+									<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+								</header>
+								<div class="config-row">
+									<div>
+										<b>Permission</b>
+										<small>{PERMISSION_MODES.find((mode) => mode.id === state.settings.permissionMode)?.hint}</small>
+									</div>
+									<div class="config-pills">
+										{PERMISSION_MODES.map((mode) => (
+											<button type="button" class={state.settings.permissionMode === mode.id ? "selected mode" : ""} key={mode.id} onClick={() => controller.setPermissionMode(mode.id)}>
+												{mode.label}
+											</button>
+										))}
+									</div>
+								</div>
+								<div class="config-row">
+									<div>
+										<b>Effort</b>
+										<small>{thinkingLevelsFor(state.model).length > 1 ? "Levels this model actually supports" : "This model does not expose effort controls"}</small>
+									</div>
+									<div class="config-pills">
+										{thinkingLevelsFor(state.model).map((level) => (
+											<button type="button" class={state.settings.thinkingLevel === level.id ? "selected effort" : ""} key={level.id} onClick={() => controller.setThinkingLevel(level.id)}>
+												{level.label}
+											</button>
+										))}
+									</div>
+								</div>
+								<button type="button" class="config-nav" onClick={() => go("providers")}>
+									<div>
+										<b>Provider</b>
+										<small>{provider?.hint ?? "Choose a provider"}</small>
+									</div>
+									<span class="config-nav-value">{provider?.name ?? state.settings.providerId}</span>
+									<ChevronRight size={18} strokeWidth={2} aria-hidden="true" />
+								</button>
+								<button type="button" class="config-nav" onClick={() => go("models")}>
+									<div>
+										<b>Model</b>
+										{modelName !== modelId && <small>{modelId}</small>}
+									</div>
+									<span class="config-nav-value">{modelName}</span>
+									<ChevronRight size={18} strokeWidth={2} aria-hidden="true" />
+								</button>
+							</>
+						)}
+					</div>
+				</>
+			)}
+		</Sheet>
 	);
 }
 
@@ -585,6 +595,91 @@ function ModelPicker({ controller, state, onPicked }: { controller: AgentControl
 				)}
 			</div>
 		</>
+	);
+}
+
+function CompactNotice({ kind, text, workspace }: { kind: "branch" | "compaction"; text: string; workspace?: PublicAgentState["workspace"] }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<div class="compact-banner">
+			<button type="button" class="compact-summary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+				{kind === "branch" ? "Branch summary" : "History compacted"}
+			</button>
+			<Collapse open={open}>
+				<Markdown text={text} workspace={workspace} />
+			</Collapse>
+		</div>
+	);
+}
+
+function JumpLatest({ visible, onJump }: { visible: boolean; onJump: () => void }) {
+	const ref = useRef<HTMLButtonElement>(null);
+	const first = useRef(true);
+	useLayoutEffect(() => {
+		const element = ref.current;
+		if (!element) return;
+		if (visible) {
+			element.style.pointerEvents = "auto";
+			element.tabIndex = 0;
+			element.setAttribute("aria-hidden", "false");
+		} else {
+			element.tabIndex = -1;
+			element.setAttribute("aria-hidden", "true");
+		}
+		void fadeSlide(element, visible, first.current).then(() => {
+			if (!visible && element.getAttribute("aria-hidden") === "true") element.style.pointerEvents = "none";
+		});
+		first.current = false;
+	}, [visible]);
+	return (
+		<button
+			ref={ref}
+			type="button"
+			class="jump-latest"
+			onClick={onJump}
+			aria-hidden={!visible}
+			tabIndex={visible ? 0 : -1}
+			aria-label="Jump to latest"
+		>
+			<ArrowDownToLine size={18} strokeWidth={2} aria-hidden="true" />
+		</button>
+	);
+}
+
+function Toast({ message, onDone }: { message: string; onDone: () => void }) {
+	const ref = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const element = ref.current;
+		if (!element) return;
+		void fadeInUp(element);
+		const hide = window.setTimeout(() => {
+			void playMotion(element, { opacity: 0, transform: "translateY(8px)" }, { duration: 0.16, ease: "easeIn" }).then(onDone);
+		}, 2400);
+		return () => window.clearTimeout(hide);
+	}, [message]);
+	return <div ref={ref} class="agent-toast" role="status">{message}</div>;
+}
+
+function ApprovalPanel({ approval, onApprove }: { approval: MutationRequest; onApprove: (decision: MutationDecision) => void }) {
+	const ref = useRef<HTMLElement>(null);
+	useEffect(() => {
+		const element = ref.current;
+		if (!element) return;
+		void fadeInUp(element);
+	}, [approval.id]);
+	return (
+		<section ref={ref} class="approval" role="alertdialog" aria-label="Approve agent edit">
+			<header>
+				<span>Edit</span>
+				<strong>{approval.title}</strong>
+			</header>
+			<pre>{approval.preview}</pre>
+			<div class="approval-actions">
+				<button type="button" onClick={() => onApprove("deny")}>Deny</button>
+				<button type="button" onClick={() => onApprove("allow-session")}>Allow this session</button>
+				<button class="primary" type="button" onClick={() => onApprove("allow")}>Allow once</button>
+			</div>
+		</section>
 	);
 }
 

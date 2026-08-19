@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, Eye, File, Folder, FolderOpen, LoaderCircle, Pencil, Search, Sparkles, Wrench } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { Collapse, RotateIcon } from "./Collapse";
 import { Markdown } from "./markdown";
 import type { WorkspaceInfo } from "../core/types";
 import { formatWorkDuration, groupWorkEntries, parseDirListing, splitReadOutput, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
@@ -33,9 +34,11 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
 		<section class="work-log settled" aria-label="Work log">
 			<button type="button" class="work-summary" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
 				<span>{duration === undefined ? "Worked" : `Worked for ${formatWorkDuration(duration)}`}</span>
-				<ChevronRight class={`work-chevron${expanded ? " open" : ""}`} size={14} strokeWidth={2} aria-hidden="true" />
+				<RotateIcon open={expanded} class="work-chevron">
+					<ChevronRight size={14} strokeWidth={2} />
+				</RotateIcon>
 			</button>
-			{expanded && body}
+			<Collapse open={expanded}>{body}</Collapse>
 		</section>
 	);
 }
@@ -66,15 +69,19 @@ function WorkBurst({ turnId, entries, workspace }: { turnId: string; entries: Wo
 	const latest = entries[entries.length - 1];
 	if (!latest) return null;
 	const previous = entries.slice(0, -1);
-	const visible = showPrevious ? entries : [latest];
 	return (
 		<div class="work-burst">
-			{visible.map((entry) => (
-				<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
-			))}
+			<Collapse open={showPrevious}>
+				{previous.map((entry) => (
+					<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
+				))}
+			</Collapse>
+			<WorkRow key={latest.id} turnId={turnId} entry={latest} workspace={workspace} />
 			{previous.length > 0 && (
 				<button type="button" class="work-more" aria-expanded={showPrevious} onClick={() => setShowPrevious((value) => !value)}>
-					<ChevronDown class={showPrevious ? "open" : ""} size={14} strokeWidth={2} aria-hidden="true" />
+					<RotateIcon open={showPrevious} degrees={180} class="work-more-icon">
+						<ChevronDown size={14} strokeWidth={2} />
+					</RotateIcon>
 					<span>{showPrevious ? "Show fewer tool calls" : `+${previous.length} previous tool ${previous.length === 1 ? "call" : "calls"}`}</span>
 				</button>
 			)}
@@ -116,7 +123,7 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 			<button type="button" class="work-row-toggle" aria-expanded={open} onClick={toggle}>
 				{summary}
 			</button>
-			<div hidden={!open}>
+			<Collapse open={open}>
 				{listing
 					? <DirListing entries={listing} empty={entry.output === "Directory is empty."} />
 					: entry.type === "thinking"
@@ -124,7 +131,7 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 						: entry.kind === "read"
 							? <ReadBody output={entry.output ?? ""} fallback={formatArgs(entry.args ?? {})} />
 							: <pre class="work-body">{entry.output ?? formatArgs(entry.args ?? {})}</pre>}
-			</div>
+			</Collapse>
 		</div>
 	);
 }

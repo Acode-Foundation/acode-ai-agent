@@ -28,6 +28,8 @@ test("renders headings, lists, fences, quotes, and emphasis through marked", () 
 	assert.match(html, /data-lang="ts"/);
 	assert.match(html, /class="md-code"/);
 	assert.match(html, /data-copy/);
+	assert.match(html, /data-wrap/);
+	assert.match(html, /md-code-icon-copy/);
 	assert.match(html, /const x = 1;/);
 	assert.match(html, /class="md-ref md-ref--web"/);
 	assert.match(html, /data-kind="web"/);
