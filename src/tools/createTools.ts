@@ -95,7 +95,7 @@ export function createWorkspaceTools(
 				maxFiles: workspace.info.remote ? Math.min(80, options.maxWalkFiles()) : options.maxWalkFiles(),
 				signal,
 				onEntry: async (entry) => {
-					if (looksBinary(entry.path)) return;
+					if (isBinaryPath(entry.path)) return;
 					try {
 						const text = await workspace.readText(entry.path);
 						assertTextFile(entry.path, text);
@@ -214,7 +214,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function assertTextFile(path: string, content: string): void {
-	if (looksBinary(path) || content.includes("\0")) throw new Error(`${path} appears to be binary.`);
+	if (isBinaryPath(path) || content.includes("\0")) throw new Error(`${path} appears to be binary.`);
 	if (content.length > maxTextCharacters()) throw new Error(`${path} exceeds Acode's configured file-size limit.`);
 }
 
@@ -232,8 +232,13 @@ function maxTextCharacters(): number {
 	}
 }
 
-function looksBinary(path: string): boolean {
-	return /\.(?:png|jpe?g|gif|webp|ico|pdf|zip|gz|tar|7z|apk|so|wasm|woff2?|ttf|mp[34]|wav|ogg)$/i.test(path);
+function isBinaryPath(path: string): boolean {
+	try {
+		const helpers = acode.require("helpers") as Acode.Helpers | undefined;
+		return helpers?.isBinary?.(path) === true;
+	} catch {
+		return false;
+	}
 }
 
 function truncate(value: string, max: number): string {
