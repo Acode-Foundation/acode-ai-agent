@@ -171,3 +171,88 @@ test("keeps the last turn live while the run is active even without a streaming 
 	expect(turns[0]?.work[0]?.id).toBe("t1");
 	expect(turns[0]?.work[0]?.label).toBe("Listed folder");
 });
+
+function toolResult(id: string, name: string, text: string, timestamp: number): AgentMessage {
+	return {
+		role: "toolResult",
+		toolCallId: id,
+		toolName: name,
+		content: [{ type: "text", text }],
+		isError: false,
+		timestamp,
+	};
+}
+
+test("does not reopen a finished turn's work log when the next run starts before its user message is in the transcript", () => {
+	const turns = buildTurns(
+		[
+			user("map the project", 1),
+			assistant([{ type: "toolCall", id: "t1", name: "list_dir", arguments: { path: "." } }], 2),
+			toolResult("t1", "list_dir", "f  src", 3),
+			assistant([{ type: "text", text: "Here is the layout." }], 4),
+		],
+		undefined,
+		[{ id: "t1", name: "list_dir", args: { path: "." }, status: "done", startedAt: 2 }],
+		true,
+	);
+	expect(turns).toHaveLength(1);
+	expect(turns[0]?.streaming).toBeFalsy();
+	expect(turns[0]?.work).toHaveLength(1);
+	expect(turns[0]?.answer).toBe("Here is the layout.");
+});
+
+test("does not attach the previous run's tool activities to the next user turn", () => {
+	const turns = buildTurns(
+		[
+			user("map the project", 1),
+			assistant([{ type: "toolCall", id: "t1", name: "list_dir", arguments: { path: "." } }], 2),
+			toolResult("t1", "list_dir", "f  src", 3),
+			assistant([{ type: "text", text: "Here is the layout." }], 4),
+			user("now fix the header", 5),
+		],
+		undefined,
+		[{ id: "t1", name: "list_dir", args: { path: "." }, status: "done", startedAt: 2 }],
+		true,
+	);
+	expect(turns).toHaveLength(2);
+	expect(turns[0]?.streaming).toBeFalsy();
+	expect(turns[1]?.streaming).toBe(true);
+	expect(turns[1]?.user).toBe("now fix the header");
+	expect(turns[1]?.work).toHaveLength(0);
+});
+
+test("keeps a tool turn live after results while the same run continues", () => {
+	const turns = buildTurns(
+		[
+			user("look around", 1),
+			assistant([{ type: "toolCall", id: "t1", name: "list_dir", arguments: { path: "." } }], 2),
+			toolResult("t1", "list_dir", "f  src", 3),
+		],
+		undefined,
+		[{ id: "t1", name: "list_dir", args: { path: "." }, status: "done", startedAt: 2 }],
+		true,
+	);
+	expect(turns[0]?.streaming).toBe(true);
+	expect(turns[0]?.work[0]?.status).toBe("done");
+});
+
+test("merges new tool activity into the current user turn only", () => {
+	const turns = buildTurns(
+		[
+			user("map the project", 1),
+			assistant([{ type: "toolCall", id: "t1", name: "list_dir", arguments: { path: "." } }], 2),
+			toolResult("t1", "list_dir", "f  src", 3),
+			assistant([{ type: "text", text: "Here is the layout." }], 4),
+			user("read App.tsx", 5),
+		],
+		undefined,
+		[
+			{ id: "t1", name: "list_dir", args: { path: "." }, status: "done", startedAt: 2 },
+			{ id: "t2", name: "read_file", args: { path: "src/ui/App.tsx" }, status: "running", startedAt: 6 },
+		],
+		true,
+	);
+	expect(turns[1]?.streaming).toBe(true);
+	expect(turns[1]?.work.map((entry) => entry.id)).toEqual(["t2"]);
+	expect(turns[1]?.work[0]?.label).toBe("Read file");
+});

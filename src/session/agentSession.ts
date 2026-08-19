@@ -157,7 +157,7 @@ export class AgentSession {
 		} catch (error) {
 			if (!(error instanceof AgentHarnessError) || error.code !== "invalid_state") throw error;
 			this.#runAbort = new AbortController();
-			this.#running = true;
+			this.#beginRun();
 			this.#snapshot = { ...this.#snapshot, error: undefined };
 			this.#publish();
 			try {
@@ -243,7 +243,7 @@ export class AgentSession {
 				...event.followUp.map((message) => queuedFromMessage(message, "followUp")),
 			].filter((item) => item.text.trim() || item.images);
 		}
-		if (event.type === "agent_start") this.#running = true;
+		if (event.type === "agent_start") this.#beginRun();
 		if (event.type === "settled" || event.type === "abort") {
 			this.#running = false;
 			this.#settleActivities();
@@ -262,6 +262,7 @@ export class AgentSession {
 	#onAgentEvent(event: AgentEvent): void {
 		if (event.type === "message_start" || event.type === "message_update") {
 			if (event.message.role === "assistant") this.#streaming = event.message;
+			if (event.message.role === "user") this.#rememberUserMessage(event.message);
 		}
 		if (event.type === "message_end") this.#streaming = undefined;
 		if (event.type === "tool_execution_start") {
@@ -323,10 +324,20 @@ export class AgentSession {
 		};
 	}
 
+	#beginRun(): void {
+		this.#running = true;
+		this.#activities.clear();
+		this.#streaming = undefined;
+	}
+
+	#rememberUserMessage(message: AgentMessage): void {
+		if (message.role !== "user") return;
+		const exists = this.#messages.some((item) => item.role === "user" && "timestamp" in item && item.timestamp === message.timestamp);
+		if (!exists) this.#messages = [...this.#messages, message];
+	}
+
 	#settleActivities(): void {
-		for (const activity of this.#activities.values()) {
-			if (activity.status === "running") activity.status = "done";
-		}
+		this.#activities.clear();
 		this.#streaming = undefined;
 	}
 

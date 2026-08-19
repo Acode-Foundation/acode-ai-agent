@@ -71,12 +71,22 @@ export function buildTurns(
 	flushBucket();
 
 	const last = turns[turns.length - 1];
-	if (last && isRunning) {
+	if (last && isRunning && isLiveCurrentTurn(last, transcript)) {
 		last.streaming = true;
-		mergeActivities(last, activities);
+		const priorWorkIds = new Set(turns.slice(0, -1).flatMap((turn) => turn.work.map((entry) => entry.id)));
+		mergeActivities(last, activities, priorWorkIds);
 	}
 
 	return turns;
+}
+
+function isLiveCurrentTurn(turn: ChatTurn, transcript: AgentMessage[]): boolean {
+	if (turn.streaming) return true;
+	const lastMessage = transcript[transcript.length - 1];
+	if (!lastMessage) return false;
+	if (lastMessage.role === "user" || lastMessage.role === "toolResult") return true;
+	if (lastMessage.role === "assistant" && Array.isArray(lastMessage.content) && lastMessage.content.some((part) => part.type === "toolCall")) return true;
+	return turn.work.some((entry) => entry.status === "running");
 }
 
 export function formatWorkDuration(durationMs: number): string {
@@ -299,7 +309,7 @@ function flatten(messages: AgentMessage[]): FlatPart[] {
 	return parts;
 }
 
-function mergeActivities(turn: ChatTurn, activities: ToolActivity[]): void {
+function mergeActivities(turn: ChatTurn, activities: ToolActivity[], priorWorkIds: Set<string>): void {
 	for (const activity of activities) {
 		const presented = presentTool(activity.name, activity.args);
 		const existing = turn.work.find((entry) => entry.id === activity.id);
@@ -310,6 +320,7 @@ function mergeActivities(turn: ChatTurn, activities: ToolActivity[]): void {
 			existing.detail = presentTool(activity.name, activity.args, existing.output).detail ?? presented.detail;
 			continue;
 		}
+		if (priorWorkIds.has(activity.id)) continue;
 		turn.work.push({
 			id: activity.id,
 			type: "tool",
