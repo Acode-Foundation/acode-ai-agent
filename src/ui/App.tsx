@@ -5,6 +5,7 @@ import { PERMISSION_MODES, type PermissionMode } from "../core/schema";
 import type { ChatSummary, MutationDecision, MutationRequest, ProviderId, PublicAgentState, QueuedPrompt, WorkspaceInfo } from "../core/types";
 import { PROVIDERS } from "../providers/providerRegistry";
 import { thinkingLevelsFor } from "../providers/thinkingLevels";
+import { backActionId, useBackAction } from "./actionStack";
 import { Collapse } from "./Collapse";
 import { CopyButton } from "./CopyButton";
 import { animateHeight, fadeInUp, fadeSlide, playMotion } from "./motion";
@@ -502,6 +503,7 @@ function ConfigSheet({ controller, state, onClose }: { controller: AgentControll
 		void fadeInUp(body);
 	}, [view]);
 	const go = (next: typeof view) => setView(next);
+	useBackAction(backActionId("config-view"), () => go("main"), view !== "main");
 	return (
 		<Sheet class={`config${view === "main" ? "" : " picker"}`} onClose={onClose}>
 			{(close) => (

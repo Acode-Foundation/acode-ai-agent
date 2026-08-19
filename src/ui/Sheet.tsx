@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef } from "preact/hooks";
+import { backActionId, useBackAction } from "./actionStack";
 import { enterSheet, exitSheet, stopMotion } from "./motion";
 
 export function Sheet({
@@ -14,6 +15,8 @@ export function Sheet({
 	const dimRef = useRef<HTMLDivElement>(null);
 	const sheetRef = useRef<HTMLElement>(null);
 	const closing = useRef(false);
+	const backId = useRef("");
+	if (!backId.current) backId.current = backActionId("sheet", true);
 
 	const close = useCallback(() => {
 		if (closing.current) return;
@@ -26,6 +29,8 @@ export function Sheet({
 		}
 		void exitSheet(dim, sheet).then(onClose);
 	}, [onClose]);
+
+	useBackAction(backId.current, close);
 
 	useEffect(() => {
 		const dim = dimRef.current;
