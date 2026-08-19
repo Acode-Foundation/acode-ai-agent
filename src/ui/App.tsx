@@ -28,7 +28,7 @@ export function App({ controller }: Props) {
 	useEffect(() => controller.changes.subscribe(setState), [controller]);
 	const running = state.status === "running";
 	const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}`;
-	const { showLatest, jumpToLatest, pin } = useChatScroll(scrollRef, followKey);
+	const { showLatest, jumpToLatest, pin, captureThread } = useChatScroll(scrollRef, followKey);
 
 	const turns = useMemo(
 		() => buildTurns(state.messages, running ? state.streamingMessage : undefined, state.activities, running),
@@ -117,6 +117,7 @@ export function App({ controller }: Props) {
 				contextTokens={state.contextTokens}
 				contextWindow={state.model?.contextWindow}
 				queued={state.queued}
+				onFocusComposer={captureThread}
 			/>
 
 			{chatsOpen && <ChatSheet controller={controller} state={state} onClose={() => setChatsOpen(false)} onError={setToast} />}
@@ -198,6 +199,19 @@ function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: bool
 	);
 }
 
+function keepPagePinned(from: HTMLElement) {
+	const pin = () => {
+		const root = from.closest(".acode-agent-root");
+		if (root instanceof HTMLElement) root.scrollTop = 0;
+		if (root?.parentElement) root.parentElement.scrollTop = 0;
+		const host = from.getRootNode();
+		if (host instanceof ShadowRoot && host.host instanceof HTMLElement) host.host.scrollTop = 0;
+		window.scrollTo(0, 0);
+	};
+	pin();
+	requestAnimationFrame(pin);
+}
+
 function Composer(props: {
 	value: string;
 	onChange: (value: string) => void;
@@ -214,6 +228,7 @@ function Composer(props: {
 	contextTokens: number;
 	contextWindow?: number;
 	queued: QueuedPrompt[];
+	onFocusComposer: () => void;
 }) {
 	const textarea = useRef<HTMLTextAreaElement>(null);
 	const primed = useRef(false);
@@ -252,6 +267,11 @@ function Composer(props: {
 					placeholder={props.disabled ? "Open a folder to begin" : props.running ? "Steer now, or queue a follow-up…" : "Ask anything…"}
 					rows={1}
 					onInput={(event) => props.onChange(event.currentTarget.value)}
+					onTouchStart={() => props.onFocusComposer()}
+					onFocus={(event) => {
+						props.onFocusComposer();
+						keepPagePinned(event.currentTarget);
+					}}
 					onKeyDown={(event) => {
 						if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSend) {
 							event.preventDefault();
