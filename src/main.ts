@@ -1,5 +1,6 @@
 import plugin from "../plugin.json";
 import { AgentController } from "./app/agentController";
+import { getCodeHighlight } from "./platform/codeHighlight";
 import { installNativeFetch } from "./platform/nativeHttp";
 import { PROVIDERS } from "./providers/providerRegistry";
 import { mountApp, unmountApp } from "./ui/mount";
@@ -59,7 +60,7 @@ class AcodeAiAgentPlugin {
 
 		const root = document.createElement("div");
 		root.className = "acode-agent-root";
-		const file = new EditorFile(plugin.name, {
+		const fileOptions: Acode.FileOptions = {
 			id: TAB_ID,
 			render: true,
 			type: "page",
@@ -67,7 +68,11 @@ class AcodeAiAgentPlugin {
 			tabIcon: "icon brain",
 			hideQuickTools: true,
 			stylesheets: [styles],
-		});
+		};
+		if (getCodeHighlight()) {
+			Object.assign(fileOptions, { highlightStyles: true });
+		}
+		const file = new EditorFile(plugin.name, fileOptions);
 		file.setCustomTitle(() => "In-process coding agent");
 		file.onclose = () => {
 			this.#unmount();

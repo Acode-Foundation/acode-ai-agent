@@ -465,6 +465,9 @@
 	white-space: pre;
 	tab-size: 2;
 }
+.md-code pre code.cm-highlighted {
+	border-radius: 0 0 9px 9px;
+}
 .md-code.is-wrap pre { overflow-x: hidden; }
 .md-code.is-wrap pre code {
 	white-space: pre-wrap;

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef } from "preact/hooks";
 import type { WorkspaceInfo } from "../core/types";
 import { openCustomTab } from "../platform/authTab";
+import { highlightCodeBlocks } from "../platform/codeHighlight";
 import { PathSandbox } from "../workspace/pathSandbox";
 import { copyText, playCopiedFeedback, swapCopyGlyphs } from "./CopyButton";
 import { renderMarkdown } from "./markdownRender";
@@ -15,6 +16,11 @@ export function Markdown({ text, workspace }: { text: string; workspace?: Worksp
 		host.querySelectorAll(".md-code").forEach((block, index) => {
 			if (wrapByIndex.current[index]) setCodeWrap(block as HTMLElement, true);
 		});
+		let cancelled = false;
+		void highlightCodeBlocks(host, { cancelled: () => cancelled });
+		return () => {
+			cancelled = true;
+		};
 	}, [html]);
 	return (
 		<div
