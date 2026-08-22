@@ -429,6 +429,7 @@ function ConfigSheet({ controller, state, onClose }: { controller: AgentControll
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const firstView = useRef(true);
 	const provider = PROVIDERS.find((item) => item.id === state.settings.providerId);
+	const effortLevels = thinkingLevelsFor(state.model);
 	const modelId = state.model?.id ?? state.settings.modelId;
 	const modelName = state.model?.name ?? "Choose model";
 	useLayoutEffect(() => {
@@ -502,19 +503,21 @@ function ConfigSheet({ controller, state, onClose }: { controller: AgentControll
 										))}
 									</div>
 								</div>
-								<div class="config-row">
-									<div>
-										<b>Effort</b>
-										<small>{thinkingLevelsFor(state.model).length > 1 ? "Levels this model actually supports" : "This model does not expose effort controls"}</small>
+								{effortLevels.length > 0 && (
+									<div class="config-row">
+										<div>
+											<b>Effort</b>
+											<small>Levels this model actually supports</small>
+										</div>
+										<div class="config-pills">
+											{effortLevels.map((level) => (
+												<button type="button" class={state.settings.thinkingLevel === level.id ? "selected effort" : ""} key={level.id} onClick={() => controller.setThinkingLevel(level.id)}>
+													{level.label}
+												</button>
+											))}
+										</div>
 									</div>
-									<div class="config-pills">
-										{thinkingLevelsFor(state.model).map((level) => (
-											<button type="button" class={state.settings.thinkingLevel === level.id ? "selected effort" : ""} key={level.id} onClick={() => controller.setThinkingLevel(level.id)}>
-												{level.label}
-											</button>
-										))}
-									</div>
-								</div>
+								)}
 								<button type="button" class="config-nav" onClick={() => go("providers")}>
 									<div>
 										<b>Provider</b>

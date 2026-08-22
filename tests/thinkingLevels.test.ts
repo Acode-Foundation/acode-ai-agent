@@ -20,7 +20,7 @@ const grok45 = {
 test("Grok 4.5 only offers low, medium, and high", () => {
 	expect(thinkingLevelsFor(grok45).map((level) => level.id)).toEqual(["low", "medium", "high"]);
 	expect(clampThinkingLevel(grok45, "xhigh")).toBe("high");
-	expect(clampThinkingLevel(grok45, "off")).toBe("high");
+	expect(clampThinkingLevel(grok45, "off")).toBe("low");
 });
 
 test("Grok 4.6 overlay adds xhigh and is merged into the frozen catalog", () => {
@@ -31,6 +31,19 @@ test("Grok 4.6 overlay adds xhigh and is merged into the frozen catalog", () => 
 	expect(merged.map((model) => model.id).sort()).toEqual(["grok-4.5", "grok-4.6"]);
 });
 
-test("models without reasoning only offer off", () => {
-	expect(thinkingLevelsFor({ ...grok45, reasoning: false, thinkingLevelMap: undefined }).map((level) => level.id)).toEqual(["off"]);
+test("models without configurable reasoning hide effort and clamp to off", () => {
+	expect(thinkingLevelsFor({ ...grok45, reasoning: false, thinkingLevelMap: undefined })).toEqual([]);
+	expect(clampThinkingLevel({ ...grok45, reasoning: false, thinkingLevelMap: undefined }, "high")).toBe("off");
+});
+
+test("uses pi's opt-in rules for extended OpenRouter efforts", () => {
+	const openrouterModel = {
+		...grok45,
+		provider: "openrouter",
+		compat: { supportsDeveloperRole: false, thinkingFormat: "openrouter" },
+		thinkingLevelMap: undefined,
+	} as Model<any>;
+	expect(thinkingLevelsFor(openrouterModel).map((level) => level.id)).toEqual(["off", "minimal", "low", "medium", "high"]);
+	expect(thinkingLevelsFor({ ...openrouterModel, thinkingLevelMap: { off: null, xhigh: "xhigh", max: "max" } }).map((level) => level.id))
+		.toEqual(["minimal", "low", "medium", "high", "xhigh", "max"]);
 });

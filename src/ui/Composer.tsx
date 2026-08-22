@@ -51,6 +51,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	const showStop = props.running && empty && imageCount === 0;
 	const used = props.contextWindow ? Math.min(100, Math.round((props.contextTokens / props.contextWindow) * 100)) : 0;
 	const visionHint = imageCount > 0 && !props.acceptsImages;
+	const effortLabel = props.effortLevels.find((level) => level.id === props.effort)?.label;
 
 	const sync = useCallback(() => {
 		const root = editor.current;
@@ -364,8 +365,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 					<button class="config-chip" type="button" onClick={props.onOpenConfig} aria-label="Session configuration">
 						<Settings size={16} strokeWidth={2} aria-hidden="true" />
 						<span class="mode">{PERMISSION_MODES.find((mode) => mode.id === props.permissionMode)?.label ?? "Ask"}</span>
-						<span class="sep">·</span>
-						<span class="effort">{props.effortLevels.find((level) => level.id === props.effort)?.label ?? props.effort}</span>
+						{effortLabel && (
+							<>
+								<span class="sep">·</span>
+								<span class="effort">{effortLabel}</span>
+							</>
+						)}
 						<span class="sep">·</span>
 						<span class="model">{props.modelName}</span>
 					</button>

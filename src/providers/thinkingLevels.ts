@@ -1,4 +1,9 @@
-import type { Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import {
+	clampThinkingLevel as clampModelThinkingLevel,
+	getSupportedThinkingLevels,
+	type Model,
+	type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 
 const THINKING_LEVELS: Array<{ id: ModelThinkingLevel; label: string }> = [
 	{ id: "off", label: "Off" },
@@ -11,20 +16,12 @@ const THINKING_LEVELS: Array<{ id: ModelThinkingLevel; label: string }> = [
 ];
 
 export function thinkingLevelsFor(model?: Model<any>): typeof THINKING_LEVELS {
-	if (!model) return THINKING_LEVELS;
-	if (!model.reasoning) return THINKING_LEVELS.filter((level) => level.id === "off");
-	const map = model.thinkingLevelMap;
-	if (map) return THINKING_LEVELS.filter((level) => map[level.id] !== null);
-	const compat = model.compat as { supportsReasoningEffort?: boolean } | undefined;
-	if (compat?.supportsReasoningEffort === false) return THINKING_LEVELS.filter((level) => level.id === "off");
-	return THINKING_LEVELS;
+	if (!model) return [];
+	const supported = getSupportedThinkingLevels(model);
+	if (!supported.some((level) => level !== "off")) return [];
+	return THINKING_LEVELS.filter((level) => supported.includes(level.id));
 }
 
 export function clampThinkingLevel(model: Model<any> | undefined, level: ModelThinkingLevel): ModelThinkingLevel {
-	const levels = thinkingLevelsFor(model);
-	if (levels.some((item) => item.id === level)) return level;
-	return levels.find((item) => item.id === "high")?.id
-		?? levels.find((item) => item.id === "medium")?.id
-		?? levels[0]?.id
-		?? "off";
+	return model ? clampModelThinkingLevel(model, level) : level;
 }
