@@ -68,19 +68,23 @@ export function createWorkspaceTools(
 	const grep: AgentTool<any> = {
 		name: "grep",
 		label: "Search workspace",
-		description: "Search text files for a literal string. Returns workspace-relative paths and line numbers.",
+		description: "Search text files for a string or regular expression. Returns workspace-relative paths and line numbers.",
 		parameters: Type.Object({
-			query: Type.String({ description: "Literal text to find" }),
+			query: Type.String({ description: "Text or regular expression to find" }),
 			path: Type.Optional(Type.String({ description: "Directory to search" })),
 			case_sensitive: Type.Optional(Type.Boolean({ default: false })),
+			regex: Type.Optional(Type.Boolean({ default: false, description: "Interpret query as a regular expression" })),
 		}),
 		executionMode: workspace.info.remote ? "sequential" : "parallel",
 		execute: async (_id, params, signal, onUpdate) => {
-			const input = params as { query: string; path?: string; case_sensitive?: boolean };
+			const input = params as { query: string; path?: string; case_sensitive?: boolean; regex?: boolean };
 			const query = String(input.query);
 			if (!query) throw new Error("Search query cannot be empty.");
+			const caseSensitive = Boolean(input.case_sensitive);
+			const regex = Boolean(input.regex);
+			const expression = regex ? compileSearchRegex(query, caseSensitive) : undefined;
 			const path = workspace.sandbox.normalize(input.path ?? "");
-			const indexed = await grepViaFileIndex(workspace, query, path, Boolean(input.case_sensitive), signal);
+			const indexed = await grepViaFileIndex(workspace, query, path, caseSensitive, regex, signal);
 			if (indexed && (indexed.hits.length > 0 || indexed.files > 0)) {
 				return result(indexed.hits.join("\n") || `No matches found in ${indexed.files} indexed files.`, {
 					operation: "grep",
@@ -88,7 +92,7 @@ export function createWorkspaceTools(
 					truncated: indexed.hits.length >= 200,
 				});
 			}
-			const needle = input.case_sensitive ? query : query.toLowerCase();
+			const needle = caseSensitive ? query : query.toLowerCase();
 			const hits: string[] = [];
 			const walk = await workspace.walk({
 				path,
@@ -99,11 +103,18 @@ export function createWorkspaceTools(
 					try {
 						const text = await workspace.readText(entry.path);
 						assertTextFile(entry.path, text);
-						for (const [index, line] of text.split(/\r?\n/).entries()) {
-							const haystack = input.case_sensitive ? line : line.toLowerCase();
-							if (haystack.includes(needle)) hits.push(`${entry.path}:${index + 1}: ${truncate(line.trim(), 240)}`);
-							if (hits.length >= 200) return true;
+						if (expression) {
+							for (const match of matchingRegexLines(text, expression, 200 - hits.length)) {
+								hits.push(`${entry.path}:${match.line}: ${truncate(match.text.trim(), 240)}`);
+							}
+						} else {
+							for (const [index, line] of text.split(/\r?\n/).entries()) {
+								const haystack = caseSensitive ? line : line.toLowerCase();
+								if (haystack.includes(needle)) hits.push(`${entry.path}:${index + 1}: ${truncate(line.trim(), 240)}`);
+								if (hits.length >= 200) return true;
+							}
 						}
+						if (hits.length >= 200) return true;
 					} catch {
 						// Unreadable/binary files are skipped during bounded search.
 					}
@@ -245,11 +256,49 @@ function truncate(value: string, max: number): string {
 	return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
+function compileSearchRegex(query: string, caseSensitive: boolean): RegExp {
+	try {
+		return new RegExp(query, caseSensitive ? "gm" : "gim");
+	} catch (error) {
+		throw new Error(`Invalid regular expression: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
+function matchingRegexLines(text: string, expression: RegExp, limit: number): Array<{ line: number; text: string }> {
+	if (limit <= 0) return [];
+	expression.lastIndex = 0;
+	const hits: Array<{ line: number; text: string }> = [];
+	let line = 1;
+	let lineStart = 0;
+	let scanOffset = 0;
+	let lastReportedLine = 0;
+	let match: RegExpExecArray | null;
+	while ((match = expression.exec(text))) {
+		while (scanOffset < match.index) {
+			const newline = text.indexOf("\n", scanOffset);
+			if (newline < 0 || newline >= match.index) break;
+			line += 1;
+			lineStart = newline + 1;
+			scanOffset = newline + 1;
+		}
+		if (line !== lastReportedLine) {
+			const newline = text.indexOf("\n", lineStart);
+			const lineText = text.slice(lineStart, newline < 0 ? text.length : newline).replace(/\r$/, "");
+			hits.push({ line, text: lineText });
+			lastReportedLine = line;
+			if (hits.length >= limit) break;
+		}
+		if (match[0].length === 0) expression.lastIndex += 1;
+	}
+	return hits;
+}
+
 async function grepViaFileIndex(
 	workspace: AcodeWorkspace,
 	query: string,
 	path: string,
 	caseSensitive: boolean,
+	regex: boolean,
 	signal?: AbortSignal,
 ): Promise<{ hits: string[]; files: number } | undefined> {
 	try {
@@ -263,6 +312,7 @@ async function grepViaFileIndex(
 			search: query,
 			options: {
 				caseSensitive,
+				regExp: regex,
 				include: path ? `${path}/**,${path}/*` : undefined,
 			},
 			overlays: dirtyEditorOverlays(),
