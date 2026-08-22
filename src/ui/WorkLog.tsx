@@ -52,7 +52,7 @@ export function WorkingIndicator({ startedAt }: { startedAt?: number }) {
 		const update = () => {
 			if (!labelRef.current) return;
 			const seconds = Math.max(0, Math.floor((Date.now() - started) / 1_000));
-			labelRef.current.textContent = seconds > 0 ? `Working for ${seconds}s` : "Working";
+			labelRef.current.textContent = seconds > 0 ? `Working for ${formatWorkDuration(seconds * 1_000)}` : "Working";
 		};
 		update();
 		const timer = window.setInterval(update, 1_000);
