@@ -151,6 +151,7 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 export type WorkGroup = { kind: "actions"; entries: WorkEntry[] } | { kind: "content"; entry: WorkEntry };
 
 export type DirEntry = { kind: "dir" | "file"; name: string };
+export type FileResult = { path: string; line?: number; preview?: string };
 
 export function parseDirListing(output?: string): DirEntry[] | undefined {
 	if (!output) return undefined;
@@ -163,6 +164,25 @@ export function parseDirListing(output?: string): DirEntry[] | undefined {
 		return [{ kind: match[1] === "d" ? "dir" as const : "file" as const, name }];
 	});
 	return entries.length ? entries : undefined;
+}
+
+export function parseToolFileResults(name: string, output?: string): FileResult[] | undefined {
+	if (!output) return undefined;
+	if (name === "glob") {
+		const matches = output.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line && !/^No files matched\b/.test(line))
+			.map((path) => ({ path }));
+		return matches.length ? matches : [];
+	}
+	if (name !== "grep") return undefined;
+	const matches = output.split("\n").flatMap((line) => {
+		const match = /^(.+?):(\d+):\s?(.*)$/.exec(line);
+		if (!match) return [];
+		return [{ path: match[1]!, line: Number(match[2]), preview: match[3]?.trim() || undefined }];
+	});
+	if (matches.length) return matches;
+	return /^No matches found\b/.test(output) ? [] : undefined;
 }
 
 export function splitWorkBurst(entries: WorkEntry[], live: boolean): { featured: WorkEntry[]; grouped: WorkEntry[] } {

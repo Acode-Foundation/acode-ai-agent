@@ -2,6 +2,7 @@ import plugin from "../plugin.json";
 import { AgentController } from "./app/agentController";
 import { getCodeHighlight } from "./platform/codeHighlight";
 import { installNativeFetch } from "./platform/nativeHttp";
+import { setPluginBaseUrl } from "./platform/pluginAssets";
 import { PROVIDERS } from "./providers/providerRegistry";
 import { mountApp, unmountApp } from "./ui/mount";
 import styles from "./ui/styles.css";
@@ -16,8 +17,9 @@ class AcodeAiAgentPlugin {
 	#controller: AgentController | null = null;
 	#pauseHandler = () => this.#controller?.abort();
 
-	async init(_baseUrl: string, _$page: Acode.WCPage, options: Acode.PluginInitOptions): Promise<void> {
+	async init(baseUrl: string, _$page: Acode.WCPage, options: Acode.PluginInitOptions): Promise<void> {
 		installNativeFetch();
+		setPluginBaseUrl(baseUrl);
 		const controller = new AgentController(options.ctx);
 		this.#controller = controller;
 		this.#registerCommands();

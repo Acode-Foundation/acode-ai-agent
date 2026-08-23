@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { buildTurns, formatWorkDuration, groupWorkEntries, parseDirListing, presentTool, splitReadOutput, splitWorkBurst, type WorkEntry } from "../src/ui/transcript.ts";
+import { buildTurns, formatWorkDuration, groupWorkEntries, parseDirListing, parseToolFileResults, presentTool, splitReadOutput, splitWorkBurst, type WorkEntry } from "../src/ui/transcript.ts";
 
 function user(text: string, timestamp = 1): AgentMessage {
 	return { role: "user", content: text, timestamp };
@@ -212,6 +212,19 @@ test("parses list_dir output into basenames without host class names", () => {
 		{ kind: "file", name: "main.ts" },
 	]);
 	expect(parseDirListing("Directory is empty.")).toHaveLength(0);
+});
+
+test("parses grep and glob output into navigable file results", () => {
+	expect(parseToolFileResults("grep", "src/ui/App.tsx:42: return <App />;\nsrc/main.ts:8: mountApp();")).toEqual([
+		{ path: "src/ui/App.tsx", line: 42, preview: "return <App />;" },
+		{ path: "src/main.ts", line: 8, preview: "mountApp();" },
+	]);
+	expect(parseToolFileResults("glob", "src/ui/App.tsx\nsrc/main.ts")).toEqual([
+		{ path: "src/ui/App.tsx" },
+		{ path: "src/main.ts" },
+	]);
+	expect(parseToolFileResults("glob", "No files matched **/*.vue in 12 files.")).toEqual([]);
+	expect(parseToolFileResults("grep", "Searched src/ui/App.tsx")).toBeUndefined();
 });
 
 test("keeps the last turn live while the run is active even without a streaming message", () => {

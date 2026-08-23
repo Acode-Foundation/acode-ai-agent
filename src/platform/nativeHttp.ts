@@ -100,19 +100,24 @@ export function installNativeFetch(): boolean {
 function toFetchResponse(raw: CordovaHttpResponse): Response {
 	const status = clampStatus(raw.status);
 	const body = raw.data == null ? raw.error ?? "" : raw.data;
+	const responseBody = NULL_BODY_STATUSES.has(status)
+		? null
+		: typeof body === "string" ? body : JSON.stringify(body);
 	const headers = new Headers();
 	for (const [key, value] of Object.entries(raw.headers ?? {})) {
 		if (typeof value === "string") headers.set(key, value);
 	}
-	if (!headers.has("content-type") && typeof body === "string" && looksJson(body)) {
+	if (responseBody !== null && !headers.has("content-type") && typeof body === "string" && looksJson(body)) {
 		headers.set("Content-Type", "application/json");
 	}
-	return new Response(typeof body === "string" ? body : JSON.stringify(body), {
+	return new Response(responseBody, {
 		status,
 		statusText: statusText(status, raw.error),
 		headers,
 	});
 }
+
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
 
 function clampStatus(status: number | undefined): number {
 	if (typeof status === "number" && status >= 200 && status <= 599) return status;

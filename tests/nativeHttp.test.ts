@@ -51,6 +51,26 @@ test("sends through cordova.plugin.http and maps error statuses to Response", as
 	}
 });
 
+test("drops native payloads for Fetch statuses that forbid a response body", async () => {
+	installHttp({
+		sendRequest(url, _options, success) {
+			const status = Number(new URL(url).pathname.slice(1));
+			success({ status, data: "native helper payload", headers: { "content-type": "text/plain" } });
+			return status;
+		},
+		abort() {},
+	});
+	try {
+		for (const status of [204, 205, 304]) {
+			const response = await nativeFetch(`https://api.example.test/${status}`);
+			expect(response.status).toBe(status);
+			expect(await response.text()).toBe("");
+		}
+	} finally {
+		delete (globalThis as { cordova?: unknown }).cordova;
+	}
+});
+
 test("aborts the native request when the signal fires", async () => {
 	let aborted = 0;
 	installHttp({

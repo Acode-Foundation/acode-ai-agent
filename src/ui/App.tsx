@@ -9,6 +9,7 @@ import { backActionId, useBackAction } from "./actionStack";
 import { Collapse } from "./Collapse";
 import { Composer, UserMessage, type ComposerHandle } from "./Composer";
 import { CopyButton } from "./CopyButton";
+import { ErrorNotice } from "./ErrorNotice";
 import { fadeInUp, fadeSlide, playMotion } from "./motion";
 import { Markdown } from "./markdown";
 import { Sheet } from "./Sheet";
@@ -136,7 +137,7 @@ export function App({ controller }: Props) {
 										)}
 									</article>
 								)}
-								{turn.error && <div class="inline-error">{turn.error}</div>}
+								{turn.error && <ErrorNotice message={turn.error} />}
 								{turn.streaming && <WorkingIndicator startedAt={turn.startedAt} />}
 							</section>
 						))}
@@ -144,7 +145,7 @@ export function App({ controller }: Props) {
 						{running && !state.compacting && !turns.some((turn) => turn.streaming) && <WorkingIndicator />}
 					</div>
 				)}
-				{state.error && <div class="inline-error">{state.error}</div>}
+				{state.error && <ErrorNotice message={state.error} />}
 				<JumpLatest visible={showLatest} onJump={jumpToLatest} />
 			</main>
 

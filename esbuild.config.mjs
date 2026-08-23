@@ -76,6 +76,7 @@ const minifiedCssText = {
 const buildConfig = {
   entryPoints: {
     main: "src/main.ts",
+    "diff-view": "src/ui/diffViewRuntime.ts",
   },
   bundle: true,
   minify: true,
@@ -111,7 +112,7 @@ const buildConfig = {
     console.log("Building for production...");
     const result = await esbuild.build(buildConfig);
     const output = result.metafile.outputs["dist/main.js"];
-    const externalImports = output?.imports.filter((entry) => entry.external) ?? [];
+    const externalImports = Object.values(result.metafile.outputs).flatMap((entry) => entry.imports.filter((item) => item.external));
     if (externalImports.length) {
       throw new Error(`Portable bundle has external runtime imports: ${externalImports.map((entry) => entry.path).join(", ")}`);
     }

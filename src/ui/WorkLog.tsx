@@ -1,11 +1,15 @@
-import { ChevronDown, ChevronRight, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, SquareTerminal, Wrench } from "lucide-preact";
+import { ChevronDown, ChevronRight, ExternalLink, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, SquareTerminal, Wrench } from "lucide-preact";
+import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Collapse, RotateIcon } from "./Collapse";
 import { Markdown } from "./markdown";
+import { ErrorNotice } from "./ErrorNotice";
 import type { WorkspaceInfo } from "../core/types";
 import { openCustomTab } from "../platform/authTab";
+import { openWorkspaceFile } from "../platform/editorNavigation";
+import { loadDiffViewRuntime } from "../platform/pluginAssets";
 import { parseWebSearchOutput } from "../tools/web/format";
-import { formatWorkDuration, groupWorkEntries, parseDirListing, splitReadOutput, splitWorkBurst, turnDurationMs, type ChatTurn, type DirEntry, type ToolKind, type WorkEntry } from "./transcript";
+import { formatWorkDuration, groupWorkEntries, parseDirListing, parseToolFileResults, splitWorkBurst, turnDurationMs, type ChatTurn, type DirEntry, type FileResult, type ToolKind, type WorkEntry } from "./transcript";
 
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
 const workRowOpen = new Map<string, boolean>();
@@ -99,15 +103,16 @@ function WorkContent({ turnId, entry, workspace }: { turnId: string; entry: Work
 
 function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntry; workspace?: WorkspaceInfo }) {
 	const key = `${turnId}:${entry.id}`;
-	const [open, setOpen] = useState(() => workRowOpen.get(key) ?? false);
+	const [open, setOpen] = useState(() => workRowOpen.get(key) ?? entry.status === "error");
 	useEffect(() => {
-		setOpen(workRowOpen.get(key) ?? false);
-	}, [key]);
+		setOpen(workRowOpen.get(key) ?? entry.status === "error");
+	}, [key, entry.status]);
 	const listing = entry.kind === "list" ? parseDirListing(entry.output) : undefined;
+	const fileResults = parseToolFileResults(entry.name, entry.output);
 	const webSearch = entry.name === "web_search" ? parseWebSearchOutput(entry.output) : undefined;
-	const hasInput = Boolean(entry.type === "tool" && entry.args && Object.keys(entry.args).length);
-	const hasOutput = Boolean(listing?.length || (listing && entry.output === "Directory is empty.") || webSearch?.results.length || entry.output);
-	const hasBody = hasInput || hasOutput;
+	const path = toolPath(entry);
+	const directFileAction = entry.type === "tool" && entry.name === "read_file" && entry.status !== "error" && Boolean(path && workspace);
+	const hasBody = entry.type === "tool" ? hasToolBody(entry, listing, fileResults, webSearch) : Boolean(entry.output);
 	const toggle = () => {
 		setOpen((current) => {
 			const next = !current;
@@ -115,84 +120,167 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 			return next;
 		});
 	};
-	const summary = (
+	const summary = (tail?: ComponentChildren) => (
 		<>
 			<span class={`work-kind ${entry.kind} ${entry.status}`} aria-hidden="true">{kindIcon(entry.kind)}</span>
 			<strong>{entry.label}</strong>
 			{entry.detail && <span class="work-detail">{entry.detail}</span>}
-			{entry.status === "running" && <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" />}
+			{entry.status === "running" ? <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" /> : tail}
 		</>
 	);
-	if (!hasBody) return <div class={`work-row ${entry.status}`}><div class="work-row-toggle">{summary}</div></div>;
+	if (directFileAction && path) {
+		return (
+			<div class={`work-row ${entry.status}`}>
+				<button type="button" class="work-row-toggle work-file-action" onClick={() => openWorkspaceFile(path, workspace)} title={`Open ${path} in editor`}>
+					{summary(<ExternalLink class="work-tail-icon" size={12} strokeWidth={2} aria-hidden="true" />)}
+				</button>
+			</div>
+		);
+	}
+	if (!hasBody) return <div class={`work-row ${entry.status}`}><div class="work-row-toggle">{summary()}</div></div>;
 	return (
 		<div class={`work-row ${entry.status}${open ? " open" : ""}`}>
 			<button type="button" class="work-row-toggle" aria-expanded={open} onClick={toggle}>
-				{summary}
+				{summary(
+					<RotateIcon open={open} class="work-row-chevron">
+						<ChevronRight size={12} strokeWidth={2} />
+					</RotateIcon>,
+				)}
 			</button>
 			<Collapse open={open}>
 				{entry.type === "tool"
-					? <ToolBody entry={entry} listing={listing} webSearch={webSearch} workspace={workspace} hasInput={hasInput} hasOutput={hasOutput} />
+					? <ToolBody entry={entry} listing={listing} fileResults={fileResults} webSearch={webSearch} workspace={workspace} />
 					: <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>}
 			</Collapse>
 		</div>
 	);
 }
 
-function ToolBody({ entry, listing, webSearch, workspace, hasInput, hasOutput }: {
+function ToolBody({ entry, listing, fileResults, webSearch, workspace }: {
 	entry: WorkEntry;
 	listing: DirEntry[] | undefined;
+	fileResults: FileResult[] | undefined;
 	webSearch: ReturnType<typeof parseWebSearchOutput>;
 	workspace?: WorkspaceInfo;
-	hasInput: boolean;
-	hasOutput: boolean;
 }) {
-	return (
-		<div class="work-io">
-			{hasInput && (
-				<section class="work-io-section work-input" aria-label="Tool input">
-					<div class="work-io-label">Input</div>
-					<pre class="work-input-body">{formatArgs(entry.args ?? {})}</pre>
-				</section>
-			)}
-			{hasOutput && (
-				<section class="work-io-section work-output" aria-label="Tool output">
-					<div class="work-io-label">Output</div>
-					{listing
-						? <DirListing entries={listing} empty={entry.output === "Directory is empty."} />
-						: webSearch?.results.length
-							? <WebSearchBody parsed={webSearch} />
-							: entry.kind === "read"
-								? <ReadBody output={entry.output ?? ""} />
-								: entry.name === "fetch_content"
-									? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
-									: <pre class="work-body">{entry.output ?? ""}</pre>}
-				</section>
-			)}
-		</div>
-	);
+	if (entry.status === "error") return <ToolError output={entry.output} />;
+	if (entry.kind === "change") return <ChangeBody entry={entry} workspace={workspace} />;
+	if (listing) return <DirListing entries={listing} empty={entry.output === "Directory is empty."} basePath={stringArg(entry.args, "path")} workspace={workspace} />;
+	if (fileResults) return <FileResults entries={fileResults} workspace={workspace} />;
+	if (webSearch) return <WebSearchBody parsed={webSearch} />;
+	if (entry.name === "fetch_content") return <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>;
+	if (entry.kind === "terminal") return <TerminalBody output={entry.output} />;
+	return <GenericToolBody entry={entry} />;
 }
 
-function ReadBody({ output }: { output: string }) {
-	const { body, notice } = splitReadOutput(output);
-	return (
-		<>
-			{notice && <div class="work-read-note">{notice}</div>}
-			<pre class="work-body">{body}</pre>
-		</>
-	);
+function hasToolBody(
+	entry: WorkEntry,
+	listing: DirEntry[] | undefined,
+	fileResults: FileResult[] | undefined,
+	webSearch: ReturnType<typeof parseWebSearchOutput>,
+): boolean {
+	if (entry.status === "error") return true;
+	if (entry.name === "read_file") return false;
+	if (entry.kind === "change") return Boolean(changeInput(entry));
+	if (listing || fileResults || webSearch) return true;
+	return Boolean(entry.output || (entry.args && Object.keys(entry.args).length));
 }
 
-function DirListing({ entries, empty }: { entries: DirEntry[]; empty: boolean }) {
+function DirListing({ entries, empty, basePath, workspace }: { entries: DirEntry[]; empty: boolean; basePath?: string; workspace?: WorkspaceInfo }) {
 	if (empty || !entries.length) return <div class="dir-list empty">Folder is empty</div>;
 	return (
 		<ul class="dir-list">
 			{entries.map((entry) => (
 				<li class={`dir-entry ${entry.kind === "dir" ? "is-folder" : "is-doc"}`} key={`${entry.kind}:${entry.name}`}>
-					{entry.kind === "dir" ? <Folder size={14} strokeWidth={2} aria-hidden="true" /> : <File size={14} strokeWidth={2} aria-hidden="true" />}
-					<span class="dir-name">{entry.name}</span>
+					{entry.kind === "dir"
+						? <><Folder size={14} strokeWidth={2} aria-hidden="true" /><span class="dir-name">{entry.name}</span></>
+						: <button type="button" class="tool-file-link" onClick={() => openWorkspaceFile(joinPath(basePath, entry.name), workspace)}>
+							<File size={14} strokeWidth={2} aria-hidden="true" />
+							<span class="dir-name">{entry.name}</span>
+							<ExternalLink size={11} strokeWidth={2} aria-hidden="true" />
+						</button>}
 				</li>
 			))}
 		</ul>
+	);
+}
+
+function FileResults({ entries, workspace }: { entries: FileResult[]; workspace?: WorkspaceInfo }) {
+	if (!entries.length) return <div class="tool-empty">No matches found</div>;
+	return (
+		<ul class="file-results">
+			{entries.map((entry, index) => (
+				<li key={`${entry.path}:${entry.line ?? 0}:${index}`}>
+					<button type="button" class="file-result-link" onClick={() => openWorkspaceFile(entry.path, workspace)}>
+						<span class="file-result-location"><File size={13} strokeWidth={2} aria-hidden="true" />{entry.path}{entry.line ? <b>:{entry.line}</b> : null}</span>
+						{entry.preview && <span class="file-result-preview">{entry.preview}</span>}
+						<ExternalLink class="file-result-open" size={11} strokeWidth={2} aria-hidden="true" />
+					</button>
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function ChangeBody({ entry, workspace }: { entry: WorkEntry; workspace?: WorkspaceInfo }) {
+	const input = changeInput(entry);
+	if (!input) return <GenericToolBody entry={entry} />;
+	return (
+		<div class="change-card">
+			<div class="change-card-head">
+				<span>{entry.name === "edit_file" ? "Edit preview" : "Written contents"}</span>
+				<button type="button" class="change-open-file" onClick={() => openWorkspaceFile(input.path, workspace)} title={`Open ${input.path} in editor`}>
+					<span>{input.path}</span><ExternalLink size={11} strokeWidth={2} aria-hidden="true" />
+				</button>
+			</div>
+			<CodeMirrorDiff path={input.path} oldContents={input.oldContents} newContents={input.newContents} />
+		</div>
+	);
+}
+
+function CodeMirrorDiff({ path, oldContents, newContents }: { path: string; oldContents: string; newContents: string }) {
+	const hostRef = useRef<HTMLDivElement>(null);
+	const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+	useEffect(() => {
+		let disposed = false;
+		let cleanUp: (() => void) | undefined;
+		setState("loading");
+		void loadDiffViewRuntime().then((runtime) => {
+			if (disposed || !hostRef.current) return;
+			cleanUp = runtime.mount(hostRef.current, { path, oldContents, newContents });
+			setState("ready");
+		}).catch(() => {
+			if (!disposed) setState("error");
+		});
+		return () => {
+			disposed = true;
+			cleanUp?.();
+		};
+	}, [path, oldContents, newContents]);
+	return (
+		<div class={`code-diff ${state}`}>
+			{state === "loading" && <div class="diff-status"><LoaderCircle class="work-spin" size={13} strokeWidth={2.4} /> Loading diff…</div>}
+			{state === "error" && <div class="diff-status error">Diff preview unavailable</div>}
+			<div ref={hostRef} class="code-diff-host" />
+		</div>
+	);
+}
+
+function TerminalBody({ output }: { output?: string }) {
+	return <pre class={`terminal-output${output ? "" : " empty"}`}>{output || "Command finished with no output."}</pre>;
+}
+
+function ToolError({ output }: { output?: string }) {
+	return <ErrorNotice title="Tool failed" message={output || "The tool failed without an error message."} />;
+}
+
+function GenericToolBody({ entry }: { entry: WorkEntry }) {
+	const hasArgs = Boolean(entry.args && Object.keys(entry.args).length);
+	return (
+		<div class="work-io generic-tool-io">
+			{hasArgs && <pre class="work-input-body">{formatArgs(entry.args ?? {})}</pre>}
+			{entry.output && <pre class="work-body">{entry.output}</pre>}
+		</div>
 	);
 }
 
@@ -213,6 +301,40 @@ function WebSearchBody({ parsed }: { parsed: NonNullable<ReturnType<typeof parse
 			</ol>
 		</div>
 	);
+}
+
+function changeInput(entry: WorkEntry): { path: string; oldContents: string; newContents: string } | undefined {
+	const path = toolPath(entry);
+	if (!path) return undefined;
+	if (entry.name === "edit_file") {
+		const oldContents = stringArg(entry.args, "old_string");
+		const newContents = stringArg(entry.args, "new_string");
+		if (oldContents === undefined || newContents === undefined) return undefined;
+		return { path, oldContents, newContents };
+	}
+	if (entry.name === "write_file") {
+		const newContents = stringArg(entry.args, "content");
+		if (newContents === undefined) return undefined;
+		return { path, oldContents: "", newContents };
+	}
+	return undefined;
+}
+
+function toolPath(entry: WorkEntry): string | undefined {
+	return stringArg(entry.args, "path", "file_path", "filePath", "filename", "target");
+}
+
+function stringArg(args: Record<string, unknown> | undefined, ...keys: string[]): string | undefined {
+	for (const key of keys) {
+		const value = args?.[key];
+		if (typeof value === "string") return value;
+	}
+	return undefined;
+}
+
+function joinPath(base: string | undefined, name: string): string {
+	const cleanBase = base?.trim().replace(/^\.\/?$/, "").replace(/\/$/, "") ?? "";
+	return cleanBase ? `${cleanBase}/${name}` : name;
 }
 
 function hostOf(url: string): string {
