@@ -21,6 +21,7 @@ import { collectPromptImages } from "../platform/promptImages";
 import { MutationGate } from "../permissions/mutationGate";
 import { openAuthTab } from "../platform/authTab";
 import { PortableCredentialStore } from "../platform/credentials";
+import { createModelCatalogStore } from "../platform/modelCatalogStore";
 import { createSessionStore, type SessionStore } from "../platform/sessionStore";
 import { createChatId, messagePlainText } from "../session/sessionText";
 import { ProviderRegistry } from "../providers/providerRegistry";
@@ -50,7 +51,7 @@ export class AgentController {
 
 	constructor(ctx: Acode.PluginContext | null) {
 		this.credentials = new PortableCredentialStore(ctx);
-		this.providers = new ProviderRegistry(this.credentials, () => this.settings.value.customModels);
+		this.providers = new ProviderRegistry(this.credentials, () => this.settings.value.customModels, createModelCatalogStore(ctx));
 		this.#sessionStore = createSessionStore(ctx);
 		this.#state = {
 			status: "booting",
@@ -116,6 +117,11 @@ export class AgentController {
 
 	async initialize(): Promise<void> {
 		await this.#sessionStore.hydrate();
+		try {
+			await this.providers.restoreCatalogs();
+		} catch (error) {
+			console.warn("Cached Pi model catalogs could not be restored", error);
+		}
 		const workspaces = this.workspaces;
 		const selected = workspaces.find((workspace) => workspace.id === this.settings.value.activeWorkspaceId)
 			?? workspaces[0];
@@ -408,10 +414,14 @@ export class AgentController {
 		void this.#activeSession()?.setThinkingLevel(level);
 	}
 
+	async refreshModels(force = false): Promise<void> {
+		await this.#refreshProviderModel(this.settings.value.providerId, this.settings.value.modelId, force);
+	}
+
 	async saveApiKey(providerId: ProviderId, key: string): Promise<void> {
 		await this.credentials.setApiKey(providerId, key);
 		if (this.settings.value.providerId === providerId) {
-			await this.#refreshProviderModel(providerId, this.settings.value.modelId);
+			await this.#refreshProviderModel(providerId, this.settings.value.modelId, true);
 		}
 		this.#state.error = undefined;
 		this.#emit();
@@ -560,10 +570,10 @@ export class AgentController {
 		this.#emit();
 	}
 
-	async #refreshProviderModel(providerId: ProviderId, modelId: string): Promise<void> {
+	async #refreshProviderModel(providerId: ProviderId, modelId: string, force = false): Promise<void> {
 		let model: Model<any>;
 		try {
-			model = await this.providers.refreshModel(providerId, modelId);
+			model = await this.providers.refreshModel(providerId, modelId, force);
 		} catch (error) {
 			console.warn(`${providerId} model metadata could not be refreshed`, error);
 			return;

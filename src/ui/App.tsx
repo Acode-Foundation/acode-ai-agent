@@ -576,6 +576,9 @@ function ConfigSheet({ controller, state, initialView, onClose, onOpenPiSettings
 	const effortLevels = thinkingLevelsFor(state.model);
 	const modelId = state.model?.id ?? state.settings.modelId;
 	const modelName = state.model?.name ?? "Choose model";
+	useEffect(() => {
+		if (view === "models") void controller.refreshModels();
+	}, [controller, state.settings.providerId, view]);
 	useLayoutEffect(() => {
 		const body = bodyRef.current;
 		if (!body) return;

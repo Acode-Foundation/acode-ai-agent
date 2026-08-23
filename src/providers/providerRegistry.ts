@@ -1,4 +1,4 @@
-import { createModels, type Model, type MutableModels, type Provider } from "@earendil-works/pi-ai";
+import { createModels, InMemoryModelsStore, type Model, type ModelsStore, type MutableModels, type Provider } from "@earendil-works/pi-ai";
 import { antLingProvider } from "@earendil-works/pi-ai/providers/ant-ling";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { cerebrasProvider } from "@earendil-works/pi-ai/providers/cerebras";
@@ -23,6 +23,7 @@ import { nativeFetch } from "../platform/nativeHttp";
 import { mergeCatalogOverlay } from "./catalogOverlay";
 import { createCustomModel, mergeCustomModels, sanitizeModelId } from "./customModels";
 import { portableCodexOAuth, portableXaiOAuth } from "./portableOAuth";
+import { withRemoteCatalog, type RemoteCatalog } from "./remoteCatalog";
 
 export type ProviderDescriptor = {
 	id: ProviderId;
@@ -59,17 +60,27 @@ export class ProviderRegistry {
 	readonly models: MutableModels;
 	#customModels: () => Record<string, string[]>;
 	#overrides = new Map<string, Model<any>>();
+	#catalogs = new Map<string, RemoteCatalog>();
 
-	constructor(credentials: PortableCredentialStore, customModels: () => Record<string, string[]> = () => ({})) {
+	constructor(
+		credentials: PortableCredentialStore,
+		customModels: () => Record<string, string[]> = () => ({}),
+		catalogStore: ModelsStore = new InMemoryModelsStore(),
+	) {
 		this.#customModels = customModels;
 		const models = createModels({
 			credentials,
+			modelsStore: catalogStore,
 			authContext: {
 				env: async () => undefined,
 				fileExists: async () => false,
 			},
 		});
-		for (const provider of portableProviders()) models.setProvider(provider);
+		for (const provider of portableProviders()) {
+			const catalog = withRemoteCatalog(provider, catalogStore);
+			this.#catalogs.set(provider.id, catalog);
+			models.setProvider(catalog.provider);
+		}
 		this.models = withNativeFetch(models);
 	}
 
@@ -101,9 +112,23 @@ export class ProviderRegistry {
 		return fallback;
 	}
 
-	async refreshModel(providerId: ProviderId, modelId: string): Promise<Model<any>> {
+	async restoreCatalogs(): Promise<void> {
+		await Promise.all([...this.#catalogs.values()].map((catalog) => catalog.restore()));
+	}
+
+	async refreshCatalog(providerId: ProviderId, force = false): Promise<void> {
+		await this.#catalogs.get(providerId)?.refresh(force);
+	}
+
+	async refreshModel(providerId: ProviderId, modelId: string, force = false): Promise<Model<any>> {
+		try {
+			await this.refreshCatalog(providerId, force);
+		} catch (error) {
+			console.warn(`${providerId} model catalog could not be refreshed`, error);
+		}
 		const model = this.resolveModel(providerId, modelId);
-		if (providerId !== "openrouter") return model;
+		const metadataKnown = (model as Model<any> & { inputModalitiesKnown?: boolean }).inputModalitiesKnown;
+		if (providerId !== "openrouter" || metadataKnown !== false) return model;
 		const auth = await this.models.getAuth(providerId);
 		const headers = auth?.auth.apiKey ? { Authorization: `Bearer ${auth.auth.apiKey}` } : undefined;
 		const path = model.id.split("/").map(encodeURIComponent).join("/");
