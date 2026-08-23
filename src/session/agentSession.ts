@@ -500,7 +500,10 @@ export class AgentSession {
 	#tools(): AgentTool[] {
 		const bash = createTerminalBashTool(this.workspace);
 		return [
-			...createWorkspaceTools(this.workspace, { maxWalkFiles: () => this.#settings().maxWalkFiles }),
+			...createWorkspaceTools(this.workspace, {
+				maxWalkFiles: () => this.#settings().maxWalkFiles,
+				autoResizeImages: () => this.#settings().imageAutoResize,
+			}),
 			...(bash ? [bash] : []),
 			this.#skillTool(),
 			...createWebTools(createWebSearchContext({

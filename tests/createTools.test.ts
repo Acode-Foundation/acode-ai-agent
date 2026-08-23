@@ -67,11 +67,63 @@ test("grep forwards regular-expression mode to Acode's native file index", async
 	expect(searchOptions?.options).toMatchObject({ regExp: true, caseSensitive: true });
 });
 
-function fakeWorkspace(files: Record<string, string>, remote = true): AcodeWorkspace {
+test("read_file returns PNG content through Pi's image processor contract", async () => {
+	const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+	const workspace = fakeWorkspace({ "shots/home.png": "not used" }, true, { "shots/home.png": png });
+	const imageProcessor = vi.fn(async () => ({
+		ok: true as const,
+		data: "processed-png",
+		mimeType: "image/png",
+		hints: ["[Image resized for inline display.]"],
+	}));
+	const read = createWorkspaceTools(workspace, {
+		maxWalkFiles: () => 100,
+		autoResizeImages: () => false,
+		imageProcessor,
+	}).find((tool) => tool.name === "read_file")!;
+
+	const output = await read.execute("read-1", { path: "shots/home.png" });
+
+	expect(imageProcessor).toHaveBeenCalledWith(png, "image/png", { autoResizeImages: false });
+	expect(output.content).toEqual([
+		{ type: "text", text: "Read image file [image/png]\n[Image resized for inline display.]" },
+		{ type: "image", data: "processed-png", mimeType: "image/png" },
+	]);
+	expect(output.details).toEqual({ operation: "read", path: "shots/home.png" });
+});
+
+test("read_file falls back to text when a .png file has no image signature", async () => {
+	const workspace = fakeWorkspace({ "notes.png": "plain text despite its suffix" }, true, {
+		"notes.png": new TextEncoder().encode("plain text despite its suffix"),
+	});
+	const read = createWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find((tool) => tool.name === "read_file")!;
+
+	const output = await read.execute("read-2", { path: "notes.png" });
+
+	expect(output.content[0]).toEqual({ type: "text", text: "plain text despite its suffix" });
+});
+
+test("read_file reports an image processor omission without returning invalid image content", async () => {
+	const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+	const workspace = fakeWorkspace({}, true, { "broken.png": png });
+	const read = createWorkspaceTools(workspace, {
+		maxWalkFiles: () => 100,
+		imageProcessor: async () => ({ ok: false, message: "[Image omitted: decode failed.]" }),
+	}).find((tool) => tool.name === "read_file")!;
+
+	const output = await read.execute("read-3", { path: "broken.png" });
+
+	expect(output.content).toEqual([
+		{ type: "text", text: "Read image file [image/png]\n[Image omitted: decode failed.]" },
+	]);
+});
+
+function fakeWorkspace(files: Record<string, string>, remote = true, binaryFiles: Record<string, Uint8Array> = {}): AcodeWorkspace {
 	return {
 		info: { id: "workspace", name: "project", rootUri: remote ? "sftp://workspace/project" : "file:///project", scheme: remote ? "sftp" : "file", remote },
 		sandbox: { normalize: (path: string) => path },
 		readText: async (path: string) => files[path],
+		readBinary: async (path: string) => binaryFiles[path] ?? new TextEncoder().encode(files[path] ?? ""),
 		walk: async (options: { onEntry: (entry: FileEntry) => boolean | void | Promise<boolean | void> }) => {
 			let visited = 0;
 			for (const path of Object.keys(files)) {

@@ -1,6 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentTool, AgentToolResult, ReadImageProcessor } from "@earendil-works/pi-agent-core";
+import { browserReadImageProcessor } from "../platform/readImageProcessor";
 import type { AcodeWorkspace, FileEntry } from "../workspace/acodeWorkspace";
+import { isImagePath } from "../workspace/fileMentions";
 import { workspaceRelativeFromIndex } from "../workspace/pathSandbox";
 import { globMatcher } from "./glob";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, selectReadOutput } from "./truncate";
@@ -18,14 +20,18 @@ type ToolResult = AgentToolResult<ToolDetails>;
 
 export function createWorkspaceTools(
 	workspace: AcodeWorkspace,
-	options: { maxWalkFiles: () => number },
+	options: {
+		maxWalkFiles: () => number;
+		autoResizeImages?: () => boolean;
+		imageProcessor?: ReadImageProcessor;
+	},
 ): AgentTool<any>[] {
 	const readFile: AgentTool<any> = {
 		name: "read_file",
 		label: "Read file",
 		description:
-			`Read a UTF-8 text file. Paths are relative to the active workspace. ` +
-			`Output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. ` +
+			`Read a UTF-8 text file or image (jpg, png, gif, webp, bmp). Paths are relative to the active workspace. ` +
+			`Images are returned as model-visible attachments. Text output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. ` +
 			`Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
 		parameters: Type.Object({
 			path: Type.String({ description: "Workspace-relative file path" }),
@@ -37,6 +43,28 @@ export function createWorkspaceTools(
 			const input = params as { path: string; offset?: number; limit?: number };
 			throwIfAborted(signal);
 			const path = workspace.sandbox.normalize(input.path);
+			if (isImagePath(path)) {
+				const bytes = await workspace.readBinary(path);
+				throwIfAborted(signal);
+				const mimeType = detectSupportedImageMimeType(bytes);
+				if (mimeType) {
+					const processor = options.imageProcessor ?? browserReadImageProcessor;
+					const processed = await processor(bytes, mimeType, {
+						autoResizeImages: options.autoResizeImages?.() ?? true,
+					});
+					if (!processed.ok) {
+						return result(`Read image file [${mimeType}]\n${processed.message}`, { operation: "read", path });
+					}
+					const hints = processed.hints.length ? `\n${processed.hints.join("\n")}` : "";
+					return {
+						content: [
+							{ type: "text", text: `Read image file [${processed.mimeType}]${hints}` },
+							{ type: "image", data: processed.data, mimeType: processed.mimeType },
+						],
+						details: { operation: "read", path },
+					};
+				}
+			}
 			const text = await workspace.readText(path);
 			assertTextFile(path, text);
 			const output = selectReadOutput(text, input.offset, input.limit);
@@ -250,6 +278,27 @@ function isBinaryPath(path: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+export function detectSupportedImageMimeType(bytes: Uint8Array): string | undefined {
+	if (startsWith(bytes, [0xff, 0xd8, 0xff]) && bytes[3] !== 0xf7) return "image/jpeg";
+	if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+	if (asciiAt(bytes, 0, "GIF87a") || asciiAt(bytes, 0, "GIF89a")) return "image/gif";
+	if (asciiAt(bytes, 0, "RIFF") && asciiAt(bytes, 8, "WEBP")) return "image/webp";
+	if (asciiAt(bytes, 0, "BM") && bytes.length >= 26) return "image/bmp";
+	return undefined;
+}
+
+function startsWith(bytes: Uint8Array, signature: number[]): boolean {
+	return bytes.length >= signature.length && signature.every((byte, index) => bytes[index] === byte);
+}
+
+function asciiAt(bytes: Uint8Array, offset: number, value: string): boolean {
+	if (bytes.length < offset + value.length) return false;
+	for (let index = 0; index < value.length; index += 1) {
+		if (bytes[offset + index] !== value.charCodeAt(index)) return false;
+	}
+	return true;
 }
 
 function truncate(value: string, max: number): string {
