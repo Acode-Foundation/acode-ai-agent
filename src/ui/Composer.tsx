@@ -10,6 +10,7 @@ import { fileDir, fileName, type MentionFile } from "../workspace/fileMentions";
 import { createFileGlyph, fileIconClass } from "./fileGlyph";
 import { clearBlankEditor, consumeMention, getEditorSelection, isBlankEditor, mentionInEditor, setCaret } from "./composerDom";
 import { imagePlaceholder, imageSrc, splitUserText, type ComposerDraft, type DraftImage, type UserPart } from "./composerDraft";
+import { filterSlashCommands, slashCommandQuery, type SlashCommand } from "../core/slashCommands";
 
 export type ComposerHandle = {
 	setText: (text: string) => void;
@@ -26,6 +27,8 @@ type Props = {
 	effortLevels: Array<{ id: string; label: string }>;
 	modelName: string;
 	acceptsImages: boolean;
+	commands: SlashCommand[];
+	autocompleteMaxVisible: number;
 	onOpenConfig: () => void;
 	usage: { tokens: number; cost: number };
 	contextTokens: number;
@@ -43,6 +46,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	const [empty, setEmpty] = useState(true);
 	const [busy, setBusy] = useState(false);
 	const [mention, setMention] = useState<{ query: string } | null>(null);
+	const [commandQuery, setCommandQuery] = useState<string | null>(null);
+	const [commandActive, setCommandActive] = useState(0);
 	const [hits, setHits] = useState<MentionFile[]>([]);
 	const [active, setActive] = useState(0);
 	const [searching, setSearching] = useState(false);
@@ -52,6 +57,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	const used = props.contextWindow ? Math.min(100, Math.round((props.contextTokens / props.contextWindow) * 100)) : 0;
 	const visionHint = imageCount > 0 && !props.acceptsImages;
 	const effortLabel = props.effortLevels.find((level) => level.id === props.effort)?.label;
+	const commandHits = filterSlashCommands(props.commands, commandQuery ?? "").slice(0, props.autocompleteMaxVisible);
 
 	const sync = useCallback(() => {
 		const root = editor.current;
@@ -75,11 +81,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 
 	const refresh = useCallback(() => {
 		const root = editor.current;
+		const draft = sync();
 		if (root && !props.disabled) {
-			const found = mentionInEditor(root);
+			const slash = draft.images.length ? null : slashCommandQuery(draft.text);
+			setCommandQuery(slash);
+			const found = slash === null ? mentionInEditor(root) : null;
 			setMention(found ? { query: found.query } : null);
+		} else {
+			setCommandQuery(null);
 		}
-		sync();
 		resize();
 	}, [props.disabled, resize, sync]);
 
@@ -101,6 +111,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	useLayoutEffect(() => {
 		refresh();
 	}, [refresh]);
+
+	useEffect(() => setCommandActive(0), [commandQuery]);
 
 	useEffect(() => {
 		if (!mention || props.disabled) {
@@ -156,6 +168,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		root.focus();
 	};
 
+	const insertCommand = (command: SlashCommand) => {
+		paintDraft(editor.current, { text: `/${command.name} `, images: [] }, images.current, chipHandlers());
+		setCommandQuery(null);
+		setCommandActive(0);
+		refresh();
+		editor.current?.focus();
+	};
+
 	const addDraftImages = (next: DraftImage[]) => {
 		const root = editor.current;
 		if (!root || !next.length) return;
@@ -171,7 +191,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		if (props.disabled || busy) return;
 		setBusy(true);
 		try {
-			const image = await pickDeviceImage();
+			const image = await pickDeviceImage(props.controller.settings.value.imageAutoResize);
 			if (image) addDraftImages([image]);
 		} catch (error) {
 			props.onToast(error instanceof Error ? error.message : String(error));
@@ -190,7 +210,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		try {
 			const next: DraftImage[] = [];
 			for (const file of chosen) {
-				const image = await imageContentFromFile(file, file.name || "image");
+				const image = await imageContentFromFile(file, file.name || "image", props.controller.settings.value.imageAutoResize);
 				next.push({ ...image, id: newId(), name: file.name || "image" });
 			}
 			addDraftImages(next);
@@ -230,6 +250,15 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	return (
 		<footer class="composer">
 			<div class="composer-dock">
+				{commandQuery !== null && !props.disabled && (
+					<CommandMenu
+						query={commandQuery}
+						commands={commandHits}
+						active={commandActive}
+						onHover={setCommandActive}
+						onPick={insertCommand}
+					/>
+				)}
 				{mention && !props.disabled && (
 					<MentionMenu
 						query={mention.query}
@@ -254,7 +283,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 				<div class="composer-field">
 					{empty && (
 						<span class="composer-placeholder">
-							{props.disabled ? "Open a folder to begin" : props.running ? "Steer now, or queue a follow-up…" : "Ask anything…  @ files"}
+							{props.disabled ? "Open a folder to begin" : props.running ? "Steer now, or queue a follow-up…" : "Ask anything…  / commands  @ files"}
 						</span>
 					)}
 				<div
@@ -304,6 +333,28 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 					}}
 					onKeyDown={(event) => {
 						if (event.isComposing || event.keyCode === 229) return;
+						if (commandQuery !== null) {
+							if (event.key === "ArrowDown" && commandHits.length) {
+								event.preventDefault();
+								setCommandActive((index) => (index + 1) % commandHits.length);
+								return;
+							}
+							if (event.key === "ArrowUp" && commandHits.length) {
+								event.preventDefault();
+								setCommandActive((index) => (index - 1 + commandHits.length) % commandHits.length);
+								return;
+							}
+							if ((event.key === "Enter" || event.key === "Tab") && commandHits[commandActive]) {
+								event.preventDefault();
+								insertCommand(commandHits[commandActive]!);
+								return;
+							}
+							if (event.key === "Escape") {
+								event.preventDefault();
+								setCommandQuery(null);
+								return;
+							}
+						}
 						if (mention && (hits.length || searching)) {
 							if (event.key === "ArrowDown" && hits.length) {
 								event.preventDefault();
@@ -403,6 +454,44 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		</footer>
 	);
 });
+
+function CommandMenu({
+	query,
+	commands,
+	active,
+	onHover,
+	onPick,
+}: {
+	query: string;
+	commands: SlashCommand[];
+	active: number;
+	onHover: (index: number) => void;
+	onPick: (command: SlashCommand) => void;
+}) {
+	return (
+		<div class="mention-menu command-menu" role="listbox" aria-label="Slash commands">
+			{commands.length === 0 ? (
+				<p class="mention-empty">No commands match “{query}”.</p>
+			) : commands.map((command, index) => (
+				<button
+					type="button"
+					role="option"
+					aria-selected={index === active}
+					class={`mention-row command-row${index === active ? " active" : ""}`}
+					key={`${command.source}:${command.name}`}
+					onMouseDown={(event) => event.preventDefault()}
+					onMouseEnter={() => onHover(index)}
+					onClick={() => onPick(command)}
+				>
+					<span class={`command-glyph ${command.source}`} aria-hidden="true">/</span>
+					<span class="mention-name">{highlightMatch(command.name, query)}</span>
+					<span class="mention-dir">{command.description}</span>
+					{command.source !== "action" && <span class={`command-source ${command.source}`}>{command.source}</span>}
+				</button>
+			))}
+		</div>
+	);
+}
 
 function MentionMenu({
 	query,
@@ -582,6 +671,7 @@ function paintDraft(
 		store.set(image.id, image);
 		root.append(createImageChip(image, handlers));
 	}
+	setCaret(root, root, root.childNodes.length);
 }
 
 function FileChipFace({ path }: { path: string }) {

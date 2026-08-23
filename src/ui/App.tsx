@@ -1,6 +1,6 @@
 import { ArrowDownToLine, Check, ChevronDown, ChevronLeft, ChevronRight, Ellipsis, Folder, Plus, Trash2, X } from "lucide-preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { AgentController } from "../app/agentController";
+import type { AgentController, CommandPanelData } from "../app/agentController";
 import { PERMISSION_MODES } from "../core/schema";
 import type { ChatSummary, MutationDecision, MutationRequest, ProviderId, PublicAgentState, WorkspaceInfo } from "../core/types";
 import { PROVIDERS } from "../providers/providerRegistry";
@@ -12,6 +12,7 @@ import { CopyButton } from "./CopyButton";
 import { fadeInUp, fadeSlide, playMotion } from "./motion";
 import { Markdown } from "./markdown";
 import { Sheet } from "./Sheet";
+import { TreeSheet } from "./TreeSheet";
 import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
@@ -19,14 +20,18 @@ import { openCustomTab } from "../platform/authTab";
 import { previewImageInAcode } from "../platform/deviceImage";
 import { modelAcceptsImages } from "../platform/promptImages";
 import type { ComposerDraft } from "./composerDraft";
+import { parseSlashCommand } from "../core/slashCommands";
 
 type Props = { controller: AgentController };
 
 export function App({ controller }: Props) {
 	const [state, setState] = useState<PublicAgentState>(controller.state);
 	const [settingsOpen, setSettingsOpen] = useState(false);
-	const [configOpen, setConfigOpen] = useState(false);
+	const [piSettingsOpen, setPiSettingsOpen] = useState(false);
+	const [configView, setConfigView] = useState<"main" | "models" | null>(null);
 	const [chatsOpen, setChatsOpen] = useState(false);
+	const [commandPanel, setCommandPanel] = useState<CommandPanelData | null>(null);
+	const [treeMode, setTreeMode] = useState<"tree" | "fork" | null>(null);
 	const [toast, setToast] = useState("");
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const composerRef = useRef<ComposerHandle>(null);
@@ -36,15 +41,30 @@ export function App({ controller }: Props) {
 	const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}`;
 	const { showLatest, jumpToLatest, pin, captureThread } = useChatScroll(scrollRef, followKey);
 
-	const turns = useMemo(
-		() => buildTurns(state.messages, running ? state.streamingMessage : undefined, state.activities, running),
-		[state.messages, state.streamingMessage, state.activities, running],
-	);
+	const turns = useMemo(() => {
+		const built = buildTurns(state.messages, running ? state.streamingMessage : undefined, state.activities, running);
+		if (!state.settings.hideThinkingBlock) return built;
+		return built.map((turn) => ({ ...turn, work: turn.work.filter((item) => item.type !== "thinking") }));
+	}, [state.messages, state.streamingMessage, state.activities, state.settings.hideThinkingBlock, running]);
 
 	const send = useCallback(async (draft: ComposerDraft, mode: "steer" | "followUp" = "steer") => {
 		if (!draft.text.trim() && !draft.images.length) return;
 		pin();
 		try {
+			const command = parseSlashCommand(draft.text);
+			if (command) {
+				if (draft.images.length) throw new Error("Slash commands cannot include image attachments.");
+				const result = await controller.executeSlashCommand(command.name, command.args);
+				if (result.copyText) await navigator.clipboard.writeText(result.copyText);
+				if (result.action === "models") setConfigView("models");
+				if (result.action === "settings") setSettingsOpen(true);
+				if (result.action === "pi-settings") setPiSettingsOpen(true);
+				if (result.action === "sessions") setChatsOpen(true);
+				if (result.action === "tree" || result.action === "fork") setTreeMode(result.action);
+				if (result.panel) setCommandPanel(result.panel);
+				if (result.message) setToast(result.message);
+				return;
+			}
 			await controller.send(draft.text, mode, draft.images);
 		} catch (error) {
 			composerRef.current?.restore(draft);
@@ -74,7 +94,7 @@ export function App({ controller }: Props) {
 					{state.chats.some((chat) => chat.running && chat.id !== state.activeChatId) && <i class="bg-run" />}
 				</button>
 				<button class="icon-button" type="button" onClick={() => void controller.newConversation().catch((error) => setToast(String(error)))} aria-label="New chat"><Plus size={18} strokeWidth={2} /></button>
-				<button class="icon-button" type="button" onClick={() => setSettingsOpen(true)} aria-label="Settings"><Ellipsis size={18} strokeWidth={2} /></button>
+				<button class="icon-button" type="button" onClick={() => setSettingsOpen(true)} aria-label="Provider access"><Ellipsis size={18} strokeWidth={2} /></button>
 			</header>
 
 			<main class="conversation" ref={scrollRef}>
@@ -140,7 +160,9 @@ export function App({ controller }: Props) {
 				effortLevels={thinkingLevelsFor(state.model)}
 				modelName={state.model?.name ?? "Model"}
 				acceptsImages={modelAcceptsImages(state.model)}
-				onOpenConfig={() => setConfigOpen(true)}
+				commands={state.commands}
+				autocompleteMaxVisible={state.settings.autocompleteMaxVisible}
+				onOpenConfig={() => setConfigView("main")}
 				usage={state.usage}
 				contextTokens={state.contextTokens}
 				contextWindow={state.model?.contextWindow}
@@ -152,8 +174,11 @@ export function App({ controller }: Props) {
 			/>
 
 			{chatsOpen && <ChatSheet controller={controller} state={state} onClose={() => setChatsOpen(false)} onError={setToast} />}
-			{settingsOpen && <SettingsSheet controller={controller} state={state} onClose={() => setSettingsOpen(false)} onToast={setToast} />}
-			{configOpen && <ConfigSheet controller={controller} state={state} onClose={() => setConfigOpen(false)} />}
+			{settingsOpen && <SettingsSheet controller={controller} state={state} onClose={() => setSettingsOpen(false)} onOpenPiSettings={() => { setSettingsOpen(false); setPiSettingsOpen(true); }} onToast={setToast} />}
+			{piSettingsOpen && <PiSettingsSheet controller={controller} state={state} onClose={() => setPiSettingsOpen(false)} onCredentials={() => { setPiSettingsOpen(false); setSettingsOpen(true); }} onPanel={setCommandPanel} onToast={setToast} />}
+			{configView && <ConfigSheet controller={controller} state={state} initialView={configView} onClose={() => setConfigView(null)} onOpenPiSettings={() => { setConfigView(null); setPiSettingsOpen(true); }} />}
+			{commandPanel && <CommandResultSheet panel={commandPanel} onClose={() => setCommandPanel(null)} onToast={setToast} />}
+			{treeMode && <TreeSheet controller={controller} mode={treeMode} onClose={() => setTreeMode(null)} onError={setToast} onRestorePrompt={(text) => composerRef.current?.setText(text)} />}
 			{toast && <Toast message={toast} onDone={() => setToast("")} />}
 		</div>
 	);
@@ -334,7 +359,7 @@ function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: bool
 	);
 }
 
-function SettingsSheet({ controller, state, onClose, onToast }: { controller: AgentController; state: PublicAgentState; onClose: () => void; onToast: (message: string) => void }) {
+function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }: { controller: AgentController; state: PublicAgentState; onClose: () => void; onOpenPiSettings: () => void; onToast: (message: string) => void }) {
 	const [providerId, setProviderId] = useState<ProviderId>(PROVIDERS.some((item) => item.id === state.settings.providerId) ? state.settings.providerId : PROVIDERS[0]!.id);
 	const [key, setKey] = useState("");
 	const [connected, setConnected] = useState(false);
@@ -346,7 +371,7 @@ function SettingsSheet({ controller, state, onClose, onToast }: { controller: Ag
 			{(close) => (
 				<>
 				<header class="sheet-header">
-					<h2>Settings</h2>
+					<h2>Provider access</h2>
 					<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
 				</header>
 
@@ -417,14 +442,133 @@ function SettingsSheet({ controller, state, onClose, onToast }: { controller: Ag
 					<span>Include current selection</span>
 					<input type="checkbox" checked={state.settings.includeSelection} onChange={(event) => controller.settings.update({ includeSelection: event.currentTarget.checked })} />
 				</label>
+				<button class="config-nav" type="button" onClick={() => { close(); onOpenPiSettings(); }}>
+					<div><b>Pi settings</b><small>Compaction, skills, message delivery, and display</small></div>
+					<ChevronRight size={18} strokeWidth={2} aria-hidden="true" />
+				</button>
 				</>
 			)}
 		</Sheet>
 	);
 }
 
-function ConfigSheet({ controller, state, onClose }: { controller: AgentController; state: PublicAgentState; onClose: () => void }) {
-	const [view, setView] = useState<"main" | "providers" | "models">("main");
+function PiSettingsSheet({
+	controller,
+	state,
+	onClose,
+	onCredentials,
+	onPanel,
+	onToast,
+}: {
+	controller: AgentController;
+	state: PublicAgentState;
+	onClose: () => void;
+	onCredentials: () => void;
+	onPanel: (panel: CommandPanelData) => void;
+	onToast: (message: string) => void;
+}) {
+	const settings = state.settings;
+	const update = (patch: Partial<typeof settings>) => controller.settings.update(patch);
+	const addSkills = () => {
+		void controller.addGlobalSkillRoot().then((loaded) => {
+			if (!loaded) return;
+			onClose();
+			onPanel({
+				title: "Pi resources",
+				description: `${loaded.skills.length} skills · ${loaded.prompts.length} prompts`,
+				body: loaded.skills.length ? loaded.skills.map((name) => `/skill:${name}`).join("\n") : "No valid skills were found in that folder.",
+			});
+		}).catch((error) => onToast(error instanceof Error ? error.message : String(error)));
+	};
+	return (
+		<Sheet class="pi-settings" onClose={onClose}>
+			{(close) => (
+				<>
+					<div class="sheet-handle" />
+					<header class="sheet-header">
+						<div><h2>Pi settings</h2><small>Pi defaults are used unless changed here</small></div>
+						<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+					</header>
+					<div class="pi-settings-body">
+						<SettingsToggle label="Auto-compact" hint="Automatically compact context when it gets too large" checked={settings.autoCompaction} onChange={(value) => update({ autoCompaction: value })} />
+						<SettingsToggle label="Auto-resize images" hint="Resize large images for model compatibility" checked={settings.imageAutoResize} onChange={(value) => update({ imageAutoResize: value })} />
+						<SettingsToggle label="Skill commands" hint="Register discovered skills as /skill:name" checked={settings.enableSkillCommands} onChange={(value) => update({ enableSkillCommands: value })} />
+						<SettingsSelect label="Steering mode" hint="How messages sent during a run are delivered" value={settings.steeringMode} options={[{ value: "one-at-a-time", label: "One at a time" }, { value: "all", label: "All" }]} onChange={(value) => update({ steeringMode: value as typeof settings.steeringMode })} />
+						<SettingsSelect label="Follow-up mode" hint="How queued follow-ups are delivered" value={settings.followUpMode} options={[{ value: "one-at-a-time", label: "One at a time" }, { value: "all", label: "All" }]} onChange={(value) => update({ followUpMode: value as typeof settings.followUpMode })} />
+						<SettingsToggle label="Hide thinking" hint="Hide thinking blocks in assistant responses" checked={settings.hideThinkingBlock} onChange={(value) => update({ hideThinkingBlock: value })} />
+						<SettingsSelect label="Autocomplete max items" hint="Visible items in the @ and / picker" value={String(settings.autocompleteMaxVisible)} options={[7, 10, 15, 20].map((value) => ({ value: String(value), label: String(value) }))} onChange={(value) => update({ autocompleteMaxVisible: Number(value) })} />
+
+						<section class="settings-section">
+							<header><b>Skills</b><small>Project skills are detected automatically from .pi/skills and .agents/skills</small></header>
+							{settings.globalSkillRoots.map((root) => (
+								<div class="skill-root" key={root}>
+									<code>{root}</code>
+									<button type="button" aria-label="Remove skills folder" onClick={() => void controller.removeGlobalSkillRoot(root).catch((error) => onToast(String(error)))}><Trash2 size={14} strokeWidth={2} /></button>
+								</div>
+							))}
+							<button class="settings-action" type="button" onClick={addSkills}><Folder size={15} strokeWidth={2} /> Add global skills folder</button>
+						</section>
+						<button class="config-nav" type="button" onClick={onCredentials}>
+							<div><b>Provider credentials</b><small>Sign in or manage API keys</small></div>
+							<ChevronRight size={18} strokeWidth={2} />
+						</button>
+					</div>
+				</>
+			)}
+		</Sheet>
+	);
+}
+
+function SettingsToggle({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (value: boolean) => void }) {
+	return (
+		<label class="setting-row">
+			<span><b>{label}</b><small>{hint}</small></span>
+			<input type="checkbox" checked={checked} onChange={(event) => onChange(event.currentTarget.checked)} />
+		</label>
+	);
+}
+
+function SettingsSelect({ label, hint, value, options, onChange }: { label: string; hint: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void }) {
+	const selected = options.find((option) => option.value === value)?.label ?? value;
+	const choose = () => {
+		void pickAcodeSelect(label, options.map((option) => ({ value: option.value, text: option.label })), value).then((next) => {
+			if (next !== undefined) onChange(next);
+		});
+	};
+	return (
+		<div class="setting-row">
+			<span><b>{label}</b><small>{hint}</small></span>
+			<button class="setting-choice" type="button" onClick={choose}><span>{selected}</span><ChevronDown size={14} strokeWidth={2} /></button>
+		</div>
+	);
+}
+
+function CommandResultSheet({ panel, onClose, onToast }: { panel: CommandPanelData; onClose: () => void; onToast: (message: string) => void }) {
+	const copy = () => {
+		void navigator.clipboard.writeText(panel.copyText ?? panel.body ?? "").then(() => onToast("Copied"));
+	};
+	return (
+		<Sheet class="command-result" onClose={onClose}>
+			{(close) => (
+				<>
+					<div class="sheet-handle" />
+					<header class="sheet-header">
+						<div><h2>{panel.title}</h2>{panel.description && <small>{panel.description}</small>}</div>
+						<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+					</header>
+					<div class="command-result-body">
+						{panel.rows?.map((row) => <div class="result-row" key={row.label}><span>{row.label}</span><b>{row.value}</b></div>)}
+						{panel.body && (panel.markdown ? <Markdown text={panel.body} /> : <pre>{panel.body}</pre>)}
+						{(panel.copyText || panel.body) && <button class="settings-action" type="button" onClick={copy}>Copy</button>}
+					</div>
+				</>
+			)}
+		</Sheet>
+	);
+}
+
+function ConfigSheet({ controller, state, initialView, onClose, onOpenPiSettings }: { controller: AgentController; state: PublicAgentState; initialView: "main" | "models"; onClose: () => void; onOpenPiSettings: () => void }) {
+	const [view, setView] = useState<"main" | "providers" | "models">(initialView);
 	const [error, setError] = useState("");
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const firstView = useRef(true);
@@ -532,6 +676,13 @@ function ConfigSheet({ controller, state, onClose }: { controller: AgentControll
 										{modelName !== modelId && <small>{modelId}</small>}
 									</div>
 									<span class="config-nav-value">{modelName}</span>
+									<ChevronRight size={18} strokeWidth={2} aria-hidden="true" />
+								</button>
+								<button type="button" class="config-nav" onClick={onOpenPiSettings}>
+									<div>
+										<b>Pi settings</b>
+										<small>Compaction, queues, skills, images, and transport</small>
+									</div>
 									<ChevronRight size={18} strokeWidth={2} aria-hidden="true" />
 								</button>
 							</>

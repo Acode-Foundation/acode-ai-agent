@@ -1,9 +1,15 @@
+import { DEFAULT_COMPACTION_SETTINGS, type QueueMode, type ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { Transport } from "@earendil-works/pi-ai";
 import { z } from "zod";
 
 export const permissionModeSchema = z.enum(["ask", "allow-edits", "full-access"]);
 export type PermissionMode = z.infer<typeof permissionModeSchema>;
 
-export const thinkingLevelSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ThinkingLevel[];
+const QUEUE_MODES = ["all", "one-at-a-time"] as const satisfies readonly QueueMode[];
+const TRANSPORTS = ["sse", "websocket", "websocket-cached", "auto"] as const satisfies readonly Transport[];
+
+export const thinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 export const customModelsSchema = z.record(z.string(), z.array(z.string().min(1).max(120))).catch({});
 
@@ -13,6 +19,24 @@ export const settingsSchema = z.object({
 	thinkingLevel: thinkingLevelSchema.catch("medium"),
 	permissionMode: permissionModeSchema.catch("ask"),
 	includeSelection: z.boolean().catch(true),
+	hideThinkingBlock: z.boolean().catch(false),
+	autoCompaction: z.boolean().catch(DEFAULT_COMPACTION_SETTINGS.enabled),
+	compactionReserveTokens: z.number().int().min(1_024).max(262_144).catch(DEFAULT_COMPACTION_SETTINGS.reserveTokens),
+	compactionKeepRecentTokens: z.number().int().min(1_024).max(262_144).catch(DEFAULT_COMPACTION_SETTINGS.keepRecentTokens),
+	retryEnabled: z.boolean().catch(true),
+	retryMaxRetries: z.number().int().min(0).max(10).catch(3),
+	retryBaseDelayMs: z.number().int().min(100).max(60_000).catch(2_000),
+	providerTimeoutMs: z.number().int().min(0).max(3_600_000).catch(300_000),
+	providerMaxRetries: z.number().int().min(0).max(10).catch(0),
+	providerMaxRetryDelayMs: z.number().int().min(0).max(3_600_000).catch(60_000),
+	transport: z.enum(TRANSPORTS).catch("auto"),
+	steeringMode: z.enum(QUEUE_MODES).catch("one-at-a-time"),
+	followUpMode: z.enum(QUEUE_MODES).catch("one-at-a-time"),
+	enableSkillCommands: z.boolean().catch(true),
+	autocompleteMaxVisible: z.number().int().min(7).max(20).catch(10),
+	imageAutoResize: z.boolean().catch(true),
+	blockImages: z.boolean().catch(false),
+	globalSkillRoots: z.array(z.string().min(1).max(1_024)).max(20).catch([]),
 	maxHistoryMessages: z.number().int().min(20).max(200).catch(80),
 	maxWalkFiles: z.number().int().min(25).max(1000).catch(200),
 	activeWorkspaceId: z.string().catch(""),
@@ -90,14 +114,4 @@ export const PERMISSION_MODES: Array<{ id: PermissionMode; label: string; hint: 
 	{ id: "ask", label: "Ask", hint: "Approve each edit" },
 	{ id: "allow-edits", label: "Allow edits", hint: "Edits this session" },
 	{ id: "full-access", label: "Full access", hint: "All workspace tools" },
-];
-
-export const THINKING_LEVELS: Array<{ id: z.infer<typeof thinkingLevelSchema>; label: string }> = [
-	{ id: "off", label: "Off" },
-	{ id: "minimal", label: "Min" },
-	{ id: "low", label: "Low" },
-	{ id: "medium", label: "Med" },
-	{ id: "high", label: "High" },
-	{ id: "xhigh", label: "XHigh" },
-	{ id: "max", label: "Max" },
 ];

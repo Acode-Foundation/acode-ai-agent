@@ -1,6 +1,7 @@
-import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { AgentMessage, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import type { ImageContent, Model, Transport } from "@earendil-works/pi-ai";
 import type { PermissionMode } from "./schema";
+import type { SlashCommand } from "./slashCommands";
 
 /** Built-ins use known IDs; extensions may register any stable provider ID. */
 export type ProviderId = string;
@@ -13,6 +14,24 @@ export type AgentSettings = {
 	thinkingLevel: ThinkingLevel;
 	permissionMode: PermissionMode;
 	includeSelection: boolean;
+	hideThinkingBlock: boolean;
+	autoCompaction: boolean;
+	compactionReserveTokens: number;
+	compactionKeepRecentTokens: number;
+	retryEnabled: boolean;
+	retryMaxRetries: number;
+	retryBaseDelayMs: number;
+	providerTimeoutMs: number;
+	providerMaxRetries: number;
+	providerMaxRetryDelayMs: number;
+	transport: Transport;
+	steeringMode: QueueMode;
+	followUpMode: QueueMode;
+	enableSkillCommands: boolean;
+	autocompleteMaxVisible: number;
+	imageAutoResize: boolean;
+	blockImages: boolean;
+	globalSkillRoots: string[];
 	maxHistoryMessages: number;
 	maxWalkFiles: number;
 	activeWorkspaceId: string;
@@ -70,6 +89,18 @@ export type RestoredPrompt = {
 	images: ImageContent[];
 };
 
+export type SessionTreeItem = {
+	id: string;
+	parentId: string | null;
+	type: string;
+	kind: "user" | "assistant" | "tool" | "state" | "summary";
+	text: string;
+	timestamp: string;
+	active: boolean;
+	current: boolean;
+	label?: string;
+};
+
 export type PublicAgentState = {
 	status: "booting" | "ready" | "running" | "error";
 	messages: AgentMessage[];
@@ -86,6 +117,7 @@ export type PublicAgentState = {
 	contextTokens: number;
 	error?: string;
 	chats: ChatSummary[];
+	commands: SlashCommand[];
 	activeChatId?: string;
 	authFlow?: {
 		providerId: ProviderId;

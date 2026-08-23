@@ -1,6 +1,7 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool, SessionTreeEntry } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import { Signal } from "../core/events";
+import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";
 import { SettingsStore } from "../core/settings";
 import type { PermissionMode } from "../core/schema";
@@ -12,6 +13,7 @@ import type {
 	ProviderId,
 	PublicAgentState,
 	RestoredPrompt,
+	SessionTreeItem,
 	WorkspaceInfo,
 } from "../core/types";
 import { openAcodeUri } from "../platform/deviceImage";
@@ -20,9 +22,10 @@ import { MutationGate } from "../permissions/mutationGate";
 import { openAuthTab } from "../platform/authTab";
 import { PortableCredentialStore } from "../platform/credentials";
 import { createSessionStore, type SessionStore } from "../platform/sessionStore";
-import { createChatId } from "../session/sessionText";
+import { createChatId, messagePlainText } from "../session/sessionText";
 import { ProviderRegistry } from "../providers/providerRegistry";
 import { AgentSession } from "../session/agentSession";
+import { pickGlobalSkillsFolder } from "../session/workspaceResources";
 import { sanitizeModelId } from "../providers/customModels";
 import { clampThinkingLevel } from "../providers/thinkingLevels";
 import { AcodeWorkspace } from "../workspace/acodeWorkspace";
@@ -60,9 +63,11 @@ export class AgentController {
 			usage: { tokens: 0, cost: 0 },
 			contextTokens: 0,
 			chats: [],
+			commands: BUILT_IN_SLASH_COMMANDS,
 		};
 		this.settings.subscribe((settings) => {
 			this.#state.settings = settings;
+			void this.#activeSession()?.applySettings(settings);
 			this.#emit();
 		});
 		this.#hostUnsubscribers = [
@@ -82,6 +87,7 @@ export class AgentController {
 			activities: [...this.#state.activities],
 			queued: [...this.#state.queued],
 			models: [...this.#state.models],
+			commands: [...this.#state.commands],
 			settings: { ...this.#state.settings },
 		};
 	}
@@ -124,7 +130,8 @@ export class AgentController {
 		const prompt = text.trim();
 		const session = this.#activeSession();
 		if (!session) throw new Error("Open a project folder before starting the agent.");
-		const attached = await collectPromptImages(prompt, images ?? [], session.workspace);
+		const attached = await collectPromptImages(prompt, images ?? [], session.workspace, this.settings.value.imageAutoResize);
+		if (this.settings.value.blockImages && attached.length) throw new Error("Images are blocked in Pi settings.");
 		if (!prompt && !attached.length) return;
 		const auth = await this.providers.models.checkAuth(this.settings.value.providerId);
 		if (!auth) throw new Error(`Add a ${this.settings.value.providerId} credential before sending a message.`);
@@ -136,6 +143,150 @@ export class AgentController {
 			this.#emit();
 			throw error;
 		}
+	}
+
+	async addGlobalSkillRoot(): Promise<{ skills: string[]; prompts: string[]; roots: string[] } | undefined> {
+		const picked = await pickGlobalSkillsFolder();
+		if (!picked) return undefined;
+		const roots = [...new Set([...this.settings.value.globalSkillRoots, picked.uri])];
+		this.settings.update({ globalSkillRoots: roots });
+		return this.#activeSession()?.reloadResources();
+	}
+
+	async removeGlobalSkillRoot(uri: string): Promise<void> {
+		this.settings.update({ globalSkillRoots: this.settings.value.globalSkillRoots.filter((root) => root !== uri) });
+		await this.#activeSession()?.reloadResources();
+	}
+
+	async executeSlashCommand(name: string, args: string): Promise<SlashCommandExecution> {
+		const session = this.#activeSession();
+		if (!session) throw new Error("Open a project folder before running a command.");
+		const command = session.snapshot.commands.find((item) => item.name.toLowerCase() === name.toLowerCase());
+		if (!command) throw new Error(`Unknown command: /${name}`);
+		if (command.source !== "action") {
+			await this.#requireProviderAuth();
+			await session.invokeResource(command.name, args);
+			return {};
+		}
+			switch (command.name) {
+			case "model":
+			case "scoped-models": return { action: "models" };
+			case "settings": return { action: "pi-settings" };
+			case "login":
+			case "logout": return { action: "settings" };
+			case "resume": return { action: "sessions" };
+			case "new":
+				await this.newConversation();
+				return {};
+			case "compact":
+				await session.compact(args);
+				return {};
+			case "name":
+				await session.rename(args);
+				this.#emit();
+				return {};
+			case "session": {
+				const info = session.sessionInfo();
+				return { panel: {
+					title: "Session details",
+					description: info.title,
+					rows: [
+						{ label: "Session ID", value: info.id },
+						{ label: "Tokens", value: formatTokens(info.tokens) },
+						{ label: "Cost", value: info.cost > 0 ? `$${info.cost.toFixed(4)}` : "—" },
+						{ label: "Provider", value: this.settings.value.providerId },
+						{ label: "Model", value: session.model?.name ?? this.settings.value.modelId },
+					],
+				} };
+			}
+			case "tree": return { action: "tree" };
+			case "fork": return { action: "fork" };
+			case "clone":
+				await this.forkConversation();
+				return {};
+			case "copy": {
+				const copyText = session.latestAssistantText();
+				if (!copyText) throw new Error("There is no assistant response to copy yet.");
+				return { copyText, message: "Response copied." };
+			}
+			case "reload": {
+				const loaded = await session.reloadResources();
+				return { panel: resourcePanel(loaded) };
+			}
+			case "export": {
+				const body = await session.exportJson();
+				return { panel: { title: "Export session", description: "Portable JSON export", body, copyText: body } };
+			}
+			case "import":
+				await this.importConversation();
+				return {};
+			case "hotkeys": return { panel: hotkeysPanel() };
+			default: throw new Error(`Command /${command.name} is not available in Acode.`);
+		}
+	}
+
+	async getTreeItems(): Promise<SessionTreeItem[]> {
+		return this.#activeSession()?.treeItems() ?? [];
+	}
+
+	async navigateTree(targetId: string, options: { summarize?: boolean; customInstructions?: string } = {}): Promise<string | undefined> {
+		return this.#activeSession()?.navigateTree(targetId, options);
+	}
+
+	async forkConversation(targetId?: string): Promise<string | undefined> {
+		const session = this.#activeSession();
+		const workspace = this.#state.workspace;
+		if (!session || !workspace) throw new Error("Open a session before forking it.");
+		let entries = await session.branchEntries(targetId);
+		if (!entries.length && !targetId) throw new Error("There is no session branch to clone.");
+		let restoredText: string | undefined;
+		if (targetId) {
+			const selected = entries.at(-1);
+			if (!selected || selected.id !== targetId || selected.type !== "message" || selected.message.role !== "user") {
+				throw new Error("Forks must start from a user message.");
+			}
+			restoredText = messagePlainText(selected.message);
+			entries = entries.slice(0, -1);
+		}
+		const id = createChatId();
+		await this.#sessionStore.seed({
+			id,
+			title: `${session.title} (${targetId ? "fork" : "clone"})`,
+			workspaceId: workspace.id,
+			workspaceName: workspace.name,
+			providerId: session.model?.provider ?? this.settings.value.providerId,
+			modelId: session.model?.id ?? this.settings.value.modelId,
+			entries,
+		});
+		await this.#openChat(id, workspace);
+		return restoredText;
+	}
+
+	async importConversation(): Promise<void> {
+		const workspace = this.#state.workspace;
+		if (!workspace) throw new Error("Open a project folder before importing a session.");
+		const browser = acode.require("fileBrowser") as FileBrowser | undefined;
+		if (typeof browser !== "function") throw new Error("Acode's file picker is unavailable.");
+		let picked: SelectedFile;
+		try {
+			picked = await browser("file", "Choose a Pi JSON or JSONL session", true);
+		} catch (error) {
+			if (/cancel|abort/i.test(error instanceof Error ? error.message : String(error))) return;
+			throw error;
+		}
+		const text = await acode.fsOperation(picked.url).readFile("utf-8");
+		const imported = parseImportedSession(text);
+		const id = createChatId();
+		await this.#sessionStore.seed({
+			id,
+			title: imported.name || picked.name.replace(/\.(?:jsonl?|txt)$/i, "") || "Imported session",
+			workspaceId: workspace.id,
+			workspaceName: workspace.name,
+			providerId: this.settings.value.providerId,
+			modelId: this.settings.value.modelId,
+			entries: imported.entries,
+		});
+		await this.#openChat(id, workspace);
 	}
 
 	async abort(): Promise<RestoredPrompt[]> {
@@ -315,6 +466,13 @@ export class AgentController {
 		return Boolean(await this.credentials.read(providerId));
 	}
 
+	async #requireProviderAuth(): Promise<void> {
+		const providerId = this.settings.value.providerId;
+		if (!(await this.providers.models.checkAuth(providerId))) {
+			throw new Error(`Add a ${providerId} credential before running this command.`);
+		}
+	}
+
 	approve(decision: MutationDecision): void {
 		this.#activeSession()?.mutationGate.resolve(decision);
 	}
@@ -488,6 +646,7 @@ export class AgentController {
 			error: snapshot?.error,
 			usage: snapshot?.usage ?? { tokens: 0, cost: 0 },
 			contextTokens: snapshot?.contextTokens ?? 0,
+			commands: snapshot?.commands ?? BUILT_IN_SLASH_COMMANDS,
 			model: session?.model ?? this.#state.model,
 			workspace: session?.workspace.info ?? this.#state.workspace,
 		};
@@ -527,6 +686,22 @@ export class AgentController {
 	}
 }
 
+export type SlashCommandExecution = {
+	action?: "models" | "settings" | "pi-settings" | "sessions" | "tree" | "fork";
+	message?: string;
+	copyText?: string;
+	panel?: CommandPanelData;
+};
+
+export type CommandPanelData = {
+	title: string;
+	description?: string;
+	rows?: Array<{ label: string; value: string }>;
+	body?: string;
+	copyText?: string;
+	markdown?: boolean;
+};
+
 function preferredModel(providerId: ProviderId, models: Model<any>[]): Model<any> {
 	const preferred: Partial<Record<ProviderId, string[]>> = {
 		openrouter: ["nvidia/nemotron-3.5-lightning:free", "auto"],
@@ -542,4 +717,51 @@ function preferredModel(providerId: ProviderId, models: Model<any>[]): Model<any
 		if (match) return match;
 	}
 	return models[0]!;
+}
+
+function formatTokens(tokens: number): string {
+	return tokens >= 1000 ? `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k tokens` : `${tokens} tokens`;
+}
+
+function resourcePanel(loaded: { skills: string[]; prompts: string[]; roots: string[] }): CommandPanelData {
+	const parts = [
+		loaded.skills.length ? `Skills\n${loaded.skills.map((name) => `• /skill:${name}`).join("\n")}` : "Skills\nNone found",
+		loaded.prompts.length ? `Prompts\n${loaded.prompts.map((name) => `• /${name}`).join("\n")}` : "Prompts\nNone found",
+	];
+	return {
+		title: "Pi resources",
+		description: `${loaded.skills.length} skills · ${loaded.prompts.length} prompts`,
+		body: parts.join("\n\n"),
+		rows: loaded.roots.length ? [{ label: "Global roots", value: `${loaded.roots.length} scanned` }] : undefined,
+	};
+}
+
+function hotkeysPanel(): CommandPanelData {
+	return {
+		title: "Composer shortcuts",
+		description: "Keyboard controls available in Acode",
+		rows: [
+			{ label: "Send / steer", value: "Ctrl/⌘ + Enter" },
+			{ label: "Queue follow-up", value: "Ctrl/⌘ + Shift + Enter" },
+			{ label: "Commands", value: "Type /" },
+			{ label: "Files", value: "Type @" },
+			{ label: "Navigate picker", value: "↑ / ↓" },
+			{ label: "Choose item", value: "Enter / Tab" },
+			{ label: "Close picker", value: "Escape" },
+		],
+	};
+}
+
+function parseImportedSession(text: string): { name?: string; entries: SessionTreeEntry[] } {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		parsed = text.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line) as unknown);
+	}
+	const object = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+	const candidates = Array.isArray(parsed) ? parsed : Array.isArray(object?.entries) ? object.entries : [];
+	const entries = candidates.filter((entry): entry is SessionTreeEntry => Boolean(entry && typeof entry === "object" && "id" in entry && "type" in entry));
+	if (!entries.length) throw new Error("That file does not contain a Pi session tree.");
+	return { name: typeof object?.name === "string" ? object.name : undefined, entries };
 }

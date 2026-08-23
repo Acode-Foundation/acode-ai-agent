@@ -4,8 +4,7 @@ import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 import { mentionedFilePaths } from "../ui/composerDraft";
 
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const TARGET_EDGE = 1280;
-const TARGET_BYTES = 1_500_000;
+const TARGET_EDGE = 2000;
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/bmp"]);
 
@@ -29,26 +28,27 @@ export function normalizeImageMime(value: string | undefined, name = ""): string
 	return IMAGE_TYPES.has(mime) ? (mime === "image/jpg" ? "image/jpeg" : mime) : undefined;
 }
 
-export async function imageContentFromFile(file: File | Blob, name = "image"): Promise<ImageContent> {
+export async function imageContentFromFile(file: File | Blob, name = "image", autoResize = true): Promise<ImageContent> {
 	if (file.size > MAX_IMAGE_BYTES) throw new Error(`${name} is larger than 8MB.`);
 	const mime = normalizeImageMime(file.type, name);
 	if (!mime) throw new Error(`${name} is not a supported image.`);
-	const prepared = await resizeImage(file, mime);
+	const prepared = autoResize ? await resizeImage(file, mime) : { data: await blobToBase64(file), mimeType: mime };
 	return { type: "image", data: prepared.data, mimeType: prepared.mimeType };
 }
 
-export async function imageContentFromBytes(bytes: Uint8Array, name: string, mimeType?: string): Promise<ImageContent> {
+export async function imageContentFromBytes(bytes: Uint8Array, name: string, mimeType?: string, autoResize = true): Promise<ImageContent> {
 	if (bytes.byteLength > MAX_IMAGE_BYTES) throw new Error(`${name} is larger than 8MB.`);
 	const mime = normalizeImageMime(mimeType, name);
 	if (!mime) throw new Error(`${name} is not a supported image.`);
 	const blob = new Blob([toArrayBuffer(bytes)], { type: mime });
-	return imageContentFromFile(blob, name);
+	return imageContentFromFile(blob, name, autoResize);
 }
 
 export async function collectPromptImages(
 	text: string,
 	attached: ImageContent[],
 	workspace?: AcodeWorkspace,
+	autoResize = true,
 ): Promise<ImageContent[]> {
 	const images = [...attached];
 	if (!workspace) return images;
@@ -57,7 +57,7 @@ export async function collectPromptImages(
 		if (!isImagePath(path)) continue;
 		try {
 			const bytes = await workspace.readBinary(path);
-			const image = await imageContentFromBytes(bytes, fileName(path));
+			const image = await imageContentFromBytes(bytes, fileName(path), undefined, autoResize);
 			if (seen.has(image.data.slice(0, 48))) continue;
 			seen.add(image.data.slice(0, 48));
 			images.push(image);
@@ -88,7 +88,7 @@ async function resizeImage(blob: Blob, mimeType: string): Promise<{ data: string
 		const scale = Math.min(1, TARGET_EDGE / Math.max(bitmap.width, bitmap.height));
 		const width = Math.max(1, Math.round(bitmap.width * scale));
 		const height = Math.max(1, Math.round(bitmap.height * scale));
-		if (scale >= 1 && blob.size <= TARGET_BYTES) {
+		if (scale >= 1) {
 			return { data: await blobToBase64(blob), mimeType };
 		}
 		const canvas = document.createElement("canvas");

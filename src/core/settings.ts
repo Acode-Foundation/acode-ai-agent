@@ -1,3 +1,4 @@
+import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
 import { parseSettings } from "./schema";
 import type { AgentSettings } from "./types";
 
@@ -9,6 +10,24 @@ export const DEFAULT_SETTINGS: AgentSettings = {
 	thinkingLevel: "medium",
 	permissionMode: "ask",
 	includeSelection: true,
+	hideThinkingBlock: false,
+	autoCompaction: DEFAULT_COMPACTION_SETTINGS.enabled,
+	compactionReserveTokens: DEFAULT_COMPACTION_SETTINGS.reserveTokens,
+	compactionKeepRecentTokens: DEFAULT_COMPACTION_SETTINGS.keepRecentTokens,
+	retryEnabled: true,
+	retryMaxRetries: 3,
+	retryBaseDelayMs: 2_000,
+	providerTimeoutMs: 300_000,
+	providerMaxRetries: 0,
+	providerMaxRetryDelayMs: 60_000,
+	transport: "auto",
+	steeringMode: "one-at-a-time",
+	followUpMode: "one-at-a-time",
+	enableSkillCommands: true,
+	autocompleteMaxVisible: 10,
+	imageAutoResize: true,
+	blockImages: false,
+	globalSkillRoots: [],
 	maxHistoryMessages: 80,
 	maxWalkFiles: 200,
 	activeWorkspaceId: "",
@@ -25,7 +44,7 @@ export class SettingsStore {
 	}
 
 	get value(): AgentSettings {
-		return { ...this.#value, customModels: { ...this.#value.customModels } };
+		return { ...this.#value, customModels: { ...this.#value.customModels }, globalSkillRoots: [...this.#value.globalSkillRoots] };
 	}
 
 	update(patch: Partial<AgentSettings>): AgentSettings {

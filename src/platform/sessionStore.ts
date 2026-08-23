@@ -130,6 +130,26 @@ export class SessionStore {
 		});
 	}
 
+	async seed(options: {
+		id: string;
+		title: string;
+		workspaceId: string;
+		workspaceName: string;
+		providerId: string;
+		modelId: string;
+		entries: SessionTreeEntry[];
+	}): Promise<void> {
+		await this.hydrate();
+		const now = Date.now();
+		await this.#write({
+			...options,
+			createdAt: new Date(now).toISOString(),
+			updatedAt: now,
+			leafId: options.entries.at(-1)?.id ?? null,
+			entries: [...options.entries],
+		});
+	}
+
 	async #hydrate(): Promise<void> {
 		await this.#migrate();
 		this.#index = parseChatIndex(await this.#kv.get(INDEX_KEY));

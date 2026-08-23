@@ -19,11 +19,11 @@ function sdcard(): SDcard | undefined {
 	}
 }
 
-export async function pickDeviceImage(): Promise<DraftImage | undefined> {
+export async function pickDeviceImage(autoResize = true): Promise<DraftImage | undefined> {
 	const picked = await pickWithSDcard();
 	if (!picked) return undefined;
 	const bytes = await readPickedBytes(picked.uri);
-	const image = await imageContentFromBytes(bytes, picked.name, picked.mime);
+	const image = await imageContentFromBytes(bytes, picked.name, picked.mime, autoResize);
 	return { ...image, id: newId(), name: picked.name, uri: picked.uri };
 }
 

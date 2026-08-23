@@ -3,6 +3,7 @@ declare module "*.css" {
 	export default content;
 }
 
+
 interface SDcardDocumentFile {
 	uri: string;
 	url?: string;

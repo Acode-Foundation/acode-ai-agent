@@ -5,21 +5,21 @@ import {
 	type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
 
-const THINKING_LEVELS: Array<{ id: ModelThinkingLevel; label: string }> = [
-	{ id: "off", label: "Off" },
-	{ id: "minimal", label: "Min" },
-	{ id: "low", label: "Low" },
-	{ id: "medium", label: "Med" },
-	{ id: "high", label: "High" },
-	{ id: "xhigh", label: "XHigh" },
-	{ id: "max", label: "Max" },
-];
+const THINKING_LABELS: Record<ModelThinkingLevel, string> = {
+	off: "Off",
+	minimal: "Min",
+	low: "Low",
+	medium: "Med",
+	high: "High",
+	xhigh: "XHigh",
+	max: "Max",
+};
 
-export function thinkingLevelsFor(model?: Model<any>): typeof THINKING_LEVELS {
+export function thinkingLevelsFor(model?: Model<any>): Array<{ id: ModelThinkingLevel; label: string }> {
 	if (!model) return [];
 	const supported = getSupportedThinkingLevels(model);
 	if (!supported.some((level) => level !== "off")) return [];
-	return THINKING_LEVELS.filter((level) => supported.includes(level.id));
+	return supported.map((id) => ({ id, label: THINKING_LABELS[id] }));
 }
 
 export function clampThinkingLevel(model: Model<any> | undefined, level: ModelThinkingLevel): ModelThinkingLevel {
