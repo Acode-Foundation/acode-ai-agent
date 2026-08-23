@@ -11,12 +11,13 @@ A mobile-first coding agent that runs directly inside an Acode editor page. It u
 - Local files, SAF `content://`, FTP, and SFTP workspaces through Acode `fsOperation`
 - Dirty editor-buffer reads and unsaved buffer edits
 - `read_file`, `list_dir`, `grep`, `glob`, `write_file`, and exact `edit_file` tools
+- Pi-style streaming `bash` with timeout/cancellation, exposed only for Acode Terminal-backed workspaces
 - One guarded edit approval surface with an optional session-wide edit grant
 - Project `AGENTS.md`, active-file, and selection context
 - Workspace-scoped conversation persistence with key-shaped text redaction
 - Acode plugin-scoped secure storage for provider credentials
 
-The agent intentionally has no shell dependency. A future shell capability can be an optional adapter, but the core and all file workflows remain usable without it.
+The agent keeps shell support optional. Core file workflows have no shell dependency; `bash` is registered only when the active folder is backed by Acode Terminal's own filesystem and the Executor bridge is available.
 
 ## Architecture
 
@@ -61,6 +62,7 @@ Tools registered after a session starts are applied to the live Pi agent immedia
 - API keys and OAuth refresh credentials use `PluginContext.getSecret/setSecret`, backed by Acode's plugin-scoped secure storage.
 - Keys are never written to local storage, settings, session history, logs, or tool results. A non-Acode host gets an in-memory-only credential adapter.
 - Writes and edits are sequential and gated. Open files are changed in the editor buffer and are not auto-saved.
+- Terminal commands are sequential and approval-gated unless the session uses full-access mode. The tool is absent for ordinary SAF, local-storage, FTP, and SFTP workspaces.
 - Transport is pinned to HTTP SSE; the runtime does not require WebSockets.
 
 ## Provider subscriptions

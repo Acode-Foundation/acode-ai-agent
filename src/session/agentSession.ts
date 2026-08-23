@@ -25,6 +25,7 @@ import type { ProviderRegistry } from "../providers/providerRegistry";
 import type { SessionStore } from "../platform/sessionStore";
 import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
 import { createWorkspaceTools } from "../tools/createTools";
+import { createTerminalBashTool } from "../tools/bash";
 import { createWebSearchContext } from "../tools/web/context";
 import { createWebTools } from "../tools/web/createWebTools";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
@@ -497,8 +498,10 @@ export class AgentSession {
 	}
 
 	#tools(): AgentTool[] {
+		const bash = createTerminalBashTool(this.workspace);
 		return [
 			...createWorkspaceTools(this.workspace, { maxWalkFiles: () => this.#settings().maxWalkFiles }),
+			...(bash ? [bash] : []),
 			this.#skillTool(),
 			...createWebTools(createWebSearchContext({
 				models: this.#providers.models,

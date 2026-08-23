@@ -11,14 +11,13 @@ export async function buildSystemPrompt(
 	const context: string[] = [
 		"You are Acode's in-editor coding agent, powered by the Pi agent runtime.",
 		"Work autonomously toward the user's requested outcome and use tools to inspect evidence before guessing.",
-		"Every tool path is POSIX-style and relative to the active workspace. Never request device paths, absolute paths, or URI schemes.",
+		"File-tool paths are POSIX and workspace-relative; never pass device paths, absolute paths, or URIs.",
 		"Read open buffers before editing. Edits to open files remain unsaved so the user retains editor undo/save control.",
 		"Prefer edit_file for focused changes and write_file for new files or deliberate whole-file rewrites.",
 		"Never expose credentials, provider keys, hidden workspace URIs, or private values in tool results or responses.",
 		`Workspace: ${workspace.info.name}. Storage: ${workspace.info.remote ? "remote; keep walks bounded and sequential" : workspace.info.scheme}.`,
 		"Use web_search for current docs, APIs, package versions, and recent events instead of guessing. Follow with fetch_content when you need the full page. Cite source URLs.",
 	];
-
 	for (const instructionsFile of ["AGENTS.md", ".agents.md"]) {
 		try {
 			const instructions = await workspace.readText(instructionsFile);
@@ -51,4 +50,3 @@ export async function buildSystemPrompt(
 	}
 	return context.join("\n\n");
 }
-

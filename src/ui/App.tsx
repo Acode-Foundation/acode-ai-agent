@@ -869,9 +869,9 @@ function ApprovalPanel({ approval, onApprove }: { approval: MutationRequest; onA
 		void fadeInUp(element);
 	}, [approval.id]);
 	return (
-		<section ref={ref} class="approval" role="alertdialog" aria-label="Approve agent edit">
+		<section ref={ref} class="approval" role="alertdialog" aria-label="Approve agent action">
 			<header>
-				<span>Edit</span>
+				<span>{approval.toolName === "bash" ? "Terminal" : "Edit"}</span>
 				<strong>{approval.title}</strong>
 			</header>
 			<pre>{approval.preview}</pre>

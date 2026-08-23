@@ -139,6 +139,8 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 			return { kind: "change", label: "Wrote file", detail: path };
 		case "edit_file":
 			return { kind: "change", label: "Changed files", detail: path };
+		case "bash":
+			return { kind: "other", label: "Ran command" };
 		case "thinking":
 			return { kind: "think", label: "Reasoned", detail: undefined };
 		default:
