@@ -77,6 +77,18 @@ test("keeps the tail of output at Pi's line limit", async () => {
 	expect(text).toContain("line 2002\n\n[Showing lines 3-2002 of 2002.]");
 });
 
+test("reports the byte limit when it is reached before the line limit", async () => {
+	vi.stubGlobal("Executor", fakeExecutor((_command, onData) => {
+		for (let line = 1; line <= 2_001; line += 1) onData("stdout", `${line}:${"x".repeat(100)}`);
+		onData("exit", "0");
+	}));
+	const tool = createTerminalBashTool(workspace("file:///data/user/0/com.foxdebug.acode/files/public"))!;
+	const result = await tool.execute("bash-bytes", { command: "large-output" });
+	const text = result.content.find((part) => part.type === "text")?.text ?? "";
+	expect(result.details?.truncation?.truncatedBy).toBe("bytes");
+	expect(text).toMatch(/\(50KB limit\)\.\]$/);
+});
+
 test("stops timed-out commands and includes their captured output", async () => {
 	vi.useFakeTimers();
 	let stopped = "";

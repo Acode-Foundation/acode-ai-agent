@@ -4,7 +4,6 @@ import {
 	DEFAULT_MAX_LINES,
 	type AgentTool,
 	type AgentToolResult,
-	type TruncationResult,
 } from "@earendil-works/pi-agent-core";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 
@@ -12,7 +11,16 @@ const MAX_TIMEOUT_SECONDS = 2_147_483.647;
 const UPDATE_THROTTLE_MS = 100;
 
 type BashDetails = {
-	truncation?: TruncationResult;
+	truncation?: BashTruncation;
+};
+
+type BashTruncation = {
+	truncatedBy: "lines" | "bytes";
+	totalLines: number;
+	totalBytes: number;
+	outputLines: number;
+	outputBytes: number;
+	lastLinePartial: boolean;
 };
 
 type BashResult = AgentToolResult<BashDetails>;
@@ -78,8 +86,7 @@ export function createTerminalBashTool(workspace: AcodeWorkspace): AgentTool<any
 				}, delay);
 			};
 
-			onUpdate?.({ content: [], details: {} });
-			const wrapped = `bash -lc ${shellQuote(`cd -- ${shellQuote(cwd)} && ${command}`)}`;
+				const wrapped = `bash -lc ${shellQuote(`cd -- ${shellQuote(cwd)} && ${command}`)}`;
 			try {
 				let exitCode: number;
 				try {
@@ -283,7 +290,7 @@ class BashOutputBuffer {
 		}
 	}
 
-	snapshot(): { content: string; truncation?: TruncationResult } {
+	snapshot(): { content: string; truncation?: BashTruncation } {
 		const selected: string[] = [];
 		let outputBytes = 0;
 		let lastLinePartial = false;
@@ -309,34 +316,30 @@ class BashOutputBuffer {
 		return {
 			content,
 			truncation: {
-				content,
-				truncated: true,
-				truncatedBy: this.#totalLines > DEFAULT_MAX_LINES ? "lines" : "bytes",
+				truncatedBy: selected.length >= DEFAULT_MAX_LINES ? "lines" : "bytes",
 				totalLines: this.#totalLines,
 				totalBytes: this.#totalBytes,
 				outputLines: selected.length,
 				outputBytes,
 				lastLinePartial,
-				firstLineExceedsLimit: false,
-				maxLines: DEFAULT_MAX_LINES,
-				maxBytes: DEFAULT_MAX_BYTES,
 			},
 		};
 	}
 }
 
 function formatSnapshot(
-	snapshot: { content: string; truncation?: TruncationResult },
+	snapshot: { content: string; truncation?: BashTruncation },
 	partial = false,
 ): BashResult {
 	let text = snapshot.content || (partial ? "" : "(no output)");
 	const truncation = snapshot.truncation;
-	if (truncation?.truncated) {
+	if (truncation) {
 		const startLine = Math.max(1, truncation.totalLines - truncation.outputLines + 1);
 		if (truncation.lastLinePartial) {
 			text += `\n\n[Showing the last ${(truncation.outputBytes / 1_024).toFixed(1)}KB of output (50KB limit).]`;
 		} else {
-			text += `\n\n[Showing lines ${startLine}-${truncation.totalLines} of ${truncation.totalLines}.]`;
+			const reason = truncation.truncatedBy === "bytes" ? " (50KB limit)" : "";
+			text += `\n\n[Showing lines ${startLine}-${truncation.totalLines} of ${truncation.totalLines}${reason}.]`;
 		}
 	}
 	return {
