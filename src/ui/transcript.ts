@@ -140,7 +140,7 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 		case "edit_file":
 			return { kind: "change", label: "Changed files", detail: path };
 		case "bash":
-			return { kind: "terminal", label: "Ran command" };
+			return { kind: "terminal", label: "Ran command", detail: inlinePreview(firstString(args, ["command", "cmd"])) };
 		case "thinking":
 			return { kind: "think", label: "Reasoned", detail: undefined };
 		default:
@@ -424,6 +424,10 @@ function firstString(args: Record<string, unknown>, keys: string[]): string | un
 		if (typeof value === "string" && value.trim()) return value.trim();
 	}
 	return undefined;
+}
+
+function inlinePreview(value: string | undefined): string | undefined {
+	return value?.replace(/\s+/g, " ").trim() || undefined;
 }
 
 export function splitReadOutput(output?: string): { body: string; notice?: string } {

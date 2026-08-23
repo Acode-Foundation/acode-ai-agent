@@ -73,7 +73,7 @@
 }
 
 .conversation { position: relative; min-height: 0; overflow: auto; padding: 16px 14px 20px; overscroll-behavior: contain; overflow-anchor: none; -webkit-overflow-scrolling: touch; }
-.conversation, .md, .bubble, .work-body, .work-prose, .dir-list, .work-note, .work-detail, .web-search, .composer-input, .mention-chip {
+.conversation, .md, .bubble, .work-body, .work-input-body, .work-prose, .dir-list, .work-note, .work-detail, .web-search, .composer-input, .mention-chip {
 	-webkit-user-select: text;
 	user-select: text;
 }
@@ -235,6 +235,36 @@
 .work-row.running .work-icon { color: var(--accent); opacity: 1; }
 .work-row.error { color: var(--danger); }
 .work-row.error strong { color: var(--danger); }
+.work-io {
+	display: grid;
+	gap: 7px;
+	min-width: 0;
+	margin: 1px 0 9px 19px;
+}
+.work-io-section { min-width: 0; }
+.work-io-label {
+	margin: 0 0 3px 2px;
+	color: var(--muted);
+	font-size: 9px;
+	font-weight: 650;
+	letter-spacing: .09em;
+	line-height: 1.4;
+	text-transform: uppercase;
+	opacity: .62;
+}
+.work-input-body {
+	margin: 0;
+	max-height: 112px;
+	overflow: auto;
+	padding: 6px 8px;
+	border-left: 2px solid color-mix(in srgb, var(--line) 76%, transparent);
+	border-radius: 0 6px 6px 0;
+	background: color-mix(in srgb, var(--surface) 52%, transparent);
+	color: var(--muted);
+	font: 10px/1.45 ui-monospace, "SFMono-Regular", Menlo, monospace;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
 .work-body, .work-prose {
 	margin: 0 0 8px 19px;
 	max-height: 220px;
@@ -249,11 +279,15 @@
 	white-space: pre-wrap;
 	overflow-wrap: anywhere;
 }
+.work-io .work-body, .work-io .work-prose, .work-io .dir-list, .work-io .web-search {
+	margin: 0;
+}
 .work-read-note {
 	margin: 0 0 4px 19px;
 	color: var(--muted);
 	font-size: 11px;
 }
+.work-io .work-read-note { margin: 0 0 4px 2px; }
 .work-prose {
 	max-height: 320px;
 	font-size: 12.5px;

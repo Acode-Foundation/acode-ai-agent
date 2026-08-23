@@ -105,7 +105,9 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 	}, [key]);
 	const listing = entry.kind === "list" ? parseDirListing(entry.output) : undefined;
 	const webSearch = entry.name === "web_search" ? parseWebSearchOutput(entry.output) : undefined;
-	const hasBody = Boolean(listing?.length || (listing && entry.output === "Directory is empty.") || webSearch?.results.length || entry.output || (entry.args && Object.keys(entry.args).length));
+	const hasInput = Boolean(entry.type === "tool" && entry.args && Object.keys(entry.args).length);
+	const hasOutput = Boolean(listing?.length || (listing && entry.output === "Directory is empty.") || webSearch?.results.length || entry.output);
+	const hasBody = hasInput || hasOutput;
 	const toggle = () => {
 		setOpen((current) => {
 			const next = !current;
@@ -128,28 +130,54 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 				{summary}
 			</button>
 			<Collapse open={open}>
-				{listing
-					? <DirListing entries={listing} empty={entry.output === "Directory is empty."} />
-					: webSearch?.results.length
-						? <WebSearchBody parsed={webSearch} />
-						: entry.type === "thinking"
-							? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
-							: entry.kind === "read"
-								? <ReadBody output={entry.output ?? ""} fallback={formatArgs(entry.args ?? {})} />
-								: entry.name === "fetch_content"
-									? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
-									: <pre class="work-body">{entry.output ?? formatArgs(entry.args ?? {})}</pre>}
+				{entry.type === "tool"
+					? <ToolBody entry={entry} listing={listing} webSearch={webSearch} workspace={workspace} hasInput={hasInput} hasOutput={hasOutput} />
+					: <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>}
 			</Collapse>
 		</div>
 	);
 }
 
-function ReadBody({ output, fallback }: { output: string; fallback: string }) {
+function ToolBody({ entry, listing, webSearch, workspace, hasInput, hasOutput }: {
+	entry: WorkEntry;
+	listing: DirEntry[] | undefined;
+	webSearch: ReturnType<typeof parseWebSearchOutput>;
+	workspace?: WorkspaceInfo;
+	hasInput: boolean;
+	hasOutput: boolean;
+}) {
+	return (
+		<div class="work-io">
+			{hasInput && (
+				<section class="work-io-section work-input" aria-label="Tool input">
+					<div class="work-io-label">Input</div>
+					<pre class="work-input-body">{formatArgs(entry.args ?? {})}</pre>
+				</section>
+			)}
+			{hasOutput && (
+				<section class="work-io-section work-output" aria-label="Tool output">
+					<div class="work-io-label">Output</div>
+					{listing
+						? <DirListing entries={listing} empty={entry.output === "Directory is empty."} />
+						: webSearch?.results.length
+							? <WebSearchBody parsed={webSearch} />
+							: entry.kind === "read"
+								? <ReadBody output={entry.output ?? ""} />
+								: entry.name === "fetch_content"
+									? <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>
+									: <pre class="work-body">{entry.output ?? ""}</pre>}
+				</section>
+			)}
+		</div>
+	);
+}
+
+function ReadBody({ output }: { output: string }) {
 	const { body, notice } = splitReadOutput(output);
 	return (
 		<>
 			{notice && <div class="work-read-note">{notice}</div>}
-			<pre class="work-body">{body || fallback}</pre>
+			<pre class="work-body">{body}</pre>
 		</>
 	);
 }
