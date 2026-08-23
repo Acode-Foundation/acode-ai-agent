@@ -1,5 +1,6 @@
 import * as esbuild from "esbuild";
 import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
 import os from "node:os";
 
 function serveUrls(hosts, port) {
@@ -61,6 +62,17 @@ const portableNodeGuard = {
   },
 };
 
+const minifiedCssText = {
+  name: "minified-css-text",
+  setup(build) {
+    build.onLoad({ filter: /\.css$/ }, async ({ path }) => {
+      const source = await fs.readFile(path, "utf8");
+      const { code } = await esbuild.transform(source, { loader: "css", minify: true });
+      return { contents: `export default ${JSON.stringify(code)}`, loader: "js" };
+    });
+  },
+};
+
 const buildConfig = {
   entryPoints: {
     main: "src/main.ts",
@@ -79,7 +91,7 @@ const buildConfig = {
   loader: {
     ".css": "text",
   },
-  plugins: [portableNodeGuard, zipPlugin],
+  plugins: [portableNodeGuard, minifiedCssText, zipPlugin],
 };
 
 (async function () {

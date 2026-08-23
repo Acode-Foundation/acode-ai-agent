@@ -67,4 +67,5 @@ test("builds Pi image blocks without a data-url prefix", () => {
 	expect(mimeFromName("photo.WEBP")).toBe("image/webp");
 	expect(modelAcceptsImages({ input: ["text", "image"] } as never)).toBe(true);
 	expect(modelAcceptsImages({ input: ["text"] } as never)).toBe(false);
+	expect(modelAcceptsImages({ input: ["text"], inputModalitiesKnown: false } as never)).toBeUndefined();
 });

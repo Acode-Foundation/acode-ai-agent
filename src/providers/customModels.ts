@@ -68,7 +68,10 @@ export function createCustomModel(providerId: ProviderId, modelId: string, templ
 		compat: template?.compat ?? defaults.compat,
 		reasoning: template?.reasoning ?? true,
 		input: template?.input?.includes("text") ? template.input : ["text"],
-	};
+		// A template from another model cannot tell us this custom id's modalities.
+		// Provider metadata can replace this object when it is available.
+		inputModalitiesKnown: false,
+	} as unknown as Model<any>;
 }
 
 export function mergeCustomModels(catalog: Model<any>[], providerId: ProviderId, customIds: string[]): Model<any>[] {

@@ -26,7 +26,7 @@ type Props = {
 	effort: string;
 	effortLevels: Array<{ id: string; label: string }>;
 	modelName: string;
-	acceptsImages: boolean;
+	acceptsImages: boolean | undefined;
 	commands: SlashCommand[];
 	autocompleteMaxVisible: number;
 	onOpenConfig: () => void;
@@ -55,7 +55,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	const canSend = (!empty || imageCount > 0) && !props.disabled && !busy;
 	const showStop = props.running && empty && imageCount === 0;
 	const used = props.contextWindow ? Math.min(100, Math.round((props.contextTokens / props.contextWindow) * 100)) : 0;
-	const visionHint = imageCount > 0 && !props.acceptsImages;
+	const visionHint = imageCount > 0 && props.acceptsImages === false;
 	const effortLabel = props.effortLevels.find((level) => level.id === props.effort)?.label;
 	const commandHits = filterSlashCommands(props.commands, commandQuery ?? "").slice(0, props.autocompleteMaxVisible);
 
@@ -391,7 +391,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 					}}
 				/>
 				</div>
-				{visionHint && <p class="composer-hint">This model ignores images. Switch to a vision model to send them.</p>}
+				{visionHint && <p class="composer-hint">This model is not marked for image input. Switch to a vision model if needed.</p>}
 				<div class="composer-toolbar">
 					<button
 						class="composer-tool"

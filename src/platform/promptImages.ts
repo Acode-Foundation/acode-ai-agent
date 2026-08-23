@@ -8,8 +8,10 @@ const TARGET_EDGE = 2000;
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp", "image/bmp"]);
 
-export function modelAcceptsImages(model?: Model<any>): boolean {
-	return Boolean(model?.input?.includes("image"));
+export function modelAcceptsImages(model?: Model<any>): boolean | undefined {
+	if (!model) return false;
+	if ((model as Model<any> & { inputModalitiesKnown?: boolean }).inputModalitiesKnown === false) return undefined;
+	return model.input.includes("image");
 }
 
 export function mimeFromName(name: string, fallback = "image/jpeg"): string {

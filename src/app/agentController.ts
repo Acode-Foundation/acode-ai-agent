@@ -124,6 +124,7 @@ export class AgentController {
 			this.#state = { ...this.#state, status: "ready", models: this.providers.getModels(this.settings.value.providerId), chats: this.#summaries() };
 			this.#emit();
 		}
+		void this.#refreshProviderModel(this.settings.value.providerId, this.settings.value.modelId);
 	}
 
 	async send(text: string, mode: "steer" | "followUp" = "steer", images?: ImageContent[]): Promise<void> {
@@ -355,6 +356,7 @@ export class AgentController {
 		void this.#activeSession()?.setThinkingLevel(thinkingLevel);
 		this.#state.model = model;
 		this.#emit();
+		void this.#refreshProviderModel(providerId, model.id);
 	}
 
 	selectModel(modelId: string): void {
@@ -365,6 +367,7 @@ export class AgentController {
 		void this.#activeSession()?.setThinkingLevel(thinkingLevel);
 		this.#state.model = model;
 		this.#refreshModels();
+		void this.#refreshProviderModel(this.settings.value.providerId, model.id);
 	}
 
 	addCustomModel(modelId: string): void {
@@ -383,6 +386,7 @@ export class AgentController {
 		void this.#activeSession()?.setModel(model);
 		this.#state.model = model;
 		this.#refreshModels();
+		void this.#refreshProviderModel(providerId, model.id);
 	}
 
 	removeCustomModel(modelId: string): void {
@@ -406,6 +410,9 @@ export class AgentController {
 
 	async saveApiKey(providerId: ProviderId, key: string): Promise<void> {
 		await this.credentials.setApiKey(providerId, key);
+		if (this.settings.value.providerId === providerId) {
+			await this.#refreshProviderModel(providerId, this.settings.value.modelId);
+		}
 		this.#state.error = undefined;
 		this.#emit();
 	}
@@ -551,6 +558,23 @@ export class AgentController {
 	#refreshModels(): void {
 		this.#state.models = this.providers.getModels(this.settings.value.providerId);
 		this.#emit();
+	}
+
+	async #refreshProviderModel(providerId: ProviderId, modelId: string): Promise<void> {
+		let model: Model<any>;
+		try {
+			model = await this.providers.refreshModel(providerId, modelId);
+		} catch (error) {
+			console.warn(`${providerId} model metadata could not be refreshed`, error);
+			return;
+		}
+		if (this.settings.value.providerId !== providerId || this.settings.value.modelId !== modelId) return;
+		const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
+		if (thinkingLevel !== this.settings.value.thinkingLevel) this.settings.update({ thinkingLevel });
+		await this.#activeSession()?.setModel(model);
+		await this.#activeSession()?.setThinkingLevel(thinkingLevel);
+		this.#state.model = model;
+		this.#refreshModels();
 	}
 
 	#emit(): void {

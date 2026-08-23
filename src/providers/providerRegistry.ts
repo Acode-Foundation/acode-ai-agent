@@ -58,6 +58,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
 export class ProviderRegistry {
 	readonly models: MutableModels;
 	#customModels: () => Record<string, string[]>;
+	#overrides = new Map<string, Model<any>>();
 
 	constructor(credentials: PortableCredentialStore, customModels: () => Record<string, string[]> = () => ({})) {
 		this.#customModels = customModels;
@@ -82,11 +83,14 @@ export class ProviderRegistry {
 			providerId,
 			[...this.models.getModels(providerId)].filter((model) => model.input.includes("text")),
 		).sort((left, right) => left.name.localeCompare(right.name));
-		return mergeCustomModels(catalog, providerId, this.#customModels()[providerId] ?? []);
+		return mergeCustomModels(catalog, providerId, this.#customModels()[providerId] ?? [])
+			.map((model) => this.#overrides.get(`${providerId}:${model.id}`) ?? model);
 	}
 
 	resolveModel(providerId: ProviderId, modelId: string): Model<any> {
 		const id = sanitizeModelId(modelId);
+		const override = id ? this.#overrides.get(`${providerId}:${id}`) : undefined;
+		if (override) return override;
 		const listed = id ? this.getModels(providerId).find((model) => model.id === id) : undefined;
 		if (listed) return listed;
 		const catalog = this.models.getModel(providerId, modelId);
@@ -95,6 +99,28 @@ export class ProviderRegistry {
 		const fallback = this.getModels(providerId)[0];
 		if (!fallback) throw new Error(`No models are available for ${providerId}.`);
 		return fallback;
+	}
+
+	async refreshModel(providerId: ProviderId, modelId: string): Promise<Model<any>> {
+		const model = this.resolveModel(providerId, modelId);
+		if (providerId !== "openrouter") return model;
+		const auth = await this.models.getAuth(providerId);
+		const headers = auth?.auth.apiKey ? { Authorization: `Bearer ${auth.auth.apiKey}` } : undefined;
+		const path = model.id.split("/").map(encodeURIComponent).join("/");
+		const response = await nativeFetch(`https://openrouter.ai/api/v1/model/${path}`, { headers });
+		if (!response.ok) throw new Error(`OpenRouter model metadata returned HTTP ${response.status}.`);
+		const data = (await response.json() as { data?: { name?: unknown; context_length?: unknown; architecture?: { input_modalities?: unknown } } }).data;
+		const inputs = data?.architecture?.input_modalities;
+		if (!Array.isArray(inputs)) return model;
+		const refreshed = {
+			...model,
+			name: typeof data?.name === "string" ? data.name : model.name,
+			contextWindow: typeof data?.context_length === "number" && data.context_length > 0 ? data.context_length : model.contextWindow,
+			input: inputs.includes("image") ? ["text", "image"] : ["text"],
+			inputModalitiesKnown: true,
+		} as unknown as Model<any>;
+		this.#overrides.set(`${providerId}:${model.id}`, refreshed);
+		return refreshed;
 	}
 }
 
