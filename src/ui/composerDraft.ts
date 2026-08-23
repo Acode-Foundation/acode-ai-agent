@@ -3,14 +3,25 @@ import { fileName } from "../workspace/fileMentions";
 
 export type DraftImage = ImageContent & { id: string; name: string; uri?: string };
 
+export type DraftFile = {
+	id: string;
+	name: string;
+	uri?: string;
+	content: string;
+	encoding: "text" | "base64";
+	truncated?: boolean;
+};
+
 export type ComposerDraft = {
 	text: string;
 	images: DraftImage[];
+	files: DraftFile[];
 };
 
 export type UserPart =
 	| { type: "text"; text: string }
 	| { type: "file"; path: string }
+	| { type: "attachment"; name: string }
 	| { type: "image"; mimeType: string; data: string; name?: string; uri?: string }
 	| { type: "imageRef"; name: string };
 
@@ -18,7 +29,12 @@ export function imagePlaceholder(name: string): string {
 	return `[#image ${name}]`;
 }
 
-const TOKEN = /@((?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.[A-Za-z][\w.-]*)|\[#image\s+([^\]]+)\]/g;
+export function filePlaceholder(name: string): string {
+	return `[#file ${name.replace(/\]/g, "") || "file"}]`;
+}
+
+const TOKEN = /@((?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.[A-Za-z][\w.-]*)|\[#image\s+([^\]]+)\]|\[#file\s+([^\]]+)\]/g;
+const ATTACHMENTS = /\n*<attached_files>\n[\s\S]*?\n<\/attached_files>\s*$/;
 
 export function mentionedFilePaths(text: string): string[] {
 	const paths: string[] = [];
@@ -31,9 +47,9 @@ export function mentionedFilePaths(text: string): string[] {
 	return paths;
 }
 
-export function splitUserText(text: string): Array<Extract<UserPart, { type: "text" | "file" | "imageRef" }>> {
-	const parts: Array<Extract<UserPart, { type: "text" | "file" | "imageRef" }>> = [];
-	const source = text ?? "";
+export function splitUserText(text: string): Array<Extract<UserPart, { type: "text" | "file" | "attachment" | "imageRef" }>> {
+	const parts: Array<Extract<UserPart, { type: "text" | "file" | "attachment" | "imageRef" }>> = [];
+	const source = stripAttachedFiles(text ?? "");
 	let cursor = 0;
 	TOKEN.lastIndex = 0;
 	for (const match of source.matchAll(TOKEN)) {
@@ -41,6 +57,7 @@ export function splitUserText(text: string): Array<Extract<UserPart, { type: "te
 		if (match[1] && isEmailAt(source, start)) continue;
 		if (start > cursor) parts.push({ type: "text", text: source.slice(cursor, start) });
 		if (match[2]) parts.push({ type: "imageRef", name: match[2] });
+		else if (match[3]) parts.push({ type: "attachment", name: match[3] });
 		else parts.push({ type: "file", path: match[1]! });
 		cursor = start + match[0].length;
 	}
@@ -83,7 +100,29 @@ export function imageSrc(image: { data: string; mimeType: string }): string {
 }
 
 export function draftFromParts(text: string, images: DraftImage[] = []): ComposerDraft {
-	return { text, images };
+	return { text: stripAttachedFiles(text), images, files: attachedFilesFromPrompt(text) };
+}
+
+export function promptTextFromDraft(draft: ComposerDraft): string {
+	const text = stripAttachedFiles(draft.text).trim();
+	if (!draft.files.length) return text;
+	const files = JSON.stringify(draft.files.map(({ name, content, encoding, truncated }) => ({ name, content, encoding, truncated })));
+	return `${text}\n\n<attached_files>\n${files}\n</attached_files>`;
+}
+
+function attachedFilesFromPrompt(text: string): DraftFile[] {
+	const body = /<attached_files>\n([\s\S]*?)\n<\/attached_files>/.exec(text)?.[1];
+	if (!body) return [];
+	try {
+		const files = JSON.parse(body) as Array<Omit<DraftFile, "id" | "uri">>;
+		return files.map((file, index) => ({ ...file, id: `restored-${index}` }));
+	} catch {
+		return [];
+	}
+}
+
+function stripAttachedFiles(text: string): string {
+	return text.replace(ATTACHMENTS, "").replace(/\n+$/, "");
 }
 
 export function fileChipLabel(path: string): string {

@@ -2,6 +2,7 @@ import { Copy, LocateFixed, Search, Sparkles, X } from "lucide-preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
 import type { SessionTreeItem } from "../core/types";
+import { pickAcodeSelect } from "../platform/acodeSelect";
 import { Sheet } from "./Sheet";
 import { countTreeBranches, layoutSessionTree, treeGutterText, treeKindLabel, type TreeFilter, type TreeRow } from "./sessionTree";
 
@@ -335,21 +336,4 @@ function formatTreeTime(timestamp: string): string {
 
 function cssEscape(value: string): string {
 	return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(value) : value.replace(/"/g, "\\22");
-}
-
-function pickAcodeSelect(title: string, items: Acode.SelectItem[], current: string): Promise<string | undefined> {
-	if (typeof acode?.select !== "function") return Promise.resolve(undefined);
-	return new Promise((resolve) => {
-		let settled = false;
-		const finish = (value?: string) => {
-			if (settled) return;
-			settled = true;
-			resolve(value);
-		};
-		void acode.select(title, items, {
-			default: current,
-			textTransform: false,
-			onCancel: () => finish(),
-		}).then(finish, () => finish());
-	});
 }

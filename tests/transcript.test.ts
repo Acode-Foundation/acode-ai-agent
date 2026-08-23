@@ -108,6 +108,7 @@ test("keeps a text-only reply as the answer with no work log", () => {
 test("labels common tools", () => {
 	expect(presentTool("grep", { query: "TODO" })).toEqual({ kind: "search", label: "Searched files", detail: "TODO" });
 	expect(presentTool("edit_file", { path: "a.ts" })).toEqual({ kind: "change", label: "Changed files", detail: "a.ts" });
+	expect(presentTool("bash", { command: "npm test" })).toEqual({ kind: "terminal", label: "Ran command" });
 	expect(presentTool("read_file", { path: "src/a.ts", offset: 10, limit: 31 })).toEqual({
 		kind: "read",
 		label: "Read file",

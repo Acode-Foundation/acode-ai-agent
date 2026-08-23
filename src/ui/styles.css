@@ -229,6 +229,7 @@
 .work-kind.search { color: var(--muted); }
 .work-kind.web { color: var(--accent); opacity: .85; }
 .work-kind.change { color: var(--fg); }
+.work-kind.terminal { color: var(--fg); opacity: .85; }
 .work-kind.think { color: var(--muted); }
 .work-kind.running { color: var(--accent); opacity: 1; }
 .work-row.running .work-icon { color: var(--accent); opacity: 1; }
@@ -812,6 +813,7 @@ span.file-glyph.file {
 	cursor: pointer;
 }
 .mention-chip.chip-image { padding-left: 4px; }
+.mention-chip.chip-attachment { font-weight: 400; }
 .mention-chip svg,
 .mention-chip img,
 .mention-chip .file-glyph,

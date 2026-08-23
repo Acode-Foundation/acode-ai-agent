@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mentionedFilePaths, splitUserText, userPartsFromMessage } from "../src/ui/composerDraft.ts";
+import { draftFromParts, mentionedFilePaths, promptTextFromDraft, splitUserText, userPartsFromMessage } from "../src/ui/composerDraft.ts";
 import { fileDir, fileExt, mentionQueryAt, rankMentionFiles } from "../src/workspace/fileMentions.ts";
 import { mimeFromName, modelAcceptsImages, normalizeImageMime, toPiImages } from "../src/platform/promptImages.ts";
 
@@ -45,6 +45,22 @@ test("rebuilds user parts from a Pi user message with images", () => {
 		{ type: "image", data: "abc", mimeType: "image/png", name: "shot.png" },
 		{ type: "text", text: " today" },
 	]);
+});
+
+test("packages picked files for the model while keeping a compact file chip", () => {
+	const prompt = promptTextFromDraft({
+		text: "Review [#file outside.ts]",
+		images: [],
+		files: [{ id: "one", name: 'outside\".ts', content: "const end = `]]>`;", encoding: "text" }],
+	});
+	expect(prompt).toContain('"name":"outside\\\".ts"');
+	expect(splitUserText(prompt)).toEqual([
+		{ type: "text", text: "Review " },
+		{ type: "attachment", name: "outside.ts" },
+	]);
+	const restored = draftFromParts(prompt);
+	expect(restored.text).toBe("Review [#file outside.ts]");
+	expect(restored.files).toMatchObject([{ name: 'outside".ts', content: "const end = `]]>`;", encoding: "text" }]);
 });
 
 test("ranks open files and basename prefix matches first", () => {

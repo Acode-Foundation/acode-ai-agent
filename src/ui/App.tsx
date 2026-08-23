@@ -18,8 +18,9 @@ import { useChatScroll } from "./useChatScroll";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
 import { openCustomTab } from "../platform/authTab";
 import { previewImageInAcode } from "../platform/deviceImage";
+import { pickAcodeSelect } from "../platform/acodeSelect";
 import { modelAcceptsImages } from "../platform/promptImages";
-import type { ComposerDraft } from "./composerDraft";
+import { draftFromParts, promptTextFromDraft, type ComposerDraft } from "./composerDraft";
 import { parseSlashCommand } from "../core/slashCommands";
 
 type Props = { controller: AgentController };
@@ -48,12 +49,12 @@ export function App({ controller }: Props) {
 	}, [state.messages, state.streamingMessage, state.activities, state.settings.hideThinkingBlock, running]);
 
 	const send = useCallback(async (draft: ComposerDraft, mode: "steer" | "followUp" = "steer") => {
-		if (!draft.text.trim() && !draft.images.length) return;
+		if (!draft.text.trim() && !draft.images.length && !draft.files.length) return;
 		pin();
 		try {
 			const command = parseSlashCommand(draft.text);
 			if (command) {
-				if (draft.images.length) throw new Error("Slash commands cannot include image attachments.");
+				if (draft.images.length || draft.files.length) throw new Error("Slash commands cannot include attachments.");
 				const result = await controller.executeSlashCommand(command.name, command.args);
 				if (result.copyText) await navigator.clipboard.writeText(result.copyText);
 				if (result.action === "models") setConfigView("models");
@@ -65,7 +66,7 @@ export function App({ controller }: Props) {
 				if (result.message) setToast(result.message);
 				return;
 			}
-			await controller.send(draft.text, mode, draft.images);
+			await controller.send(promptTextFromDraft(draft), mode, draft.images);
 		} catch (error) {
 			composerRef.current?.restore(draft);
 			setToast(error instanceof Error ? error.message : String(error));
@@ -76,14 +77,15 @@ export function App({ controller }: Props) {
 	const stop = useCallback(async () => {
 		const restored = await controller.abort();
 		if (!restored.length) return;
-		composerRef.current?.restore({
-			text: restored.map((item) => item.text).filter(Boolean).join("\n"),
-			images: restored.flatMap((item, index) => item.images.map((image) => ({
+		const text = restored.map((item) => item.text).filter(Boolean).join("\n");
+		composerRef.current?.restore(draftFromParts(
+			text,
+			restored.flatMap((item, index) => item.images.map((image) => ({
 				...image,
 				id: `${index}-${image.mimeType}-${image.data.length}`,
 				name: "image",
 			}))),
-		});
+		));
 	}, [controller]);
 
 	return (
@@ -891,23 +893,6 @@ function workspaceLabel(chat: ChatSummary, workspaces: WorkspaceInfo[]): string 
 	return workspaces.find((workspace) => workspace.id === chat.workspaceId)?.name
 		|| chat.workspaceName
 		|| "Closed folder";
-}
-
-function pickAcodeSelect(title: string, items: Acode.SelectItem[], current: string): Promise<string | undefined> {
-	if (typeof acode?.select !== "function") return Promise.resolve(undefined);
-	return new Promise((resolve) => {
-		let settled = false;
-		const finish = (value?: string) => {
-			if (settled) return;
-			settled = true;
-			resolve(value);
-		};
-		void acode.select(title, items, {
-			default: current,
-			textTransform: false,
-			onCancel: () => finish(),
-		}).then(finish, () => finish());
-	});
 }
 
 function formatChatTime(timestamp: number): string {

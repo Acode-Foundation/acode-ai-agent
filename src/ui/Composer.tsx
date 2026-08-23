@@ -1,15 +1,17 @@
-import { AtSign, Image as ImageIcon, ListPlus, Send, Settings, Square } from "lucide-preact";
+import { AtSign, ListPlus, Paperclip, Send, Settings, Square } from "lucide-preact";
 import { forwardRef } from "preact/compat";
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
 import { PERMISSION_MODES, type PermissionMode } from "../core/schema";
 import type { QueuedPrompt } from "../core/types";
-import { pickDeviceImage, previewImageInAcode } from "../platform/deviceImage";
+import { openAcodeUri, pickDeviceImage, previewImageInAcode } from "../platform/deviceImage";
+import { pickAcodeFile } from "../platform/deviceFile";
+import { pickAcodeSelect } from "../platform/acodeSelect";
 import { imageContentFromFile } from "../platform/promptImages";
 import { fileDir, fileName, type MentionFile } from "../workspace/fileMentions";
 import { createFileGlyph, fileIconClass } from "./fileGlyph";
 import { clearBlankEditor, consumeMention, getEditorSelection, isBlankEditor, mentionInEditor, setCaret } from "./composerDom";
-import { imagePlaceholder, imageSrc, splitUserText, type ComposerDraft, type DraftImage, type UserPart } from "./composerDraft";
+import { filePlaceholder, imagePlaceholder, imageSrc, splitUserText, type ComposerDraft, type DraftFile, type DraftImage, type UserPart } from "./composerDraft";
 import { filterSlashCommands, slashCommandQuery, type SlashCommand } from "../core/slashCommands";
 
 export type ComposerHandle = {
@@ -42,7 +44,7 @@ type Props = {
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(props, ref) {
 	const editor = useRef<HTMLDivElement>(null);
-	const images = useRef(new Map<string, DraftImage>());
+	const attachments = useRef(new Map<string, DraftImage | DraftFile>());
 	const [empty, setEmpty] = useState(true);
 	const [busy, setBusy] = useState(false);
 	const [mention, setMention] = useState<{ query: string } | null>(null);
@@ -52,8 +54,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	const [active, setActive] = useState(0);
 	const [searching, setSearching] = useState(false);
 	const [imageCount, setImageCount] = useState(0);
-	const canSend = (!empty || imageCount > 0) && !props.disabled && !busy;
-	const showStop = props.running && empty && imageCount === 0;
+	const canSend = !empty && !props.disabled && !busy;
+	const showStop = props.running && empty;
 	const used = props.contextWindow ? Math.min(100, Math.round((props.contextTokens / props.contextWindow) * 100)) : 0;
 	const visionHint = imageCount > 0 && props.acceptsImages === false;
 	const effortLabel = props.effortLevels.find((level) => level.id === props.effort)?.label;
@@ -61,9 +63,9 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 
 	const sync = useCallback(() => {
 		const root = editor.current;
-		if (!root) return { text: "", images: [] as DraftImage[] };
-		const draft = readDraft(root, images.current);
-		const nextEmpty = !draft.text.replace(/\[#image [^\]]+\]/g, "").trim() && draft.images.length === 0;
+		if (!root) return { text: "", images: [] as DraftImage[], files: [] as DraftFile[] };
+		const draft = readDraft(root, attachments.current);
+		const nextEmpty = !draft.text.replace(/\[#(?:image|file) [^\]]+\]/g, "").trim() && draft.images.length === 0 && draft.files.length === 0;
 		if (nextEmpty) clearBlankEditor(root);
 		setEmpty(nextEmpty);
 		setImageCount(draft.images.length);
@@ -95,12 +97,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 
 	useImperativeHandle(ref, () => ({
 		setText(text: string) {
-			paintDraft(editor.current, { text, images: [] }, images.current, chipHandlers());
+			paintDraft(editor.current, { text, images: [], files: [] }, attachments.current, chipHandlers());
 			refresh();
 			editor.current?.focus();
 		},
 		restore(draft: ComposerDraft) {
-			paintDraft(editor.current, draft, images.current, chipHandlers());
+			paintDraft(editor.current, draft, attachments.current, chipHandlers());
 			refresh();
 		},
 		focus() {
@@ -149,8 +151,17 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 				props.onToast(error instanceof Error ? error.message : String(error));
 			});
 		},
+		onOpenAttachment: (file: DraftFile) => {
+			if (!file.uri) {
+				props.onToast("The original file location is unavailable for this restored attachment.");
+				return;
+			}
+			void openAcodeUri(file.uri, file.name).catch((error) => {
+				props.onToast(error instanceof Error ? error.message : String(error));
+			});
+		},
 		onRemoveChip: (chip: HTMLElement) => {
-			removeChipElement(chip, images.current);
+			removeChipElement(chip, attachments.current);
 			refresh();
 		},
 	});
@@ -169,7 +180,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	};
 
 	const insertCommand = (command: SlashCommand) => {
-		paintDraft(editor.current, { text: `/${command.name} `, images: [] }, images.current, chipHandlers());
+		paintDraft(editor.current, { text: `/${command.name} `, images: [], files: [] }, attachments.current, chipHandlers());
 		setCommandQuery(null);
 		setCommandActive(0);
 		refresh();
@@ -180,9 +191,18 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		const root = editor.current;
 		if (!root || !next.length) return;
 		for (const image of next) {
-			images.current.set(image.id, image);
+			attachments.current.set(image.id, image);
 			insertChip(root, createImageChip(image, chipHandlers()));
 		}
+		refresh();
+		root.focus();
+	};
+
+	const addDraftFile = (file: DraftFile) => {
+		const root = editor.current;
+		if (!root) return;
+		attachments.current.set(file.id, file);
+		insertChip(root, createAttachedFileChip(file, chipHandlers()));
 		refresh();
 		root.focus();
 	};
@@ -198,6 +218,30 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	const pickFile = async () => {
+		if (props.disabled || busy) return;
+		setBusy(true);
+		try {
+			const file = await pickAcodeFile(props.controller.settings.value.imageAutoResize);
+			if (file && "content" in file) addDraftFile(file);
+			else if (file) addDraftImages([file]);
+		} catch (error) {
+			props.onToast(error instanceof Error ? error.message : String(error));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const chooseAttachment = async () => {
+		if (props.disabled || busy) return;
+		const choice = await pickAcodeSelect("Attach", [
+			{ value: "image", text: "Image", icon: "image" },
+			{ value: "file", text: "File", icon: "document-text" },
+		]);
+		if (choice === "image") await pickImage();
+		if (choice === "file") await pickFile();
 	};
 
 	const addFiles = async (files: File[]) => {
@@ -224,14 +268,14 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 	const submit = async (mode: "steer" | "followUp") => {
 		const root = editor.current;
 		if (!root || !canSend) return;
-		const draft = readDraft(root, images.current);
-		if (!draft.text.trim() && !draft.images.length) return;
-		paintDraft(root, { text: "", images: [] }, images.current, chipHandlers());
+		const draft = readDraft(root, attachments.current);
+		if (!draft.text.trim() && !draft.images.length && !draft.files.length) return;
+		paintDraft(root, { text: "", images: [], files: [] }, attachments.current, chipHandlers());
 		refresh();
 		try {
 			await props.onSubmit(draft, mode);
 		} catch {
-			paintDraft(root, draft, images.current, chipHandlers());
+			paintDraft(root, draft, attachments.current, chipHandlers());
 			refresh();
 		}
 	};
@@ -302,7 +346,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 					onBeforeInput={(event) => {
 						const inputType = (event as unknown as { inputType?: string }).inputType;
 						if (inputType !== "deleteContentBackward" && inputType !== "deleteContentForward") return;
-						if (tryDeleteChip(editor.current, images.current, inputType === "deleteContentForward" ? "forward" : "backward")) {
+						if (tryDeleteChip(editor.current, attachments.current, inputType === "deleteContentForward" ? "forward" : "backward")) {
 							event.preventDefault();
 							refresh();
 						}
@@ -378,7 +422,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 							}
 						}
 						if (event.key === "Backspace" || event.key === "Delete") {
-							if (tryDeleteChip(editor.current, images.current, event.key === "Delete" ? "forward" : "backward")) {
+							if (tryDeleteChip(editor.current, attachments.current, event.key === "Delete" ? "forward" : "backward")) {
 								event.preventDefault();
 								refresh();
 								return;
@@ -398,10 +442,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 						type="button"
 						disabled={props.disabled || busy}
 						onMouseDown={(event) => event.preventDefault()}
-						onClick={() => void pickImage()}
-						aria-label="Attach image"
+						onClick={() => void chooseAttachment()}
+						aria-label="Attach"
 					>
-						<ImageIcon size={16} strokeWidth={2} aria-hidden="true" />
+						<Paperclip size={16} strokeWidth={2} aria-hidden="true" />
 					</button>
 					<button
 						class="composer-tool"
@@ -578,6 +622,13 @@ export function UserMessage({
 							</button>
 						);
 					}
+					if (part.type === "attachment") {
+						return (
+							<span class="mention-chip chip-file chip-attachment in-bubble" title="Attached file" key={`attachment-${part.name}-${index}`}>
+								<FileChipFace path={part.name} />
+							</span>
+						);
+					}
 					if (part.type === "image" || part.type === "imageRef") {
 						const name = part.type === "image" ? part.name || "image" : part.name;
 						return (
@@ -602,9 +653,10 @@ export function UserMessage({
 	);
 }
 
-function readDraft(root: HTMLElement, store: Map<string, DraftImage>): ComposerDraft {
+function readDraft(root: HTMLElement, store: Map<string, DraftImage | DraftFile>): ComposerDraft {
 	const chunks: string[] = [];
 	const attached: DraftImage[] = [];
+	const files: DraftFile[] = [];
 	const walk = (node: Node) => {
 		if (node.nodeType === Node.TEXT_NODE) {
 			chunks.push(node.textContent ?? "");
@@ -620,9 +672,17 @@ function readDraft(root: HTMLElement, store: Map<string, DraftImage>): ComposerD
 		}
 		if (node.dataset.chip === "image" && node.dataset.id) {
 			const image = store.get(node.dataset.id);
-			if (image) {
+			if (image && "type" in image && image.type === "image") {
 				attached.push(image);
 				chunks.push(imagePlaceholder(image.name));
+			}
+			return;
+		}
+		if (node.dataset.chip === "attachment" && node.dataset.id) {
+			const file = store.get(node.dataset.id);
+			if (file && !("type" in file)) {
+				files.push(file);
+				chunks.push(filePlaceholder(file.name));
 			}
 			return;
 		}
@@ -634,25 +694,27 @@ function readDraft(root: HTMLElement, store: Map<string, DraftImage>): ComposerD
 		if (node.tagName === "DIV" || node.tagName === "P") chunks.push("\n");
 	};
 	root.childNodes.forEach(walk);
-	return { text: chunks.join("").replace(/\n+$/, ""), images: attached };
+	return { text: chunks.join("").replace(/\n+$/, ""), images: attached, files };
 }
 
 type ChipHandlers = {
 	onOpenFile: (path: string) => void;
 	onPreviewImage: (image: DraftImage) => void;
+	onOpenAttachment: (file: DraftFile) => void;
 	onRemoveChip: (chip: HTMLElement) => void;
 };
 
 function paintDraft(
 	root: HTMLElement | null,
 	draft: ComposerDraft,
-	store: Map<string, DraftImage>,
+	store: Map<string, DraftImage | DraftFile>,
 	handlers: ChipHandlers,
 ): void {
 	if (!root) return;
 	root.replaceChildren();
 	store.clear();
 	const unused = [...draft.images];
+	const unusedFiles = [...draft.files];
 	for (const part of splitUserText(draft.text)) {
 		if (part.type === "text") {
 			root.append(document.createTextNode(part.text));
@@ -660,6 +722,13 @@ function paintDraft(
 		}
 		if (part.type === "file") {
 			root.append(createFileChip(part.path, handlers));
+			continue;
+		}
+		if (part.type === "attachment") {
+			const file = unusedFiles.shift();
+			if (!file) continue;
+			store.set(file.id, file);
+			root.append(createAttachedFileChip(file, handlers));
 			continue;
 		}
 		const image = unused.shift();
@@ -670,6 +739,10 @@ function paintDraft(
 	for (const image of unused) {
 		store.set(image.id, image);
 		root.append(createImageChip(image, handlers));
+	}
+	for (const file of unusedFiles) {
+		store.set(file.id, file);
+		root.append(createAttachedFileChip(file, handlers));
 	}
 	setCaret(root, root, root.childNodes.length);
 }
@@ -685,7 +758,7 @@ function FileChipFace({ path }: { path: string }) {
 
 function createFileChip(path: string, handlers: ChipHandlers): HTMLSpanElement {
 	const chip = document.createElement("span");
-	chip.className = "mention-chip chip-file";
+	chip.className = "mention-chip chip-file chip-attachment";
 	chip.dataset.chip = "file";
 	chip.dataset.path = path;
 	chip.contentEditable = "false";
@@ -696,6 +769,22 @@ function createFileChip(path: string, handlers: ChipHandlers): HTMLSpanElement {
 	chip.append(createFileGlyph(path), name);
 	chip.addEventListener("mousedown", (event) => event.preventDefault());
 	chip.addEventListener("click", () => handlers.onOpenFile(path));
+	return chip;
+}
+
+function createAttachedFileChip(file: DraftFile, handlers: ChipHandlers): HTMLSpanElement {
+	const chip = document.createElement("span");
+	chip.className = "mention-chip chip-file";
+	chip.dataset.chip = "attachment";
+	chip.dataset.id = file.id;
+	chip.contentEditable = "false";
+	chip.title = file.name;
+	const name = document.createElement("span");
+	name.className = "chip-name";
+	name.textContent = file.name;
+	chip.append(createFileGlyph(file.name), name);
+	chip.addEventListener("mousedown", (event) => event.preventDefault());
+	chip.addEventListener("click", () => handlers.onOpenAttachment(file));
 	return chip;
 }
 
@@ -751,7 +840,7 @@ function insertNodes(root: HTMLElement, nodes: Node[]): void {
 	}
 }
 
-function tryDeleteChip(root: HTMLElement | null, store: Map<string, DraftImage>, direction: "backward" | "forward"): boolean {
+function tryDeleteChip(root: HTMLElement | null, store: Map<string, DraftImage | DraftFile>, direction: "backward" | "forward"): boolean {
 	if (!root) return false;
 	const chip = chipBesideCaret(root, direction);
 	if (!chip) return false;
@@ -804,7 +893,7 @@ function adjacentElement(node: Node, direction: "backward" | "forward"): HTMLEle
 	return null;
 }
 
-function removeChipElement(chip: HTMLElement, store: Map<string, DraftImage>): void {
+function removeChipElement(chip: HTMLElement, store: Map<string, DraftImage | DraftFile>): void {
 	const id = chip.dataset.id;
 	if (id) store.delete(id);
 	const next = chip.nextSibling;

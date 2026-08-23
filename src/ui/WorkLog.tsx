@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, Wrench } from "lucide-preact";
+import { ChevronDown, ChevronRight, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, SquareTerminal, Wrench } from "lucide-preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Collapse, RotateIcon } from "./Collapse";
 import { Markdown } from "./markdown";
@@ -208,6 +208,8 @@ function kindIcon(kind: ToolKind) {
 			return <Globe {...props} />;
 		case "list":
 			return <FolderOpen {...props} />;
+		case "terminal":
+			return <SquareTerminal {...props} />;
 		case "think":
 			return <Sparkles {...props} />;
 		default:

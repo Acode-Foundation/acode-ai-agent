@@ -3,7 +3,7 @@ import type { ToolActivity } from "../core/types";
 import { userPartsFromMessage, type UserPart } from "./composerDraft";
 
 export type WorkStatus = "running" | "done" | "error";
-export type ToolKind = "read" | "change" | "search" | "web" | "list" | "think" | "other";
+export type ToolKind = "read" | "change" | "search" | "web" | "list" | "terminal" | "think" | "other";
 
 export type WorkEntry = {
 	id: string;
@@ -140,7 +140,7 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 		case "edit_file":
 			return { kind: "change", label: "Changed files", detail: path };
 		case "bash":
-			return { kind: "other", label: "Ran command" };
+			return { kind: "terminal", label: "Ran command" };
 		case "thinking":
 			return { kind: "think", label: "Reasoned", detail: undefined };
 		default:
