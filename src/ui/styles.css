@@ -1155,7 +1155,44 @@ span.file-glyph.file {
 .subscription { display: grid; gap: 8px; }
 .device { display: grid; gap: 6px; }
 .device code { width: max-content; padding: 4px 8px; background: var(--surface); font: 700 16px ui-monospace, monospace; letter-spacing: .08em; }
+.auth-prompt-input { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; min-width: 0; }
+.auth-prompt-input input {
+	min-width: 0;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	outline: 0;
+	padding: 9px;
+	background: var(--bg);
+	font: 11px/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+.auth-prompt-input button {
+	border-radius: 8px;
+	padding: 0 10px;
+	background: var(--surface);
+	color: var(--fg);
+	font-size: 11px;
+	font-weight: 650;
+	cursor: pointer;
+}
+.auth-prompt-input button:disabled { opacity: .4; }
+.auth-options { display: grid; gap: 5px; }
+.auth-options button {
+	display: grid;
+	gap: 1px;
+	width: 100%;
+	padding: 8px 9px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--surface);
+	color: var(--fg);
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+}
+.auth-options small { color: var(--muted); font-size: 10px; }
 .text-button, .device button { width: max-content; border: 0; padding: 0; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.device .auth-prompt-input button { width: auto; padding: 8px 10px; background: var(--surface); color: var(--fg); }
+.device .auth-options button { width: 100%; padding: 8px 10px; background: var(--surface); color: var(--fg); }
 .toggle { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; }
 .toggle select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: var(--surface); }
 

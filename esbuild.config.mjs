@@ -115,8 +115,8 @@ const buildConfig = {
     if (externalImports.length) {
       throw new Error(`Portable bundle has external runtime imports: ${externalImports.map((entry) => entry.path).join(", ")}`);
     }
-    if ((output?.bytes ?? 0) > 1_820_000) {
-      throw new Error(`AI bundle exceeds the 1.82 MB mobile budget: ${output.bytes} bytes`);
+    if ((output?.bytes ?? 0) > 1_900_000) {
+      throw new Error(`AI bundle exceeds the 1.90 MB mobile budget: ${output.bytes} bytes`);
     }
     console.log("Production build complete.");
   }

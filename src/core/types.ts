@@ -125,6 +125,12 @@ export type PublicAgentState = {
 		userCode?: string;
 		verificationUri?: string;
 		message?: string;
+		prompt?: {
+			type: "text" | "secret" | "select" | "manual_code";
+			message: string;
+			placeholder?: string;
+			options?: Array<{ id: string; label: string; description?: string }>;
+		};
 	};
 };
 

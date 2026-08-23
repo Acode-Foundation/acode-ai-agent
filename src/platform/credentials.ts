@@ -27,7 +27,11 @@ export class PortableCredentialStore implements CredentialStore {
 	}
 
 	async list(): Promise<readonly CredentialInfo[]> {
-		const providerIds = ["openrouter", "openai", "openai-codex", "anthropic", "google", "xai", "groq"];
+		const providerIds = [
+			"openrouter", "openai", "openai-codex", "anthropic", "github-copilot", "google", "xai", "groq",
+			"deepseek", "cerebras", "fireworks", "together", "moonshotai", "minimax", "zai", "kimi-coding",
+			"qwen-token-plan", "ant-ling", "xiaomi",
+		];
 		const credentials = await Promise.all(providerIds.map(async (providerId) => ({
 			providerId,
 			credential: await this.read(providerId),

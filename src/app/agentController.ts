@@ -1,5 +1,5 @@
 import type { AgentTool, SessionTreeEntry } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
+import type { AuthEvent, AuthPrompt, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import { Signal } from "../core/events";
 import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";
@@ -47,6 +47,7 @@ export class AgentController {
 	#uiUnsubscribers: Array<() => void> = [];
 	#hostUnsubscribers: Array<() => void> = [];
 	#authAbort?: AbortController;
+	#authPrompt?: { resolve(value: string): void; reject(error: Error): void };
 	#state: PublicAgentState;
 
 	constructor(ctx: Acode.PluginContext | null) {
@@ -121,6 +122,11 @@ export class AgentController {
 			await this.providers.restoreCatalogs();
 		} catch (error) {
 			console.warn("Cached Pi model catalogs could not be restored", error);
+		}
+		const availableModels = await this.providers.refreshModelAvailability(this.settings.value.providerId);
+		if (availableModels.length && !availableModels.some((model) => model.id === this.settings.value.modelId)) {
+			const model = preferredModel(this.settings.value.providerId, availableModels);
+			this.settings.update({ modelId: model.id, thinkingLevel: clampThinkingLevel(model, this.settings.value.thinkingLevel) });
 		}
 		const workspaces = this.workspaces;
 		const selected = workspaces.find((workspace) => workspace.id === this.settings.value.activeWorkspaceId)
@@ -349,8 +355,8 @@ export class AgentController {
 	}
 
 	async selectProvider(providerId: ProviderId): Promise<void> {
-		const models = this.providers.getModels(providerId);
-		if (!models.length) throw new Error(`No ${providerId} models are bundled.`);
+		const models = await this.providers.refreshModelAvailability(providerId);
+		if (!models.length) throw new Error(`No models are available for this ${providerId} account.`);
 		const currentModel = providerId === this.settings.value.providerId
 			? models.find((model) => model.id === this.settings.value.modelId)
 			: undefined;
@@ -436,9 +442,7 @@ export class AgentController {
 		try {
 			await this.providers.models.login(providerId, "oauth", {
 				signal: abort.signal,
-				prompt: async () => {
-					throw new Error("This portable sign-in flow does not accept secrets inside Acode.");
-				},
+				prompt: (prompt) => this.#requestAuthPrompt(providerId, prompt, abort.signal),
 				notify: (event) => {
 					if (this.#authAbort === abort) this.#onAuthEvent(providerId, event);
 				},
@@ -459,6 +463,12 @@ export class AgentController {
 		}
 	}
 
+	submitSubscriptionPrompt(value: string): void {
+		const prompt = this.#authPrompt;
+		if (!prompt) return;
+		prompt.resolve(value);
+	}
+
 	cancelSubscriptionLogin(): void {
 		this.#authAbort?.abort();
 		this.#authAbort = undefined;
@@ -475,6 +485,8 @@ export class AgentController {
 	async removeCredential(providerId: ProviderId): Promise<void> {
 		if (this.#state.authFlow?.providerId === providerId) this.cancelSubscriptionLogin();
 		await this.providers.models.logout(providerId);
+		await this.providers.refreshModelAvailability(providerId);
+		if (this.settings.value.providerId === providerId) this.#refreshModels();
 		this.#state.authFlow = undefined;
 		this.#emit();
 	}
@@ -561,8 +573,49 @@ export class AgentController {
 			return;
 		}
 		const message = event.type === "progress" ? event.message : event.message;
-		this.#state.authFlow = { providerId, status: "waiting", message };
+		const prompt = this.#state.authFlow?.providerId === providerId ? this.#state.authFlow.prompt : undefined;
+		this.#state.authFlow = { providerId, status: "waiting", message, prompt };
 		this.#emit();
+	}
+
+	#requestAuthPrompt(providerId: ProviderId, prompt: AuthPrompt, loginSignal: AbortSignal): Promise<string> {
+		this.#authPrompt?.reject(new Error("A newer sign-in question replaced this one."));
+		return new Promise<string>((resolve, reject) => {
+			let settled = false;
+			const finish = (action: () => void) => {
+				if (settled) return;
+				settled = true;
+				loginSignal.removeEventListener("abort", onAbort);
+				prompt.signal?.removeEventListener("abort", onAbort);
+				if (this.#authPrompt === pending) this.#authPrompt = undefined;
+				if (this.#state.authFlow?.providerId === providerId) {
+					this.#state.authFlow = { ...this.#state.authFlow, prompt: undefined, message: "Finishing secure sign-in…" };
+					this.#emit();
+				}
+				action();
+			};
+			const onAbort = () => finish(() => reject(new DOMException("Sign-in cancelled", "AbortError")));
+			const pending = {
+				resolve: (value: string) => finish(() => resolve(value)),
+				reject: (error: Error) => finish(() => reject(error)),
+			};
+			this.#authPrompt = pending;
+			this.#state.authFlow = {
+				providerId,
+				status: "waiting",
+				verificationUri: this.#state.authFlow?.providerId === providerId ? this.#state.authFlow.verificationUri : undefined,
+				message: prompt.message,
+				prompt: {
+					type: prompt.type,
+					message: prompt.message,
+					...(prompt.type === "select" ? { options: prompt.options.map((option) => ({ ...option })) } : { placeholder: prompt.placeholder }),
+				},
+			};
+			loginSignal.addEventListener("abort", onAbort, { once: true });
+			prompt.signal?.addEventListener("abort", onAbort, { once: true });
+			if (loginSignal.aborted || prompt.signal?.aborted) onAbort();
+			else this.#emit();
+		});
 	}
 
 	#refreshModels(): void {
@@ -573,12 +626,17 @@ export class AgentController {
 	async #refreshProviderModel(providerId: ProviderId, modelId: string, force = false): Promise<void> {
 		let model: Model<any>;
 		try {
-			model = await this.providers.refreshModel(providerId, modelId, force);
+			const available = await this.providers.refreshModelAvailability(providerId);
+			const availableModelId = available.some((entry) => entry.id === modelId)
+				? modelId
+				: available[0]?.id ?? modelId;
+			model = await this.providers.refreshModel(providerId, availableModelId, force);
 		} catch (error) {
 			console.warn(`${providerId} model metadata could not be refreshed`, error);
 			return;
 		}
-		if (this.settings.value.providerId !== providerId || this.settings.value.modelId !== modelId) return;
+		if (this.settings.value.providerId !== providerId) return;
+		if (this.settings.value.modelId !== model.id) this.settings.update({ modelId: model.id });
 		const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
 		if (thinkingLevel !== this.settings.value.thinkingLevel) this.settings.update({ thinkingLevel });
 		await this.#activeSession()?.setModel(model);

@@ -364,10 +364,13 @@ function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: bool
 function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }: { controller: AgentController; state: PublicAgentState; onClose: () => void; onOpenPiSettings: () => void; onToast: (message: string) => void }) {
 	const [providerId, setProviderId] = useState<ProviderId>(PROVIDERS.some((item) => item.id === state.settings.providerId) ? state.settings.providerId : PROVIDERS[0]!.id);
 	const [key, setKey] = useState("");
+	const [authPromptValue, setAuthPromptValue] = useState("");
 	const [connected, setConnected] = useState(false);
 	useEffect(() => { void controller.hasCredential(providerId).then(setConnected); }, [controller, providerId, state.authFlow?.status]);
 	const provider = PROVIDERS.find((item) => item.id === providerId)!;
 	const authFlow = state.authFlow?.providerId === providerId ? state.authFlow : undefined;
+	const authPromptKey = `${providerId}:${authFlow?.prompt?.type ?? ""}:${authFlow?.prompt?.message ?? ""}`;
+	useEffect(() => setAuthPromptValue(""), [authPromptKey]);
 	return (
 		<Sheet onClose={onClose}>
 			{(close) => (
@@ -424,6 +427,14 @@ function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }
 								<div class={`device ${authFlow.status}`}>
 									{authFlow.userCode && <code>{authFlow.userCode}</code>}
 									<p>{authFlow.message}</p>
+									{authFlow.prompt && (
+										<SubscriptionPrompt
+											prompt={authFlow.prompt}
+											value={authPromptValue}
+											onValue={setAuthPromptValue}
+											onSubmit={(value) => controller.submitSubscriptionPrompt(value)}
+										/>
+									)}
 									{authFlow.verificationUri && (
 										<button type="button" onClick={() => void controller.openSignIn().catch((error) => onToast(String(error)))}>
 											Open sign-in
@@ -451,6 +462,43 @@ function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }
 				</>
 			)}
 		</Sheet>
+	);
+}
+
+function SubscriptionPrompt({ prompt, value, onValue, onSubmit }: {
+	prompt: NonNullable<NonNullable<PublicAgentState["authFlow"]>["prompt"]>;
+	value: string;
+	onValue: (value: string) => void;
+	onSubmit: (value: string) => void;
+}) {
+	if (prompt.type === "select") {
+		return (
+			<div class="auth-options" role="group" aria-label={prompt.message}>
+				{prompt.options?.map((option) => (
+					<button type="button" key={option.id} onClick={() => onSubmit(option.id)}>
+						<span>{option.label}</span>
+						{option.description && <small>{option.description}</small>}
+					</button>
+				))}
+			</div>
+		);
+	}
+	const required = prompt.type === "manual_code" || prompt.type === "secret";
+	return (
+		<form class="auth-prompt-input" onSubmit={(event) => {
+			event.preventDefault();
+			if (!required || value.trim()) onSubmit(value);
+		}}>
+			<input
+				type={prompt.type === "secret" ? "password" : "text"}
+				value={value}
+				placeholder={prompt.placeholder}
+				autoCapitalize="none"
+				autoCorrect="off"
+				onInput={(event) => onValue(event.currentTarget.value)}
+			/>
+			<button type="submit" disabled={required && !value.trim()}>Continue</button>
+		</form>
 	);
 }
 
