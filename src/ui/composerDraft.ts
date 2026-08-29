@@ -9,6 +9,8 @@ export type DraftFile = {
 	uri?: string;
 	content: string;
 	encoding: "text" | "base64";
+	kind?: "paste";
+	pasteId?: number;
 	truncated?: boolean;
 };
 
@@ -21,9 +23,17 @@ export type ComposerDraft = {
 export type UserPart =
 	| { type: "text"; text: string }
 	| { type: "file"; path: string }
-	| { type: "attachment"; name: string }
+	| { type: "attachment"; name: string; content?: string; encoding?: "text" | "base64"; kind?: "paste"; truncated?: boolean }
+	| { type: "paste"; id: number; label: string }
 	| { type: "image"; mimeType: string; data: string; name?: string; uri?: string }
 	| { type: "imageRef"; name: string };
+
+/** Pi TUI: collapse a paste when it is more than 10 lines or more than 1000 characters. */
+export const LARGE_PASTE_LINE_LIMIT = 10;
+export const LARGE_PASTE_CHAR_LIMIT = 1000;
+
+/** Regex matching paste markers like `[paste #1 +123 lines]` or `[paste #2 1234 chars]`. */
+export const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
 
 export function imagePlaceholder(name: string): string {
 	return `[#image ${name}]`;
@@ -33,7 +43,7 @@ export function filePlaceholder(name: string): string {
 	return `[#file ${name.replace(/\]/g, "") || "file"}]`;
 }
 
-const TOKEN = /@((?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.[A-Za-z][\w.-]*)|\[#image\s+([^\]]+)\]|\[#file\s+([^\]]+)\]/g;
+const TOKEN = /@((?:[\w.-]+\/)+[\w.-]+|[\w.-]+\.[A-Za-z][\w.-]*)|\[#image\s+([^\]]+)\]|\[#file\s+([^\]]+)\]|\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
 const ATTACHMENTS = /\n*<attached_files>\n[\s\S]*?\n<\/attached_files>\s*$/;
 
 export function mentionedFilePaths(text: string): string[] {
@@ -47,8 +57,8 @@ export function mentionedFilePaths(text: string): string[] {
 	return paths;
 }
 
-export function splitUserText(text: string): Array<Extract<UserPart, { type: "text" | "file" | "attachment" | "imageRef" }>> {
-	const parts: Array<Extract<UserPart, { type: "text" | "file" | "attachment" | "imageRef" }>> = [];
+export function splitUserText(text: string): Array<Extract<UserPart, { type: "text" | "file" | "attachment" | "imageRef" | "paste" }>> {
+	const parts: Array<Extract<UserPart, { type: "text" | "file" | "attachment" | "imageRef" | "paste" }>> = [];
 	const source = stripAttachedFiles(text ?? "");
 	let cursor = 0;
 	TOKEN.lastIndex = 0;
@@ -58,6 +68,7 @@ export function splitUserText(text: string): Array<Extract<UserPart, { type: "te
 		if (start > cursor) parts.push({ type: "text", text: source.slice(cursor, start) });
 		if (match[2]) parts.push({ type: "imageRef", name: match[2] });
 		else if (match[3]) parts.push({ type: "attachment", name: match[3] });
+		else if (match[4]) parts.push({ type: "paste", id: Number(match[4]), label: match[0] });
 		else parts.push({ type: "file", path: match[1]! });
 		cursor = start + match[0].length;
 	}
@@ -76,9 +87,37 @@ export function userPartsFromMessage(content: string | Array<{ type?: string; te
 				? [{ type: "image" as const, data: block.data, mimeType: block.mimeType, name: undefined as string | undefined }]
 				: []
 		));
+	const files = attachedFilesFromPrompt(typeof content === "string" ? content : text);
+	const pastes = files.filter((file) => file.kind === "paste");
+	const attachments = files.filter((file) => file.kind !== "paste");
 	const parts: UserPart[] = [];
 	let imageIndex = 0;
+	let fileIndex = 0;
 	for (const part of splitUserText(text)) {
+		if (part.type === "attachment") {
+			const file = attachments[fileIndex++];
+			parts.push({
+				type: "attachment",
+				name: part.name,
+				content: file?.content,
+				encoding: file?.encoding,
+				kind: file?.kind,
+				truncated: file?.truncated,
+			});
+			continue;
+		}
+		if (part.type === "paste") {
+			const file = pastes.find((item) => item.pasteId === part.id);
+			parts.push({
+				type: "attachment",
+				name: file ? pasteChipLabel(part.id, file.content) : part.label.replace(/^\[|\]$/g, ""),
+				content: file?.content,
+				encoding: file?.encoding ?? "text",
+				kind: "paste",
+				truncated: file?.truncated,
+			});
+			continue;
+		}
 		if (part.type !== "imageRef") {
 			parts.push(part);
 			continue;
@@ -106,8 +145,72 @@ export function draftFromParts(text: string, images: DraftImage[] = []): Compose
 export function promptTextFromDraft(draft: ComposerDraft): string {
 	const text = stripAttachedFiles(draft.text).trim();
 	if (!draft.files.length) return text;
-	const files = JSON.stringify(draft.files.map(({ name, content, encoding, truncated }) => ({ name, content, encoding, truncated })));
-	return `${text}\n\n<attached_files>\n${files}\n</attached_files>`;
+	const packed = JSON.stringify(draft.files.map(({ name, content, encoding, truncated, kind, pasteId }) => ({
+		name,
+		content,
+		encoding,
+		truncated,
+		kind,
+		pasteId,
+	})));
+	return `${text}\n\n<attached_files>\n${packed}\n</attached_files>`;
+}
+
+export function normalizePastedText(text: string): string {
+	return text
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
+		.replace(/\t/g, "    ")
+		.split("")
+		.filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
+		.join("");
+}
+
+export function isLargePaste(text: string): boolean {
+	if (!text) return false;
+	return text.split("\n").length > LARGE_PASTE_LINE_LIMIT || text.length > LARGE_PASTE_CHAR_LIMIT;
+}
+
+export function pasteMarker(id: number, content: string): string {
+	const lines = content.split("\n").length;
+	return lines > LARGE_PASTE_LINE_LIMIT
+		? `[paste #${id} +${lines} lines]`
+		: `[paste #${id} ${content.length} chars]`;
+}
+
+export function pasteChipLabel(id: number, content: string): string {
+	return pasteMarker(id, content).slice(1, -1);
+}
+
+export function nextPasteId(files: DraftFile[]): number {
+	let max = 0;
+	for (const file of files) {
+		if (file.kind !== "paste") continue;
+		if (typeof file.pasteId === "number" && file.pasteId > max) max = file.pasteId;
+	}
+	return max + 1;
+}
+
+export function draftFileFromPaste(content: string, files: DraftFile[]): DraftFile {
+	const pasteId = nextPasteId(files);
+	return {
+		id: `paste-${pasteId}`,
+		name: pasteChipLabel(pasteId, content),
+		content,
+		encoding: "text",
+		kind: "paste",
+		pasteId,
+	};
+}
+
+export function expandPasteMarkers(text: string, files: DraftFile[]): string {
+	let result = text;
+	for (const file of files) {
+		if (file.kind !== "paste" || typeof file.pasteId !== "number") continue;
+		const marker = new RegExp(`\\[paste #${file.pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
+		result = result.replace(marker, () => file.content);
+	}
+	return result;
 }
 
 function attachedFilesFromPrompt(text: string): DraftFile[] {

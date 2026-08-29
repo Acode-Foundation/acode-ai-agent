@@ -37,6 +37,7 @@ export function App({ controller, onActiveChatChange }: Props) {
 	const [chatsOpen, setChatsOpen] = useState(false);
 	const [commandPanel, setCommandPanel] = useState<CommandPanelData | null>(null);
 	const [treeMode, setTreeMode] = useState<"tree" | "fork" | null>(null);
+	const [preview, setPreview] = useState<{ name: string; content: string; encoding?: "text" | "base64" } | null>(null);
 	const [toast, setToast] = useState("");
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const composerRef = useRef<ComposerHandle>(null);
@@ -132,6 +133,7 @@ export function App({ controller, onActiveChatChange }: Props) {
 												setToast(error instanceof Error ? error.message : String(error));
 											});
 										}}
+										onPreviewAttachment={setPreview}
 									/>
 								)}
 								{turn.notice && (
@@ -185,6 +187,7 @@ export function App({ controller, onActiveChatChange }: Props) {
 				onSubmit={send}
 				onStop={() => void stop()}
 				onToast={setToast}
+				onPreviewAttachment={setPreview}
 			/>
 
 			{chatsOpen && <ChatSheet controller={controller} state={state} onClose={() => setChatsOpen(false)} onError={setToast} />}
@@ -193,6 +196,7 @@ export function App({ controller, onActiveChatChange }: Props) {
 			{configView && <ConfigSheet controller={controller} state={state} initialView={configView} onClose={() => setConfigView(null)} onOpenPiSettings={() => { setConfigView(null); setPiSettingsOpen(true); }} />}
 			{commandPanel && <CommandResultSheet panel={commandPanel} onClose={() => setCommandPanel(null)} onToast={setToast} />}
 			{treeMode && <TreeSheet controller={controller} mode={treeMode} onClose={() => setTreeMode(null)} onError={setToast} onRestorePrompt={(text) => composerRef.current?.setText(text)} />}
+			{preview && <AttachmentPreviewSheet file={preview} onClose={() => setPreview(null)} />}
 			{toast && <Toast message={toast} onDone={() => setToast("")} />}
 		</div>
 	);
@@ -602,6 +606,38 @@ function SettingsSelect({ label, hint, value, options, onChange }: { label: stri
 			<span><b>{label}</b><small>{hint}</small></span>
 			<button class="setting-choice" type="button" onClick={choose}><span>{selected}</span><ChevronDown size={14} strokeWidth={2} /></button>
 		</div>
+	);
+}
+
+function AttachmentPreviewSheet({
+	file,
+	onClose,
+}: {
+	file: { name: string; content: string; encoding?: "text" | "base64" };
+	onClose: () => void;
+}) {
+	const body = file.encoding === "base64" ? "Binary attachment." : file.content;
+	return (
+		<Sheet class="command-result attachment-preview" onClose={onClose}>
+			{(close) => (
+				<>
+					<div class="sheet-handle" />
+					<header class="sheet-header">
+						<div>
+							<h2>{file.name}</h2>
+							<small>Pasted content</small>
+						</div>
+						<div class="sheet-header-actions">
+							<CopyButton getText={() => body} label="Copy pasted content" />
+							<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+						</div>
+					</header>
+					<div class="command-result-body">
+						<pre>{body}</pre>
+					</div>
+				</>
+			)}
+		</Sheet>
 	);
 }
 

@@ -1085,6 +1085,20 @@ span.file-glyph.file {
 }
 .mention-chip.chip-image { padding-left: 4px; }
 .mention-chip.chip-attachment { font-weight: 400; }
+.mention-chip.chip-paste {
+	font-weight: 550;
+	font-variant-numeric: tabular-nums;
+}
+.paste-glyph {
+	display: inline-grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	flex: none;
+	color: var(--muted);
+}
+.paste-glyph svg { width: 14px; height: 14px; }
+.bubble.user .paste-glyph { color: var(--accent-ink); }
 .mention-chip svg,
 .mention-chip img,
 .mention-chip .file-glyph,
@@ -1502,6 +1516,9 @@ span.file-glyph.file {
 .result-row span { color: var(--muted); }
 .result-row b { overflow-wrap: anywhere; text-align: right; }
 .command-result-body pre { max-height: 48vh; margin: 0; overflow: auto; border-radius: 10px; padding: 12px; background: var(--bg); font: 11px/1.55 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sheet.attachment-preview { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: min(88%, 720px); overflow: hidden; }
+.sheet.attachment-preview .command-result-body { min-height: 0; }
+.sheet.attachment-preview .command-result-body pre { max-height: none; height: 100%; }
 .sheet.tree-sheet {
 	display: grid;
 	grid-template-rows: auto auto auto minmax(0, 1fr) auto;

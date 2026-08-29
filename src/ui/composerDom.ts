@@ -45,7 +45,7 @@ export function flattenEditorText(root: HTMLElement): string {
 			chunks.push(`@${node.dataset.path ?? ""}`);
 			return;
 		}
-		if (node.dataset.chip === "image") {
+		if (node.dataset.chip === "image" || node.dataset.chip === "attachment" || node.dataset.chip === "paste") {
 			chunks.push(" ");
 			return;
 		}

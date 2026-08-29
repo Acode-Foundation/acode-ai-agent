@@ -1,5 +1,16 @@
 import { expect, test } from "vitest";
-import { draftFromParts, mentionedFilePaths, promptTextFromDraft, splitUserText, userPartsFromMessage } from "../src/ui/composerDraft.ts";
+import {
+	draftFileFromPaste,
+	draftFromParts,
+	expandPasteMarkers,
+	isLargePaste,
+	mentionedFilePaths,
+	normalizePastedText,
+	pasteMarker,
+	promptTextFromDraft,
+	splitUserText,
+	userPartsFromMessage,
+} from "../src/ui/composerDraft.ts";
 import { fileDir, fileExt, mentionQueryAt, rankMentionFiles } from "../src/workspace/fileMentions.ts";
 import { mimeFromName, modelAcceptsImages, normalizeImageMime, toPiImages } from "../src/platform/promptImages.ts";
 
@@ -61,6 +72,48 @@ test("packages picked files for the model while keeping a compact file chip", ()
 	const restored = draftFromParts(prompt);
 	expect(restored.text).toBe("Review [#file outside.ts]");
 	expect(restored.files).toMatchObject([{ name: 'outside".ts', content: "const end = `]]>`;", encoding: "text" }]);
+});
+
+test("uses Pi's large-paste thresholds", () => {
+	expect(isLargePaste("short")).toBe(false);
+	expect(isLargePaste("a\nb\nc\nd\ne\nf\ng\nh\ni\nj")).toBe(false);
+	expect(isLargePaste("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk")).toBe(true);
+	expect(isLargePaste("x".repeat(1000))).toBe(false);
+	expect(isLargePaste("x".repeat(1001))).toBe(true);
+});
+
+test("normalizes pasted text the way Pi's editor does", () => {
+	expect(normalizePastedText("a\r\nb\tc\r\x01d")).toBe("a\nb    c\nd");
+});
+
+test("builds Pi paste markers and expands them for the model", () => {
+	const lines = Array.from({ length: 12 }, (_, index) => `line ${index}`).join("\n");
+	expect(pasteMarker(1, lines)).toBe("[paste #1 +12 lines]");
+	expect(pasteMarker(2, "x".repeat(1001))).toBe("[paste #2 1001 chars]");
+	expect(expandPasteMarkers("see [paste #1 +12 lines] please", [
+		{ id: "paste-1", name: "paste #1 +12 lines", content: lines, encoding: "text", kind: "paste", pasteId: 1 },
+	])).toBe(`see ${lines} please`);
+});
+
+test("keeps large pastes as chips and stores the original text", () => {
+	const content = Array.from({ length: 12 }, (_, index) => `line ${index}`).join("\n");
+	const file = draftFileFromPaste(content, []);
+	expect(file).toMatchObject({ kind: "paste", pasteId: 1, name: "paste #1 +12 lines" });
+	const prompt = promptTextFromDraft({
+		text: `look at this ${pasteMarker(1, content)}`,
+		images: [],
+		files: [file],
+	});
+	expect(splitUserText(prompt)).toEqual([
+		{ type: "text", text: "look at this " },
+		{ type: "paste", id: 1, label: "[paste #1 +12 lines]" },
+	]);
+	const restored = draftFromParts(prompt);
+	expect(restored.files).toMatchObject([{ kind: "paste", pasteId: 1, content }]);
+	expect(userPartsFromMessage(prompt)).toMatchObject([
+		{ type: "text", text: "look at this " },
+		{ type: "attachment", name: "paste #1 +12 lines", content, encoding: "text", kind: "paste" },
+	]);
 });
 
 test("ranks open files and basename prefix matches first", () => {

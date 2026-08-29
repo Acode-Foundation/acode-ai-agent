@@ -1,4 +1,4 @@
-import { AtSign, ListPlus, Paperclip, Send, Settings, Square } from "lucide-preact";
+import { AtSign, Clipboard, ListPlus, Paperclip, Send, Settings, Square } from "lucide-preact";
 import { forwardRef } from "preact/compat";
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
@@ -9,9 +9,22 @@ import { pickAcodeFile } from "../platform/deviceFile";
 import { pickAcodeSelect } from "../platform/acodeSelect";
 import { imageContentFromFile } from "../platform/promptImages";
 import { fileDir, fileName, type MentionFile } from "../workspace/fileMentions";
-import { createFileGlyph, fileIconClass } from "./fileGlyph";
+import { createFileGlyph, createPasteGlyph, fileIconClass } from "./fileGlyph";
 import { clearBlankEditor, consumeMention, getEditorSelection, isBlankEditor, mentionInEditor, setCaret } from "./composerDom";
-import { filePlaceholder, imagePlaceholder, imageSrc, splitUserText, type ComposerDraft, type DraftFile, type DraftImage, type UserPart } from "./composerDraft";
+import {
+	draftFileFromPaste,
+	filePlaceholder,
+	imagePlaceholder,
+	imageSrc,
+	isLargePaste,
+	normalizePastedText,
+	pasteMarker,
+	splitUserText,
+	type ComposerDraft,
+	type DraftFile,
+	type DraftImage,
+	type UserPart,
+} from "./composerDraft";
 import { filterSlashCommands, slashCommandQuery, type SlashCommand } from "../core/slashCommands";
 
 export type ComposerHandle = {
@@ -40,6 +53,7 @@ type Props = {
 	onSubmit: (draft: ComposerDraft, mode: "steer" | "followUp") => Promise<void>;
 	onStop: () => void;
 	onToast: (message: string) => void;
+	onPreviewAttachment: (file: { name: string; content: string; encoding?: "text" | "base64" }) => void;
 };
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(props, ref) {
@@ -65,7 +79,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		const root = editor.current;
 		if (!root) return { text: "", images: [] as DraftImage[], files: [] as DraftFile[] };
 		const draft = readDraft(root, attachments.current);
-		const nextEmpty = !draft.text.replace(/\[#(?:image|file) [^\]]+\]/g, "").trim() && draft.images.length === 0 && draft.files.length === 0;
+		const nextEmpty = !draft.text.replace(/\[#(?:image|file) [^\]]+\]/g, "").replace(/\[paste #\d+( (?:\+\d+ lines|\d+ chars))?\]/g, "").trim() && draft.images.length === 0 && draft.files.length === 0;
 		if (nextEmpty) clearBlankEditor(root);
 		setEmpty(nextEmpty);
 		setImageCount(draft.images.length);
@@ -152,6 +166,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 			});
 		},
 		onOpenAttachment: (file: DraftFile) => {
+			if (file.kind === "paste" || (!file.uri && file.encoding === "text")) {
+				props.onPreviewAttachment(file);
+				return;
+			}
 			if (!file.uri) {
 				props.onToast("The original file location is unavailable for this restored attachment.");
 				return;
@@ -202,7 +220,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 		const root = editor.current;
 		if (!root) return;
 		attachments.current.set(file.id, file);
-		insertChip(root, createAttachedFileChip(file, chipHandlers()));
+		insertChip(root, createDraftFileChip(file, chipHandlers()));
 		refresh();
 		root.focus();
 	};
@@ -359,10 +377,18 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
 					}}
 					onPaste={(event) => {
 						const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
-						const text = event.clipboardData?.getData("text/plain") ?? "";
-						if (!files.length && !text) return;
+						const raw = event.clipboardData?.getData("text/plain") ?? "";
+						if (!files.length && !raw) return;
 						event.preventDefault();
-						if (text) insertText(editor.current, text);
+						if (raw) {
+							const text = normalizePastedText(raw);
+							if (isLargePaste(text)) {
+								const current = editor.current ? readDraft(editor.current, attachments.current) : { files: [] as DraftFile[] };
+								addDraftFile(draftFileFromPaste(text, current.files));
+							} else if (text) {
+								insertText(editor.current, text);
+							}
+						}
 						if (files.length) void addFiles(files);
 						refresh();
 					}}
@@ -597,11 +623,13 @@ export function UserMessage({
 	text,
 	onOpenFile,
 	onPreviewImage,
+	onPreviewAttachment,
 }: {
 	parts?: UserPart[];
 	text?: string;
 	onOpenFile?: (path: string) => void;
 	onPreviewImage?: (image: Extract<UserPart, { type: "image" }>) => void;
+	onPreviewAttachment?: (file: { name: string; content: string; encoding?: "text" | "base64" }) => void;
 }) {
 	const items = parts?.length ? parts : text ? splitUserText(text) : [];
 	if (!items.length) return null;
@@ -622,11 +650,36 @@ export function UserMessage({
 							</button>
 						);
 					}
+					if (part.type === "paste" || (part.type === "attachment" && part.kind === "paste")) {
+						const name = part.type === "paste" ? part.label.replace(/^\[|\]$/g, "") : part.name;
+						const content = part.type === "attachment" ? part.content : undefined;
+						return (
+							<button
+								class="mention-chip chip-paste in-bubble"
+								type="button"
+								title="Pasted content"
+								key={`paste-${name}-${index}`}
+								onClick={() => {
+									if (content) onPreviewAttachment?.({ name, content, encoding: part.type === "attachment" ? part.encoding : "text" });
+								}}
+							>
+								<PasteChipFace label={name} />
+							</button>
+						);
+					}
 					if (part.type === "attachment") {
 						return (
-							<span class="mention-chip chip-file chip-attachment in-bubble" title="Attached file" key={`attachment-${part.name}-${index}`}>
+							<button
+								class="mention-chip chip-file chip-attachment in-bubble"
+								type="button"
+								title={part.name}
+								key={`attachment-${part.name}-${index}`}
+								onClick={() => {
+									if (part.content) onPreviewAttachment?.({ name: part.name, content: part.content, encoding: part.encoding });
+								}}
+							>
 								<FileChipFace path={part.name} />
-							</span>
+							</button>
 						);
 					}
 					if (part.type === "image" || part.type === "imageRef") {
@@ -678,11 +731,13 @@ function readDraft(root: HTMLElement, store: Map<string, DraftImage | DraftFile>
 			}
 			return;
 		}
-		if (node.dataset.chip === "attachment" && node.dataset.id) {
+		if ((node.dataset.chip === "attachment" || node.dataset.chip === "paste") && node.dataset.id) {
 			const file = store.get(node.dataset.id);
 			if (file && !("type" in file)) {
 				files.push(file);
-				chunks.push(filePlaceholder(file.name));
+				chunks.push(file.kind === "paste" && typeof file.pasteId === "number"
+					? pasteMarker(file.pasteId, file.content)
+					: filePlaceholder(file.name));
 			}
 			return;
 		}
@@ -724,17 +779,27 @@ function paintDraft(
 			root.append(createFileChip(part.path, handlers));
 			continue;
 		}
-		if (part.type === "attachment") {
-			const file = unusedFiles.shift();
+		if (part.type === "paste") {
+			const file = takeFile(unusedFiles, (item) => item.kind === "paste" && item.pasteId === part.id)
+				?? takeFile(unusedFiles, (item) => item.kind === "paste");
 			if (!file) continue;
 			store.set(file.id, file);
-			root.append(createAttachedFileChip(file, handlers));
+			root.append(createDraftFileChip(file, handlers));
 			continue;
 		}
-		const image = unused.shift();
-		if (!image) continue;
-		store.set(image.id, image);
-		root.append(createImageChip(image, handlers));
+		if (part.type === "attachment") {
+			const file = takeFile(unusedFiles, (item) => item.kind !== "paste") ?? unusedFiles.shift();
+			if (!file) continue;
+			store.set(file.id, file);
+			root.append(createDraftFileChip(file, handlers));
+			continue;
+		}
+		if (part.type === "imageRef") {
+			const image = unused.shift();
+			if (!image) continue;
+			store.set(image.id, image);
+			root.append(createImageChip(image, handlers));
+		}
 	}
 	for (const image of unused) {
 		store.set(image.id, image);
@@ -742,7 +807,7 @@ function paintDraft(
 	}
 	for (const file of unusedFiles) {
 		store.set(file.id, file);
-		root.append(createAttachedFileChip(file, handlers));
+		root.append(createDraftFileChip(file, handlers));
 	}
 	setCaret(root, root, root.childNodes.length);
 }
@@ -754,6 +819,41 @@ function FileChipFace({ path }: { path: string }) {
 			<span class="chip-name">{fileName(path)}</span>
 		</>
 	);
+}
+
+function PasteChipFace({ label }: { label: string }) {
+	return (
+		<>
+			<Clipboard size={14} strokeWidth={2} aria-hidden="true" />
+			<span class="chip-name">{label}</span>
+		</>
+	);
+}
+
+function takeFile(files: DraftFile[], match: (file: DraftFile) => boolean): DraftFile | undefined {
+	const index = files.findIndex(match);
+	if (index < 0) return undefined;
+	return files.splice(index, 1)[0];
+}
+
+function createDraftFileChip(file: DraftFile, handlers: ChipHandlers): HTMLSpanElement {
+	return file.kind === "paste" ? createPasteChip(file, handlers) : createAttachedFileChip(file, handlers);
+}
+
+function createPasteChip(file: DraftFile, handlers: ChipHandlers): HTMLSpanElement {
+	const chip = document.createElement("span");
+	chip.className = "mention-chip chip-paste";
+	chip.dataset.chip = "paste";
+	chip.dataset.id = file.id;
+	chip.contentEditable = "false";
+	chip.title = "Pasted content";
+	const name = document.createElement("span");
+	name.className = "chip-name";
+	name.textContent = file.name;
+	chip.append(createPasteGlyph(), name);
+	chip.addEventListener("mousedown", (event) => event.preventDefault());
+	chip.addEventListener("click", () => handlers.onOpenAttachment(file));
+	return chip;
 }
 
 function createFileChip(path: string, handlers: ChipHandlers): HTMLSpanElement {
