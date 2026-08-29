@@ -39,6 +39,7 @@ export const settingsSchema = z.object({
 	globalSkillRoots: z.array(z.string().min(1).max(1_024)).max(20).catch([]),
 	maxHistoryMessages: z.number().int().min(20).max(200).catch(80),
 	maxWalkFiles: z.number().int().min(25).max(1000).catch(200),
+	showTaskTray: z.boolean().catch(true),
 	activeWorkspaceId: z.string().catch(""),
 	activeChatId: z.string().catch(""),
 	customModels: customModelsSchema,

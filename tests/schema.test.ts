@@ -20,6 +20,8 @@ test("compaction defaults come from Pi instead of a local copy", () => {
 	expect(DEFAULT_SETTINGS.compactionReserveTokens).toBe(DEFAULT_COMPACTION_SETTINGS.reserveTokens);
 	expect(DEFAULT_SETTINGS.compactionKeepRecentTokens).toBe(DEFAULT_COMPACTION_SETTINGS.keepRecentTokens);
 	expect(parseSettings({}).compactionReserveTokens).toBe(DEFAULT_COMPACTION_SETTINGS.reserveTokens);
+	expect(parseSettings({}).showTaskTray).toBe(true);
+	expect(DEFAULT_SETTINGS.showTaskTray).toBe(true);
 });
 
 test("chat index drops malformed rows", () => {

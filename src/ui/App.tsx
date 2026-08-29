@@ -16,6 +16,7 @@ import { Sheet } from "./Sheet";
 import { TreeSheet } from "./TreeSheet";
 import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
+import { TaskSheet, TaskTray, taskStatusLine } from "./TaskTray";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
 import { openCustomTab } from "../platform/authTab";
 import { previewImageInAcode } from "../platform/deviceImage";
@@ -38,6 +39,8 @@ export function App({ controller, onActiveChatChange }: Props) {
 	const [commandPanel, setCommandPanel] = useState<CommandPanelData | null>(null);
 	const [treeMode, setTreeMode] = useState<"tree" | "fork" | null>(null);
 	const [preview, setPreview] = useState<{ name: string; content: string; encoding?: "text" | "base64" } | null>(null);
+	const [tasksOpen, setTasksOpen] = useState(false);
+	const [dismissedTray, setDismissedTray] = useState("");
 	const [toast, setToast] = useState("");
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const composerRef = useRef<ComposerHandle>(null);
@@ -52,6 +55,10 @@ export function App({ controller, onActiveChatChange }: Props) {
 		if (state.activeChatId) onActiveChatChange?.(state.activeChatId);
 	}, [state.activeChatId, onActiveChatChange]);
 	const running = state.status === "running";
+	const trayKey = `${state.activeChatId ?? ""}:${state.tasks.map((task) => task.id).join(",")}`;
+	useEffect(() => {
+		setDismissedTray("");
+	}, [state.activeChatId]);
 	const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}`;
 	const { showLatest, jumpToLatest, pin, captureThread } = useChatScroll(scrollRef, followKey);
 
@@ -75,6 +82,7 @@ export function App({ controller, onActiveChatChange }: Props) {
 				if (result.action === "pi-settings") setPiSettingsOpen(true);
 				if (result.action === "sessions") setChatsOpen(true);
 				if (result.action === "tree" || result.action === "fork") setTreeMode(result.action);
+				if (result.action === "tasks") setTasksOpen(true);
 				if (result.panel) setCommandPanel(result.panel);
 				if (result.message) setToast(result.message);
 				return;
@@ -151,19 +159,28 @@ export function App({ controller, onActiveChatChange }: Props) {
 									</article>
 								)}
 								{turn.error && <ErrorNotice message={turn.error} />}
-								{turn.streaming && <WorkingIndicator startedAt={turn.startedAt} />}
+								{turn.streaming && <WorkingIndicator startedAt={turn.startedAt} label={taskStatusLine(state.tasks)} />}
 							</section>
 						))}
 						{state.compacting && <div class="compact-status">Compacting earlier turns…</div>}
-						{running && !state.compacting && !turns.some((turn) => turn.streaming) && <WorkingIndicator />}
+						{running && !state.compacting && !turns.some((turn) => turn.streaming) && <WorkingIndicator label={taskStatusLine(state.tasks)} />}
 					</div>
 				)}
 				{state.error && <ErrorNotice message={state.error} />}
 				<JumpLatest visible={showLatest} onJump={jumpToLatest} />
 			</main>
 
+			<div class="agent-dock">
 			{state.approval && (
 				<ApprovalPanel approval={state.approval} onApprove={(decision) => controller.approve(decision)} />
+			)}
+			{state.tasks.length > 0 && dismissedTray !== trayKey && (
+				<TaskTray
+					tasks={state.tasks}
+					running={running}
+					onOpen={() => setTasksOpen(true)}
+					onDismiss={() => setDismissedTray(trayKey)}
+				/>
 			)}
 
 			<Composer
@@ -189,8 +206,10 @@ export function App({ controller, onActiveChatChange }: Props) {
 				onToast={setToast}
 				onPreviewAttachment={setPreview}
 			/>
+			</div>
 
 			{chatsOpen && <ChatSheet controller={controller} state={state} onClose={() => setChatsOpen(false)} onError={setToast} />}
+			{tasksOpen && <TaskSheet controller={controller} tasks={state.tasks} onClose={() => setTasksOpen(false)} onToast={setToast} />}
 			{settingsOpen && <SettingsSheet controller={controller} state={state} onClose={() => setSettingsOpen(false)} onOpenPiSettings={() => { setSettingsOpen(false); setPiSettingsOpen(true); }} onToast={setToast} />}
 			{piSettingsOpen && <PiSettingsSheet controller={controller} state={state} onClose={() => setPiSettingsOpen(false)} onCredentials={() => { setPiSettingsOpen(false); setSettingsOpen(true); }} onPanel={setCommandPanel} onToast={setToast} />}
 			{configView && <ConfigSheet controller={controller} state={state} initialView={configView} onClose={() => setConfigView(null)} onOpenPiSettings={() => { setConfigView(null); setPiSettingsOpen(true); }} />}

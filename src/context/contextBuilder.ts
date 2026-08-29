@@ -17,6 +17,7 @@ export async function buildSystemPrompt(
 		"Never expose credentials, provider keys, hidden workspace URIs, or private values in tool results or responses.",
 		`Workspace: ${workspace.info.name}. Storage: ${workspace.info.remote ? "remote; keep walks bounded and sequential" : workspace.info.scheme}.`,
 		"Use web_search for current docs, APIs, package versions, and recent events instead of guessing. Follow with fetch_content when you need the full page. Cite source URLs.",
+		"For 3+ step work, keep a live checklist with todo_write. Do not paste it into chat.",
 	];
 	for (const instructionsFile of ["AGENTS.md", ".agents.md"]) {
 		try {

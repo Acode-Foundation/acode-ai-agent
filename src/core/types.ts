@@ -2,6 +2,7 @@ import type { AgentMessage, QueueMode, ThinkingLevel } from "@earendil-works/pi-
 import type { ImageContent, Model, Transport } from "@earendil-works/pi-ai";
 import type { PermissionMode } from "./schema";
 import type { SlashCommand } from "./slashCommands";
+import type { Task } from "../tasks/types";
 
 /** Built-ins use known IDs; extensions may register any stable provider ID. */
 export type ProviderId = string;
@@ -34,6 +35,7 @@ export type AgentSettings = {
 	globalSkillRoots: string[];
 	maxHistoryMessages: number;
 	maxWalkFiles: number;
+	showTaskTray: boolean;
 	activeWorkspaceId: string;
 	activeChatId: string;
 	customModels: Record<string, string[]>;
@@ -118,6 +120,7 @@ export type PublicAgentState = {
 	error?: string;
 	chats: ChatSummary[];
 	commands: SlashCommand[];
+	tasks: Task[];
 	activeChatId?: string;
 	authFlow?: {
 		providerId: ProviderId;

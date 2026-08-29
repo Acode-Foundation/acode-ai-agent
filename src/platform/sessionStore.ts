@@ -8,6 +8,7 @@ export { createChatId, messagePlainText, sessionEntriesFromMessages, titleFromEn
 
 const INDEX_KEY = "acode.ai-agent.chats.v3";
 const SESSION_PREFIX = "acode.ai-agent.session.v3:";
+const TASKS_PREFIX = "acode.ai-agent.tasks.v1:";
 const V2_INDEX_KEY = "acode.ai-agent.chats.v2";
 const V2_PREFIX = "acode.ai-agent.chat.v2:";
 const LEGACY_PREFIX = "acode.ai-agent.session.v1:";
@@ -126,8 +127,40 @@ export class SessionStore {
 		this.#index = this.#index.filter((item) => item.id !== id);
 		await this.#enqueue(async () => {
 			await this.#kv.delete(`${SESSION_PREFIX}${id}`);
+			await this.#kv.delete(`${TASKS_PREFIX}${id}`);
 			await this.#kv.set(INDEX_KEY, { chats: this.#index });
 		});
+	}
+
+	async loadTasks(id: string): Promise<unknown> {
+		await this.hydrate();
+		return this.#kv.get(`${TASKS_PREFIX}${id}`);
+	}
+
+	async saveTasks(id: string, value: unknown): Promise<void> {
+		await this.hydrate();
+		if (!value || typeof value !== "object") {
+			await this.#enqueue(async () => {
+				await this.#kv.delete(`${TASKS_PREFIX}${id}`);
+			});
+			return;
+		}
+		const record = value as { tasks?: unknown };
+		if (Array.isArray(record.tasks) && record.tasks.length === 0) {
+			await this.#enqueue(async () => {
+				await this.#kv.delete(`${TASKS_PREFIX}${id}`);
+			});
+			return;
+		}
+		await this.#enqueue(async () => {
+			await this.#kv.set(`${TASKS_PREFIX}${id}`, value);
+		});
+	}
+
+	async copyTasks(fromId: string, toId: string): Promise<void> {
+		const data = await this.loadTasks(fromId);
+		if (data === undefined) return;
+		await this.saveTasks(toId, data);
 	}
 
 	async seed(options: {

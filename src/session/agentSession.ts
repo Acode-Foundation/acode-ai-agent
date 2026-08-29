@@ -26,6 +26,20 @@ import type { SessionStore } from "../platform/sessionStore";
 import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
 import { createWorkspaceTools } from "../tools/createTools";
 import { createTerminalBashTool } from "../tools/bash";
+import { createTaskTools } from "../tasks/createTaskTools";
+import {
+	buildTaskReminder,
+	createCadenceState,
+	drainReminder,
+	evaluateReminder,
+	markStaleInProgress,
+	noteResolvedBoundary,
+	onTurnStart,
+	resetCadenceState,
+	shouldAutoClear,
+} from "../tasks/reminder";
+import { parseTaskStore, TaskList } from "../tasks/taskList";
+import type { Task, TaskStatus } from "../tasks/types";
 import { createWebSearchContext } from "../tools/web/context";
 import { createWebTools } from "../tools/web/createWebTools";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
@@ -41,6 +55,7 @@ export type AgentSessionSnapshot = {
 	usage: { tokens: number; cost: number };
 	contextTokens: number;
 	commands: SlashCommand[];
+	tasks: Task[];
 	error?: string;
 };
 
@@ -68,6 +83,9 @@ export class AgentSession {
 	#running = false;
 	#compacting = false;
 	#compactPromise?: Promise<void>;
+	#tasks = new TaskList();
+	#cadence = createCadenceState();
+	#taskUnsubs: Array<() => void> = [];
 	#snapshot: AgentSessionSnapshot = {
 		messages: [],
 		activities: [],
@@ -77,6 +95,7 @@ export class AgentSession {
 		usage: { tokens: 0, cost: 0 },
 		contextTokens: 0,
 		commands: resourceSlashCommands({}),
+		tasks: [],
 	};
 
 	constructor(options: {
@@ -106,6 +125,7 @@ export class AgentSession {
 			activities: [...this.#snapshot.activities],
 			queued: [...this.#snapshot.queued],
 			commands: [...this.#snapshot.commands],
+			tasks: [...this.#snapshot.tasks],
 		};
 	}
 
@@ -152,7 +172,9 @@ export class AgentSession {
 			this.#settings().permissionMode,
 			this.#runAbort.signal,
 		));
-		this.#snapshot = { ...this.#snapshot, commands: resourceSlashCommands(resources, settings) };
+		this.#bindTaskRuntime();
+		await this.#loadTasks();
+		this.#snapshot = { ...this.#snapshot, commands: resourceSlashCommands(resources, settings), tasks: this.#tasks.list() };
 		await this.#refreshContext();
 		this.#publish();
 	}
@@ -342,7 +364,24 @@ export class AgentSession {
 			providerId: this.#harness?.getModel().provider,
 			modelId: this.#harness?.getModel().id,
 		});
-		await this.#flushPersist?.();
+		await Promise.all([this.#flushPersist?.(), this.#store.saveTasks(this.id, this.#tasks.snapshot())]);
+	}
+
+	updateTaskStatus(id: string, status: TaskStatus | "deleted"): void {
+		this.#tasks.updateStatus(id, status);
+	}
+
+	addTask(subject: string): Task {
+		return this.#tasks.add(subject);
+	}
+
+	clearCompletedTasks(): number {
+		return this.#tasks.clearCompleted();
+	}
+
+	clearAllTasks(): number {
+		resetCadenceState(this.#cadence);
+		return this.#tasks.clearAll();
 	}
 
 	async dispose(): Promise<void> {
@@ -352,6 +391,7 @@ export class AgentSession {
 		await this.persist().catch(() => undefined);
 		this.#unsubscribe?.();
 		this.#unsubscribe = undefined;
+		for (const unsubscribe of this.#taskUnsubs.splice(0)) unsubscribe();
 		this.mutationGate.dispose();
 		this.changes.clear();
 		this.#harness = undefined;
@@ -366,6 +406,12 @@ export class AgentSession {
 				...event.followUp.map((message) => queuedFromMessage(message, "followUp")),
 			].filter((item) => item.text.trim() || item.images);
 		}
+		if (event.type === "turn_start") {
+			onTurnStart(this.#cadence);
+			noteResolvedBoundary(this.#cadence, this.#tasks.list());
+			if (shouldAutoClear(this.#cadence, this.#tasks.list())) this.#tasks.clearAll();
+		}
+		if (event.type === "turn_end") markStaleInProgress(this.#cadence, this.#tasks.list());
 		if (event.type === "agent_start") this.#beginRun();
 		if (event.type === "settled" || event.type === "abort") {
 			this.#running = false;
@@ -492,6 +538,7 @@ export class AgentSession {
 			usage: this.#snapshot.usage,
 			contextTokens: this.#snapshot.contextTokens,
 			commands: this.#snapshot.commands,
+			tasks: this.#tasks.list(),
 			error: overrides?.error ?? this.#snapshot.error,
 		};
 		this.changes.emit(this.snapshot);
@@ -505,6 +552,7 @@ export class AgentSession {
 				autoResizeImages: () => this.#settings().imageAutoResize,
 			}),
 			...(bash ? [bash] : []),
+			...createTaskTools(this.#tasks),
 			this.#skillTool(),
 			...createWebTools(createWebSearchContext({
 				models: this.#providers.models,
@@ -560,6 +608,49 @@ export class AgentSession {
 		if (!this.#harness) throw new Error("Agent session has not been initialized.");
 		return this.#harness;
 	}
+
+	async #loadTasks(): Promise<void> {
+		try {
+			this.#tasks.restore(parseTaskStore(await this.#store.loadTasks(this.id)));
+		} catch (error) {
+			console.warn("AI task list could not be restored", error);
+		}
+	}
+
+	#bindTaskRuntime(): void {
+		const harness = this.#harness;
+		if (!harness) return;
+		this.#taskUnsubs.push(
+			this.#tasks.subscribe(() => {
+				void this.#store.saveTasks(this.id, this.#tasks.snapshot()).catch((error) => {
+					console.warn("AI task list could not be persisted", error);
+				});
+				this.#publish();
+			}),
+			harness.on("tool_result", (event) => {
+				evaluateReminder(this.#cadence, event.toolName, this.#tasks.list());
+				return undefined;
+			}),
+			harness.on("context", (event) => this.#injectTaskReminder(event.messages)),
+		);
+	}
+
+	#injectTaskReminder(messages: AgentMessage[]): { messages: AgentMessage[] } | undefined {
+		try {
+			if (!drainReminder(this.#cadence)) return undefined;
+			const tasks = this.#tasks.list();
+			const reminder = buildTaskReminder(tasks);
+			if (!reminder) return undefined;
+			const last = messages.at(-1);
+			if (last && last.role === "user" && messagePlainText(last).includes("<system-reminder>")) return undefined;
+			return {
+				messages: [...messages, { role: "user", content: reminder, timestamp: Date.now() }],
+			};
+		} catch (error) {
+			console.warn("AI task reminder could not be injected", error);
+			return undefined;
+		}
+	}
 }
 
 function toHarnessTools(tools: AgentTool[]): AgentHarnessTool<undefined>[] {
@@ -602,7 +693,18 @@ function sanitizeArgs(args: unknown): Record<string, unknown> {
 	if ("content" in value) value.content = `[${String(value.content).length} characters]`;
 	if ("new_string" in value) value.new_string = `[${String(value.new_string).length} characters]`;
 	if ("old_string" in value) value.old_string = `[${String(value.old_string).length} characters]`;
+	if (Array.isArray(value.todos)) value.todos = value.todos.map(summarizeTodoArg);
 	return value;
+}
+
+function summarizeTodoArg(item: unknown): Record<string, unknown> {
+	if (!item || typeof item !== "object") return {};
+	const todo = item as Record<string, unknown>;
+	return {
+		id: todo.id,
+		status: todo.status,
+		content: typeof todo.content === "string" ? todo.content.slice(0, 80) : todo.content,
+	};
 }
 
 function toolResultText(result: unknown): string {

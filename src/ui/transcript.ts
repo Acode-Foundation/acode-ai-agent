@@ -143,6 +143,8 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 			return { kind: "terminal", label: "Ran command", detail: inlinePreview(firstString(args, ["command", "cmd"])) };
 		case "thinking":
 			return { kind: "think", label: "Reasoned", detail: undefined };
+		case "todo_write":
+			return { kind: "other", label: "Updated tasks", detail: todoWriteDetail(args, output) };
 		default:
 			return { kind: "other", label: humanize(name) || "Used tool", detail: path ?? query };
 	}
@@ -235,7 +237,8 @@ function noticeTurn(message: AgentMessage): ChatTurn {
 }
 
 function projectTurn(messages: AgentMessage[], streaming: boolean): ChatTurn {
-	const user = messages.find((message) => message.role === "user");
+	const userCandidate = messages.find((message) => message.role === "user");
+	const user = userCandidate && !isReminderMessage(userCandidate) ? userCandidate : undefined;
 	const parts = flatten(messages);
 	let lastWork = -1;
 	for (let index = parts.length - 1; index >= 0; index -= 1) {
@@ -405,6 +408,10 @@ function mergeActivities(turn: ChatTurn, activities: ToolActivity[], priorWorkId
 	}
 }
 
+function isReminderMessage(message: AgentMessage): boolean {
+	return userText(message).trim().startsWith("<system-reminder>");
+}
+
 function userText(message: AgentMessage): string {
 	if (message.role !== "user") return "";
 	if (typeof message.content === "string") return message.content;
@@ -427,6 +434,14 @@ function webSearchDetail(args: Record<string, unknown>, query?: string, output?:
 	const via = header?.[1];
 	if (query && via) return `${query} · ${via}`;
 	return query ?? via;
+}
+
+function todoWriteDetail(args: Record<string, unknown>, output?: string): string | undefined {
+	const summary = output?.split("\n").find((line) => line.trim())?.trim();
+	if (summary && !summary.startsWith("#") && !summary.startsWith("warning:")) return summary.slice(0, 80);
+	const todos = args.todos;
+	if (!Array.isArray(todos) || todos.length === 0) return "Cleared";
+	return `${todos.length} task${todos.length === 1 ? "" : "s"}`;
 }
 
 function fetchTitle(output?: string): string | undefined {

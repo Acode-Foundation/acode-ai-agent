@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
 	globalSkillRoots: [],
 	maxHistoryMessages: 80,
 	maxWalkFiles: 200,
+	showTaskTray: true,
 	activeWorkspaceId: "",
 	activeChatId: "",
 	customModels: {},

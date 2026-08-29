@@ -23,6 +23,7 @@ export const BUILT_IN_SLASH_COMMANDS: SlashCommand[] = [
 	{ name: "compact", description: "Summarize older context to make room", source: "action", argumentHint: "instructions" },
 	{ name: "name", description: "Rename this session", source: "action", argumentHint: "name" },
 	{ name: "session", description: "Show session usage and identity", source: "action" },
+	{ name: "tasks", description: "Manage the session task list", source: "action", argumentHint: "clear" },
 	{ name: "tree", description: "Navigate to an earlier point in this session", source: "action" },
 	{ name: "fork", description: "Fork a new session from an earlier message", source: "action" },
 	{ name: "clone", description: "Clone the active branch into a new session", source: "action" },

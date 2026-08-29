@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, ExternalLink, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, SquareTerminal, Wrench } from "lucide-preact";
+import { ChevronDown, ChevronRight, ExternalLink, Eye, File, Folder, FolderOpen, Globe, ListPlus, LoaderCircle, Pencil, Search, Sparkles, SquareTerminal, Wrench } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Collapse, RotateIcon } from "./Collapse";
@@ -49,23 +49,25 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
 	);
 }
 
-export function WorkingIndicator({ startedAt }: { startedAt?: number }) {
+export function WorkingIndicator({ startedAt, label }: { startedAt?: number; label?: string }) {
 	const labelRef = useRef<HTMLSpanElement>(null);
 	useEffect(() => {
 		const started = typeof startedAt === "number" && Number.isFinite(startedAt) ? startedAt : Date.now();
 		const update = () => {
 			if (!labelRef.current) return;
 			const seconds = Math.max(0, Math.floor((Date.now() - started) / 1_000));
-			labelRef.current.textContent = seconds > 0 ? `Working for ${formatWorkDuration(seconds * 1_000)}` : "Working";
+			const elapsed = seconds > 0 ? formatWorkDuration(seconds * 1_000) : "";
+			if (label) labelRef.current.textContent = elapsed ? `${label} · ${elapsed}` : label;
+			else labelRef.current.textContent = elapsed ? `Working for ${elapsed}` : "Working";
 		};
 		update();
 		const timer = window.setInterval(update, 1_000);
 		return () => window.clearInterval(timer);
-	}, [startedAt]);
+	}, [startedAt, label]);
 	return (
 		<div class="typing" aria-live="polite">
 			<span class="work-dots" aria-hidden="true"><i /><i /><i /></span>
-			<span ref={labelRef}>Working</span>
+			<span ref={labelRef}>{label || "Working"}</span>
 		</div>
 	);
 }
@@ -122,7 +124,7 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 	};
 	const summary = (tail?: ComponentChildren) => (
 		<>
-			<span class={`work-kind ${entry.kind} ${entry.status}`} aria-hidden="true">{kindIcon(entry.kind)}</span>
+			<span class={`work-kind ${entry.kind} ${entry.status}${entry.name === "todo_write" ? " plan" : ""}`} aria-hidden="true">{kindIcon(entry.kind, entry.name)}</span>
 			<strong>{entry.label}</strong>
 			{entry.detail && <span class="work-detail">{entry.detail}</span>}
 			{entry.status === "running" ? <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" /> : tail}
@@ -169,6 +171,7 @@ function ToolBody({ entry, listing, fileResults, webSearch, workspace }: {
 	if (fileResults) return <FileResults entries={fileResults} workspace={workspace} />;
 	if (webSearch) return <WebSearchBody parsed={webSearch} />;
 	if (entry.name === "fetch_content") return <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>;
+	if (entry.name === "todo_write") return <pre class="work-body">{entry.output}</pre>;
 	if (entry.kind === "terminal") return <TerminalBody output={entry.output} />;
 	return <GenericToolBody entry={entry} />;
 }
@@ -181,6 +184,7 @@ function hasToolBody(
 ): boolean {
 	if (entry.status === "error") return true;
 	if (entry.name === "read_file") return false;
+	if (entry.name === "todo_write") return Boolean(entry.output);
 	if (entry.kind === "change") return Boolean(changeInput(entry));
 	if (listing || fileResults || webSearch) return true;
 	return Boolean(entry.output || (entry.args && Object.keys(entry.args).length));
@@ -345,8 +349,9 @@ function hostOf(url: string): string {
 	}
 }
 
-function kindIcon(kind: ToolKind) {
+function kindIcon(kind: ToolKind, name?: string) {
 	const props = { size: 13, strokeWidth: 2 } as const;
+	if (name === "todo_write") return <ListPlus {...props} />;
 	switch (kind) {
 		case "read":
 			return <Eye {...props} />;

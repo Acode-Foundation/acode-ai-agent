@@ -30,6 +30,7 @@ test("merges built-ins, prompt templates, and Pi skill commands", () => {
 		skills: [{ name: "frontend", description: "Build the interface", content: "instructions", filePath: ".agents/skills/frontend/SKILL.md" }],
 	});
 	expect(commands.some((command) => command.name === "model" && command.source === "action")).toBe(true);
+	expect(commands.some((command) => command.name === "tasks" && command.source === "action")).toBe(true);
 	expect(commands.some((command) => command.name === "review" && command.source === "prompt")).toBe(true);
 	expect(commands.some((command) => command.name === "skill:frontend" && command.source === "skill")).toBe(true);
 });

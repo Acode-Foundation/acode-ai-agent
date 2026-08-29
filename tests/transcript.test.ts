@@ -347,3 +347,30 @@ test("merges new tool activity into the current user turn only", () => {
 	expect(turns[1]?.work.map((entry) => entry.id)).toEqual(["t2"]);
 	expect(turns[1]?.work[0]?.label).toBe("Read file");
 });
+
+test("presents todo_write as a compact plan update", () => {
+	expect(presentTool("todo_write", { todos: [{ content: "A" }, { content: "B" }] }, "2 tasks · 2 pending\n#1 [pending] A")).toEqual({
+		kind: "other",
+		label: "Updated tasks",
+		detail: "2 tasks · 2 pending",
+	});
+	expect(presentTool("todo_write", { todos: [] }, "Cleared the task list.")).toMatchObject({
+		kind: "other",
+		detail: "Cleared the task list.",
+	});
+});
+
+test("hides transient task reminders from the chat transcript", () => {
+	const turns = buildTurns([
+		user("fix auth", 1),
+		assistant([{ type: "text", text: "On it." }], 2),
+		{
+			role: "user",
+			content: "<system-reminder>\nThe task list has not been updated recently.\n</system-reminder>",
+			timestamp: 3,
+		},
+		assistant([{ type: "text", text: "Continuing." }], 4),
+	]);
+	expect(turns.some((turn) => turn.user?.includes("system-reminder"))).toBe(false);
+	expect(turns.at(-1)?.answer).toBe("Continuing.");
+});

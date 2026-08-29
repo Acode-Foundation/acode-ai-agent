@@ -163,3 +163,17 @@ test("migrates v2 localStorage chats into the adapter", async () => {
 	});
 	expect(opened.record.providerId).toBe("anthropic");
 });
+
+test("persists, copies, and deletes session task lists", async () => {
+	const kv = new MemoryKvStore();
+	const store = new SessionStore(kv);
+	await store.saveTasks("c1", { nextId: 3, tasks: [{ id: "1", subject: "Inspect", status: "completed" }] });
+	expect(await store.loadTasks("c1")).toEqual({ nextId: 3, tasks: [{ id: "1", subject: "Inspect", status: "completed" }] });
+	await store.copyTasks("c1", "c2");
+	expect(await store.loadTasks("c2")).toEqual({ nextId: 3, tasks: [{ id: "1", subject: "Inspect", status: "completed" }] });
+	await store.saveTasks("c1", { nextId: 3, tasks: [] });
+	expect(await store.loadTasks("c1")).toBeUndefined();
+	await store.open({ id: "c2", workspaceId: "w", providerId: "openrouter", modelId: "m" });
+	await store.remove("c2");
+	expect(await store.loadTasks("c2")).toBeUndefined();
+});

@@ -16,6 +16,7 @@ import type {
 	SessionTreeItem,
 	WorkspaceInfo,
 } from "../core/types";
+import type { Task, TaskStatus } from "../tasks/types";
 import { openAcodeUri } from "../platform/deviceImage";
 import { collectPromptImages } from "../platform/promptImages";
 import { MutationGate } from "../permissions/mutationGate";
@@ -68,6 +69,7 @@ export class AgentController {
 			contextTokens: 0,
 			chats: [],
 			commands: BUILT_IN_SLASH_COMMANDS,
+			tasks: [],
 		};
 		this.settings.subscribe((settings) => {
 			this.#state.settings = settings;
@@ -92,6 +94,7 @@ export class AgentController {
 			queued: [...this.#state.queued],
 			models: [...this.#state.models],
 			commands: [...this.#state.commands],
+			tasks: [...this.#state.tasks],
 			settings: { ...this.#state.settings },
 		};
 	}
@@ -200,6 +203,18 @@ export class AgentController {
 				await session.rename(args);
 				this.#emit();
 				return {};
+			case "tasks": {
+				const action = args.trim().toLowerCase();
+				if (action === "clear") {
+					const removed = session.clearAllTasks();
+					return { message: removed ? `Cleared ${removed} task${removed === 1 ? "" : "s"}.` : "The task list is already empty." };
+				}
+				if (action === "clear-completed" || action === "clear completed") {
+					const removed = session.clearCompletedTasks();
+					return { message: removed ? `Cleared ${removed} finished task${removed === 1 ? "" : "s"}.` : "No finished tasks to clear." };
+				}
+				return { action: "tasks" };
+			}
 			case "session": {
 				const info = session.sessionInfo();
 				return { panel: {
@@ -273,6 +288,7 @@ export class AgentController {
 			modelId: session.model?.id ?? this.settings.value.modelId,
 			entries,
 		});
+		await this.#sessionStore.copyTasks(session.id, id);
 		await this.#openChat(id, workspace);
 		return restoredText;
 	}
@@ -359,6 +375,25 @@ export class AgentController {
 	setPermissionMode(mode: PermissionMode): void {
 		this.settings.update({ permissionMode: mode });
 		this.#emit();
+	}
+
+	updateTaskStatus(id: string, status: TaskStatus | "deleted"): Promise<void> {
+		this.#activeSession()?.updateTaskStatus(id, status);
+		return Promise.resolve();
+	}
+
+	addTask(subject: string): Promise<Task> {
+		const session = this.#activeSession();
+		if (!session) return Promise.reject(new Error("Open a session before adding a task."));
+		return Promise.resolve(session.addTask(subject));
+	}
+
+	clearCompletedTasks(): number {
+		return this.#activeSession()?.clearCompletedTasks() ?? 0;
+	}
+
+	clearAllTasks(): number {
+		return this.#activeSession()?.clearAllTasks() ?? 0;
 	}
 
 	selectWorkspace(workspaceIdOrUri: string): Promise<void> {
@@ -762,6 +797,7 @@ export class AgentController {
 			usage: snapshot?.usage ?? { tokens: 0, cost: 0 },
 			contextTokens: snapshot?.contextTokens ?? 0,
 			commands: snapshot?.commands ?? BUILT_IN_SLASH_COMMANDS,
+			tasks: snapshot?.tasks ?? [],
 			model: session?.model ?? this.#state.model,
 			workspace: session?.workspace.info ?? this.#state.workspace,
 		};
@@ -802,7 +838,7 @@ export class AgentController {
 }
 
 export type SlashCommandExecution = {
-	action?: "models" | "settings" | "pi-settings" | "sessions" | "tree" | "fork";
+	action?: "models" | "settings" | "pi-settings" | "sessions" | "tree" | "fork" | "tasks";
 	message?: string;
 	copyText?: string;
 	panel?: CommandPanelData;
