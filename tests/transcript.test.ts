@@ -348,6 +348,22 @@ test("merges new tool activity into the current user turn only", () => {
 	expect(turns[1]?.work[0]?.label).toBe("Read file");
 });
 
+test("presents ask_user_question as a compact prompt", () => {
+	expect(presentTool("ask_user_question", {
+		questions: [
+			{ header: "Auth", question: "Which auth?" },
+			{ header: "Tests", question: "Which tests?" },
+		],
+	})).toEqual({
+		kind: "other",
+		label: "Asked you",
+		detail: "Auth · 2 questions",
+	});
+	expect(presentTool("ask_user_question", { questions: [{ header: "Auth" }] }, "User declined to answer questions")).toMatchObject({
+		detail: "Skipped",
+	});
+});
+
 test("presents todo_write as a compact plan update", () => {
 	expect(presentTool("todo_write", { todos: [{ content: "A" }, { content: "B" }] }, "2 tasks · 2 pending\n#1 [pending] A")).toEqual({
 		kind: "other",

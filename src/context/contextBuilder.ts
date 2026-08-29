@@ -18,6 +18,7 @@ export async function buildSystemPrompt(
 		`Workspace: ${workspace.info.name}. Storage: ${workspace.info.remote ? "remote; keep walks bounded and sequential" : workspace.info.scheme}.`,
 		"Use web_search for current docs, APIs, package versions, and recent events instead of guessing. Follow with fetch_content when you need the full page. Cite source URLs.",
 		"For 3+ step work, keep a live checklist with todo_write. Do not paste it into chat.",
+		"When a decision is underspecified, ask with ask_user_question instead of guessing.",
 	];
 	for (const instructionsFile of ["AGENTS.md", ".agents.md"]) {
 		try {

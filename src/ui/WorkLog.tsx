@@ -124,7 +124,7 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 	};
 	const summary = (tail?: ComponentChildren) => (
 		<>
-			<span class={`work-kind ${entry.kind} ${entry.status}${entry.name === "todo_write" ? " plan" : ""}`} aria-hidden="true">{kindIcon(entry.kind, entry.name)}</span>
+			<span class={`work-kind ${entry.kind} ${entry.status}${entry.name === "todo_write" ? " plan" : ""}${entry.name === "ask_user_question" ? " ask" : ""}`} aria-hidden="true">{kindIcon(entry.kind, entry.name)}</span>
 			<strong>{entry.label}</strong>
 			{entry.detail && <span class="work-detail">{entry.detail}</span>}
 			{entry.status === "running" ? <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" /> : tail}
@@ -171,7 +171,7 @@ function ToolBody({ entry, listing, fileResults, webSearch, workspace }: {
 	if (fileResults) return <FileResults entries={fileResults} workspace={workspace} />;
 	if (webSearch) return <WebSearchBody parsed={webSearch} />;
 	if (entry.name === "fetch_content") return <div class="work-prose"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>;
-	if (entry.name === "todo_write") return <pre class="work-body">{entry.output}</pre>;
+	if (entry.name === "todo_write" || entry.name === "ask_user_question") return <pre class="work-body">{entry.output}</pre>;
 	if (entry.kind === "terminal") return <TerminalBody output={entry.output} />;
 	return <GenericToolBody entry={entry} />;
 }
@@ -184,7 +184,7 @@ function hasToolBody(
 ): boolean {
 	if (entry.status === "error") return true;
 	if (entry.name === "read_file") return false;
-	if (entry.name === "todo_write") return Boolean(entry.output);
+	if (entry.name === "todo_write" || entry.name === "ask_user_question") return Boolean(entry.output);
 	if (entry.kind === "change") return Boolean(changeInput(entry));
 	if (listing || fileResults || webSearch) return true;
 	return Boolean(entry.output || (entry.args && Object.keys(entry.args).length));
@@ -352,6 +352,7 @@ function hostOf(url: string): string {
 function kindIcon(kind: ToolKind, name?: string) {
 	const props = { size: 13, strokeWidth: 2 } as const;
 	if (name === "todo_write") return <ListPlus {...props} />;
+	if (name === "ask_user_question") return <AskIcon />;
 	switch (kind) {
 		case "read":
 			return <Eye {...props} />;
@@ -370,6 +371,16 @@ function kindIcon(kind: ToolKind, name?: string) {
 		default:
 			return <Wrench {...props} />;
 	}
+}
+
+function AskIcon() {
+	return (
+		<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+			<circle cx="12" cy="12" r="9" />
+			<path d="M9.6 9.6a2.4 2.4 0 1 1 3.3 2.2c-.8.4-1.4 1-1.4 1.8" />
+			<path d="M12 17.2h.01" />
+		</svg>
+	);
 }
 
 function formatArgs(args: Record<string, unknown>): string {

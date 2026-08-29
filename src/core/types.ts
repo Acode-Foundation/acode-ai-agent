@@ -1,5 +1,6 @@
 import type { AgentMessage, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Transport } from "@earendil-works/pi-ai";
+import type { QuestionnairePrompt } from "../ask/types";
 import type { PermissionMode } from "./schema";
 import type { SlashCommand } from "./slashCommands";
 import type { Task } from "../tasks/types";
@@ -111,6 +112,7 @@ export type PublicAgentState = {
 	queued: QueuedPrompt[];
 	compacting: boolean;
 	approval?: MutationRequest;
+	questionnaire?: QuestionnairePrompt;
 	workspace?: WorkspaceInfo;
 	model?: Model<any>;
 	models: Model<any>[];

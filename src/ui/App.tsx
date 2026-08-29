@@ -16,6 +16,7 @@ import { Sheet } from "./Sheet";
 import { TreeSheet } from "./TreeSheet";
 import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
+import { AskCard } from "./AskCard";
 import { TaskSheet, TaskTray, taskStatusLine } from "./TaskTray";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
 import { openCustomTab } from "../platform/authTab";
@@ -55,11 +56,13 @@ export function App({ controller, onActiveChatChange }: Props) {
 		if (state.activeChatId) onActiveChatChange?.(state.activeChatId);
 	}, [state.activeChatId, onActiveChatChange]);
 	const running = state.status === "running";
+	const waitingOnAsk = Boolean(state.questionnaire);
+	const workingLabel = waitingOnAsk ? "Waiting for your answer" : taskStatusLine(state.tasks);
 	const trayKey = `${state.activeChatId ?? ""}:${state.tasks.map((task) => task.id).join(",")}`;
 	useEffect(() => {
 		setDismissedTray("");
 	}, [state.activeChatId]);
-	const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}`;
+	const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}:${state.questionnaire?.id ?? ""}`;
 	const { showLatest, jumpToLatest, pin, captureThread } = useChatScroll(scrollRef, followKey);
 
 	const turns = useMemo(() => {
@@ -159,11 +162,11 @@ export function App({ controller, onActiveChatChange }: Props) {
 									</article>
 								)}
 								{turn.error && <ErrorNotice message={turn.error} />}
-								{turn.streaming && <WorkingIndicator startedAt={turn.startedAt} label={taskStatusLine(state.tasks)} />}
+								{turn.streaming && <WorkingIndicator startedAt={turn.startedAt} label={workingLabel} />}
 							</section>
 						))}
 						{state.compacting && <div class="compact-status">Compacting earlier turns…</div>}
-						{running && !state.compacting && !turns.some((turn) => turn.streaming) && <WorkingIndicator label={taskStatusLine(state.tasks)} />}
+						{running && !state.compacting && !turns.some((turn) => turn.streaming) && <WorkingIndicator label={workingLabel} />}
 					</div>
 				)}
 				{state.error && <ErrorNotice message={state.error} />}
@@ -171,10 +174,17 @@ export function App({ controller, onActiveChatChange }: Props) {
 			</main>
 
 			<div class="agent-dock">
-			{state.approval && (
+			{state.questionnaire && (
+				<AskCard
+					prompt={state.questionnaire}
+					onSubmit={(answers) => controller.answerQuestionnaire(answers)}
+					onSkip={() => controller.skipQuestionnaire()}
+				/>
+			)}
+			{state.approval && !state.questionnaire && (
 				<ApprovalPanel approval={state.approval} onApprove={(decision) => controller.approve(decision)} />
 			)}
-			{state.tasks.length > 0 && dismissedTray !== trayKey && (
+			{state.tasks.length > 0 && !state.questionnaire && dismissedTray !== trayKey && (
 				<TaskTray
 					tasks={state.tasks}
 					running={running}

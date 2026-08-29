@@ -26,6 +26,8 @@ import type { SessionStore } from "../platform/sessionStore";
 import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
 import { createWorkspaceTools } from "../tools/createTools";
 import { createTerminalBashTool } from "../tools/bash";
+import { createAskTool } from "../ask/createAskTool";
+import { QuestionGate } from "../ask/questionGate";
 import { createTaskTools } from "../tasks/createTaskTools";
 import {
 	buildTaskReminder,
@@ -64,6 +66,7 @@ export class AgentSession {
 	title: string;
 	readonly changes = new Signal<AgentSessionSnapshot>();
 	readonly mutationGate: MutationGate;
+	readonly questionGate = new QuestionGate();
 	readonly workspace: AcodeWorkspace;
 	#providers: ProviderRegistry;
 	#extensions: ExtensionRegistry;
@@ -327,6 +330,7 @@ export class AgentSession {
 	async abort(): Promise<RestoredPrompt[]> {
 		const harness = this.#harness;
 		this.#runAbort.abort();
+		this.questionGate.cancel();
 		this.#running = false;
 		this.#queued = [];
 		this.#settleActivities();
@@ -386,6 +390,7 @@ export class AgentSession {
 
 	async dispose(): Promise<void> {
 		this.#runAbort.abort();
+		this.questionGate.cancel();
 		await this.#harness?.abort().catch(() => undefined);
 		await this.#harness?.waitForIdle().catch(() => undefined);
 		await this.persist().catch(() => undefined);
@@ -393,6 +398,7 @@ export class AgentSession {
 		this.#unsubscribe = undefined;
 		for (const unsubscribe of this.#taskUnsubs.splice(0)) unsubscribe();
 		this.mutationGate.dispose();
+		this.questionGate.dispose();
 		this.changes.clear();
 		this.#harness = undefined;
 		this.#pi = undefined;
@@ -553,6 +559,7 @@ export class AgentSession {
 			}),
 			...(bash ? [bash] : []),
 			...createTaskTools(this.#tasks),
+			createAskTool(this.questionGate),
 			this.#skillTool(),
 			...createWebTools(createWebSearchContext({
 				models: this.#providers.models,
@@ -694,6 +701,7 @@ function sanitizeArgs(args: unknown): Record<string, unknown> {
 	if ("new_string" in value) value.new_string = `[${String(value.new_string).length} characters]`;
 	if ("old_string" in value) value.old_string = `[${String(value.old_string).length} characters]`;
 	if (Array.isArray(value.todos)) value.todos = value.todos.map(summarizeTodoArg);
+	if (Array.isArray(value.questions)) value.questions = value.questions.map(summarizeQuestionArg);
 	return value;
 }
 
@@ -704,6 +712,27 @@ function summarizeTodoArg(item: unknown): Record<string, unknown> {
 		id: todo.id,
 		status: todo.status,
 		content: typeof todo.content === "string" ? todo.content.slice(0, 80) : todo.content,
+	};
+}
+
+function summarizeQuestionArg(item: unknown): Record<string, unknown> {
+	if (!item || typeof item !== "object") return {};
+	const question = item as Record<string, unknown>;
+	const options = Array.isArray(question.options)
+		? question.options.map((option) => {
+			if (!option || typeof option !== "object") return {};
+			const entry = option as Record<string, unknown>;
+			return {
+				label: typeof entry.label === "string" ? entry.label.slice(0, 60) : entry.label,
+				description: typeof entry.description === "string" ? entry.description.slice(0, 80) : undefined,
+			};
+		})
+		: undefined;
+	return {
+		header: question.header,
+		question: typeof question.question === "string" ? question.question.slice(0, 80) : question.question,
+		multiSelect: question.multiSelect,
+		options,
 	};
 }
 

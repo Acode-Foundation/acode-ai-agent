@@ -16,6 +16,7 @@ import type {
 	SessionTreeItem,
 	WorkspaceInfo,
 } from "../core/types";
+import type { QuestionAnswer } from "../ask/types";
 import type { Task, TaskStatus } from "../tasks/types";
 import { openAcodeUri } from "../platform/deviceImage";
 import { collectPromptImages } from "../platform/promptImages";
@@ -564,6 +565,14 @@ export class AgentController {
 		this.#activeSession()?.mutationGate.resolve(decision);
 	}
 
+	answerQuestionnaire(answers: QuestionAnswer[]): void {
+		this.#activeSession()?.questionGate.submit(answers);
+	}
+
+	skipQuestionnaire(): void {
+		this.#activeSession()?.questionGate.cancel();
+	}
+
 	registerTool(tool: AgentTool): () => void {
 		const unregister = this.extensions.registerTool(tool);
 		void this.#activeSession()?.refreshTools();
@@ -775,9 +784,16 @@ export class AgentController {
 					this.#emit();
 				}
 			}),
+			session.questionGate.changes.subscribe((questionnaire) => {
+				if (this.#activeId === chatId) {
+					this.#state.questionnaire = questionnaire;
+					this.#emit();
+				}
+			}),
 		];
 		this.#state.workspace = info;
 		this.#state.approval = session.mutationGate.pending;
+		this.#state.questionnaire = session.questionGate.pending;
 		this.#state.models = this.providers.getModels(this.settings.value.providerId);
 		this.#applyActiveSnapshot();
 	}

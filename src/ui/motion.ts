@@ -144,6 +144,41 @@ export function fadeSlide(element: HTMLElement, visible: boolean, instant = fals
 		: playMotion(element, { opacity: 0, transform: hidden }, { duration: 0.18, ease: [0.4, 0, 1, 1] });
 }
 
+export function tapBounce(element: Element): Promise<void> {
+	if (prefersReducedMotion()) return Promise.resolve();
+	return playMotion(
+		element,
+		{ transform: ["scale(0.97)", "scale(1)"] },
+		{ type: spring, visualDuration: 0.22, bounce: 0.28 },
+	).then(() => {
+		if (element instanceof HTMLElement) element.style.transform = "";
+	});
+}
+
+export function slideInX(element: HTMLElement, direction: 1 | -1): Promise<void> {
+	if (prefersReducedMotion()) {
+		element.style.opacity = "";
+		element.style.transform = "";
+		return Promise.resolve();
+	}
+	return playMotion(
+		element,
+		{ opacity: [0.2, 1], transform: [`translateX(${direction * 22}px)`, "translateX(0px)"] },
+		{ type: spring, visualDuration: 0.32, bounce: 0.05 },
+	).then(() => {
+		element.style.opacity = "";
+		element.style.transform = "";
+	});
+}
+
+export function springScaleX(element: HTMLElement, value: number): Promise<void> {
+	if (prefersReducedMotion()) {
+		element.style.transform = `scaleX(${value})`;
+		return Promise.resolve();
+	}
+	return playMotion(element, { transform: `scaleX(${value})` }, { type: spring, visualDuration: 0.4, bounce: 0 });
+}
+
 export function fadeInUp(element: Element, delay = 0): Promise<void> {
 	if (prefersReducedMotion()) {
 		if (element instanceof HTMLElement) {

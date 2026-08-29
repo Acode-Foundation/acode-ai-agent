@@ -145,6 +145,8 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 			return { kind: "think", label: "Reasoned", detail: undefined };
 		case "todo_write":
 			return { kind: "other", label: "Updated tasks", detail: todoWriteDetail(args, output) };
+		case "ask_user_question":
+			return { kind: "other", label: "Asked you", detail: askDetail(args, output) };
 		default:
 			return { kind: "other", label: humanize(name) || "Used tool", detail: path ?? query };
 	}
@@ -434,6 +436,21 @@ function webSearchDetail(args: Record<string, unknown>, query?: string, output?:
 	const via = header?.[1];
 	if (query && via) return `${query} · ${via}`;
 	return query ?? via;
+}
+
+function askDetail(args: Record<string, unknown>, output?: string): string | undefined {
+	if (output?.startsWith("User declined")) return "Skipped";
+	if (output?.startsWith("User has answered")) return "Answered";
+	const questions = args.questions;
+	if (!Array.isArray(questions) || questions.length === 0) return undefined;
+	const headers = questions.flatMap((item) => {
+		if (!item || typeof item !== "object") return [];
+		const header = (item as { header?: unknown }).header;
+		return typeof header === "string" && header.trim() ? [header.trim()] : [];
+	});
+	if (headers.length === 1) return headers[0];
+	if (headers.length) return `${headers[0]} · ${headers.length} questions`;
+	return `${questions.length} question${questions.length === 1 ? "" : "s"}`;
 }
 
 function todoWriteDetail(args: Record<string, unknown>, output?: string): string | undefined {
