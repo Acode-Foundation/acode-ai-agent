@@ -28,7 +28,17 @@ type BashResult = AgentToolResult<BashDetails>;
 type TerminalExecutor = {
 	start(command: string, onData: (type: string, data: string) => void, alpine?: boolean): Promise<string>;
 	stop(uuid: string): Promise<unknown>;
+	listProcesses?(): Promise<Array<{ id?: string }>>;
+	stopService?(): Promise<unknown>;
 };
+
+type ExecutorUseState = {
+	count: number;
+	owns: boolean;
+	lock: Promise<void>;
+};
+
+const executorUse = new WeakMap<TerminalExecutor, ExecutorUseState>();
 
 /**
  * Create Pi's bash-shaped tool only when this workspace is backed by Acode
@@ -86,7 +96,7 @@ export function createTerminalBashTool(workspace: AcodeWorkspace): AgentTool<any
 				}, delay);
 			};
 
-				const wrapped = `bash -lc ${shellQuote(`cd -- ${shellQuote(cwd)} && ${command}`)}`;
+			const wrapped = `bash -lc ${shellQuote(`cd -- ${shellQuote(cwd)} && ${command}`)}`;
 			try {
 				let exitCode: number;
 				try {
@@ -203,68 +213,138 @@ function validateTimeout(timeout: number | undefined): void {
 	if (timeout > MAX_TIMEOUT_SECONDS) throw new Error(`Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`);
 }
 
-function runTerminalCommand(
+async function runTerminalCommand(
 	executor: TerminalExecutor,
 	command: string,
 	timeoutSeconds: number | undefined,
 	signal: AbortSignal | undefined,
 	onData: (data: string) => void,
 ): Promise<number> {
-	return new Promise((resolve, reject) => {
-		let uuid: string | undefined;
-		let settled = false;
-		let stopReason: "abort" | "timeout" | undefined;
-		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-
-		const cleanup = () => {
-			if (timeoutHandle) clearTimeout(timeoutHandle);
-			signal?.removeEventListener("abort", abort);
-		};
-		const finish = (exitCode: number) => {
-			if (settled) return;
-			settled = true;
-			cleanup();
-			if (stopReason === "abort") reject(new Error("Command aborted"));
-			else if (stopReason === "timeout") reject(new Error(`Command timed out after ${timeoutSeconds} seconds`));
-			else resolve(exitCode);
-		};
-		const stop = (reason: "abort" | "timeout") => {
-			if (settled || stopReason) return;
-			stopReason = reason;
-			if (!uuid) return;
-			void executor.stop(uuid).then(() => finish(1), (error) => {
+	await beginAgentExecutorUse(executor);
+	let uuid: string | undefined;
+	let started: Promise<string> | undefined;
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await new Promise<number>((resolve, reject) => {
+			let settled = false;
+			let stopReason: "abort" | "timeout" | undefined;
+			const cleanup = () => {
+				if (timeoutHandle) clearTimeout(timeoutHandle);
+				timeoutHandle = undefined;
+				signal?.removeEventListener("abort", onAbort);
+			};
+			const finish = (exitCode: number) => {
 				if (settled) return;
 				settled = true;
 				cleanup();
-				reject(error instanceof Error ? error : new Error(String(error)));
-			});
-		};
-		const abort = () => stop("abort");
-		signal?.addEventListener("abort", abort, { once: true });
-		if (timeoutSeconds !== undefined) timeoutHandle = setTimeout(() => stop("timeout"), timeoutSeconds * 1_000);
-
-		void executor.start(command, (type, data) => {
-			if (settled) return;
-			if (type === "stderr" && /proot warning/i.test(data)) return;
-			if (type === "stdout" || type === "stderr" || type === "unknown") onData(String(data));
-			if (type === "exit") finish(Number.parseInt(String(data), 10) || 0);
-		}, true).then((id) => {
-			uuid = id;
-			if (stopReason) {
-				void executor.stop(id).then(() => finish(1), (error) => {
+				if (stopReason === "abort") reject(new Error("Command aborted"));
+				else if (stopReason === "timeout") reject(new Error(`Command timed out after ${timeoutSeconds} seconds`));
+				else resolve(exitCode);
+			};
+			const stopStarted = (id: string) => {
+				void Promise.resolve(executor.stop(id)).then(() => finish(1), (error) => {
 					if (settled) return;
 					settled = true;
 					cleanup();
 					reject(error instanceof Error ? error : new Error(String(error)));
 				});
+			};
+			const requestStop = (reason: "abort" | "timeout") => {
+				if (settled || stopReason) return;
+				stopReason = reason;
+				if (uuid) stopStarted(uuid);
+			};
+			const onAbort = () => requestStop("abort");
+			signal?.addEventListener("abort", onAbort, { once: true });
+			if (signal?.aborted) {
+				requestStop("abort");
+				if (!uuid) finish(1);
+				return;
 			}
-		}, (error) => {
-			if (settled) return;
-			settled = true;
-			cleanup();
-			reject(error instanceof Error ? error : new Error(String(error)));
+			if (timeoutSeconds !== undefined) timeoutHandle = setTimeout(() => requestStop("timeout"), timeoutSeconds * 1_000);
+
+			started = executor.start(command, (type, data) => {
+				if (settled) return;
+				if (type === "stderr" && /proot warning/i.test(data)) return;
+				if (type === "stdout" || type === "stderr" || type === "unknown") onData(String(data));
+				if (type === "exit") finish(Number.parseInt(String(data), 10) || 0);
+			}, true).then((id) => {
+				uuid = id;
+				if (settled) return id;
+				if (stopReason) stopStarted(id);
+				return id;
+			});
+			void started.then(() => undefined, (error) => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				reject(error instanceof Error ? error : new Error(String(error)));
+			});
 		});
+	} finally {
+		if (timeoutHandle) clearTimeout(timeoutHandle);
+		if (!uuid && started) {
+			try {
+				uuid = await started;
+			} catch {
+				uuid = undefined;
+			}
+		}
+		if (uuid) await Promise.resolve(executor.stop(uuid)).then(() => undefined, () => undefined);
+		await endAgentExecutorUse(executor);
+	}
+}
+
+function executorUseState(executor: TerminalExecutor): ExecutorUseState {
+	let state = executorUse.get(executor);
+	if (!state) {
+		state = { count: 0, owns: false, lock: Promise.resolve() };
+		executorUse.set(executor, state);
+	}
+	return state;
+}
+
+function withExecutorLock<T>(executor: TerminalExecutor, fn: (state: ExecutorUseState) => Promise<T>): Promise<T> {
+	const state = executorUseState(executor);
+	const run = state.lock.then(() => fn(state));
+	state.lock = run.then(() => undefined, () => undefined);
+	return run;
+}
+
+function beginAgentExecutorUse(executor: TerminalExecutor): Promise<void> {
+	return withExecutorLock(executor, async (state) => {
+		if (state.count === 0) {
+			const listed = await listExecutorProcesses(executor);
+			state.owns = listed.known && listed.processes.length === 0;
+		}
+		state.count += 1;
 	});
+}
+
+function endAgentExecutorUse(executor: TerminalExecutor): Promise<void> {
+	return withExecutorLock(executor, async (state) => {
+		state.count = Math.max(0, state.count - 1);
+		if (state.count > 0 || !state.owns) return;
+		state.owns = false;
+		const remaining = await listExecutorProcesses(executor);
+		if (!remaining.known || remaining.processes.length > 0) return;
+		if (typeof executor.stopService !== "function") return;
+		try {
+			await executor.stopService();
+		} catch {}
+	});
+}
+
+async function listExecutorProcesses(
+	executor: TerminalExecutor,
+): Promise<{ processes: Array<{ id?: string }>; known: boolean }> {
+	if (typeof executor.listProcesses !== "function") return { processes: [], known: false };
+	try {
+		const processes = await executor.listProcesses();
+		return { processes: Array.isArray(processes) ? processes : [], known: true };
+	} catch {
+		return { processes: [], known: false };
+	}
 }
 
 class BashOutputBuffer {

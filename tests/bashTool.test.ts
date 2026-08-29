@@ -35,13 +35,14 @@ test("does not register bash outside terminal workspaces", () => {
 
 test("streams a Pi-shaped bash command from the mapped workspace cwd", async () => {
 	let started = "";
-	vi.stubGlobal("Executor", fakeExecutor((command, onData) => {
+	const executor = fakeExecutor((command, onData) => {
 		started = command;
 		onData("stderr", "proot warning: binding host rootfs");
 		onData("stdout", "hello");
 		onData("stderr", "warning");
 		onData("exit", "0");
-	}));
+	});
+	vi.stubGlobal("Executor", executor);
 	const tool = createTerminalBashTool(workspace("file:///data/user/0/com.foxdebug.acode/files/public/project"))!;
 	const updates: string[] = [];
 	const result = await tool.execute("bash-1", { command: "pwd && echo ok" }, undefined, (update) => {
@@ -54,6 +55,8 @@ test("streams a Pi-shaped bash command from the mapped workspace cwd", async () 
 	expect(started).toContain("pwd && echo ok");
 	expect(result.content[0]).toEqual({ type: "text", text: "hello\nwarning" });
 	expect(updates.at(-1)).toBe("hello\nwarning");
+	expect(executor.stopped).toEqual(["process-1"]);
+	expect(executor.stoppedService).toBe(1);
 });
 
 test("reports non-zero exits as tool errors with captured output", async () => {
@@ -91,22 +94,40 @@ test("reports the byte limit when it is reached before the line limit", async ()
 
 test("stops timed-out commands and includes their captured output", async () => {
 	vi.useFakeTimers();
-	let stopped = "";
-	vi.stubGlobal("Executor", {
-		start: async (_command: string, onData: (type: string, data: string) => void) => {
-			onData("stdout", "still running");
-			return "process-timeout";
-		},
-		stop: async (uuid: string) => { stopped = uuid; },
-	});
+	const executor = fakeExecutor();
+	executor.start = async (_command: string, onData: (type: string, data: string) => void) => {
+		onData("stdout", "still running");
+		return "process-timeout";
+	};
+	vi.stubGlobal("Executor", executor);
 	const tool = createTerminalBashTool(workspace("file:///data/user/0/com.foxdebug.acode/files/public"))!;
 	const execution = tool.execute("bash-3", { command: "sleep 10", timeout: 1 });
 	const rejected = expect(execution).rejects.toThrow("still running\n\nCommand timed out after 1 seconds");
 	await vi.advanceTimersByTimeAsync(1_000);
 
 	await rejected;
-	expect(stopped).toBe("process-timeout");
+	expect(executor.stopped).toContain("process-timeout");
+	expect(executor.stoppedService).toBe(1);
 	vi.useRealTimers();
+});
+
+test("stops the executor service after an agent-started command when nothing else is running", async () => {
+	const executor = fakeExecutor((_command, onData) => onData("exit", "0"));
+	vi.stubGlobal("Executor", executor);
+	const tool = createTerminalBashTool(workspace("file:///data/user/0/com.foxdebug.acode/files/public"))!;
+	await tool.execute("bash-cleanup", { command: "true" });
+	expect(executor.stopped).toEqual(["process-1"]);
+	expect(executor.stoppedService).toBe(1);
+});
+
+test("does not stop the executor service when other terminal processes are already running", async () => {
+	const executor = fakeExecutor((_command, onData) => onData("exit", "0"));
+	executor.listProcesses = async () => [{ id: "user-terminal" }];
+	vi.stubGlobal("Executor", executor);
+	const tool = createTerminalBashTool(workspace("file:///data/user/0/com.foxdebug.acode/files/public"))!;
+	await tool.execute("bash-shared", { command: "true" });
+	expect(executor.stopped).toEqual(["process-1"]);
+	expect(executor.stoppedService).toBe(0);
 });
 
 test("requires separate shell approval even in allow-edits mode", async () => {
@@ -125,12 +146,21 @@ function workspace(rootUri: string): AcodeWorkspace {
 }
 
 function fakeExecutor(run?: (command: string, onData: (type: string, data: string) => void) => void) {
-	return {
+	const executor = {
+		stopped: [] as string[],
+		stoppedService: 0,
 		start: async (command: string, onData: (type: string, data: string) => void, alpine?: boolean) => {
 			expect(alpine).toBe(true);
 			queueMicrotask(() => run?.(command, onData));
 			return "process-1";
 		},
-		stop: async () => undefined,
+		stop: async (uuid: string) => {
+			executor.stopped.push(uuid);
+		},
+		listProcesses: async () => [] as Array<{ id?: string }>,
+		stopService: async () => {
+			executor.stoppedService += 1;
+		},
 	};
+	return executor;
 }
