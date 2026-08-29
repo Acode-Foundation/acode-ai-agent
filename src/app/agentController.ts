@@ -46,6 +46,8 @@ export class AgentController {
 	#activeId?: string;
 	#uiUnsubscribers: Array<() => void> = [];
 	#hostUnsubscribers: Array<() => void> = [];
+	#workspaceSelection: Promise<void> = Promise.resolve();
+	#chatSelection: Promise<void> = Promise.resolve();
 	#authAbort?: AbortController;
 	#authPrompt?: { resolve(value: string): void; reject(error: Error): void };
 	#state: PublicAgentState;
@@ -306,12 +308,26 @@ export class AgentController {
 		return await this.#activeSession()?.abort() ?? [];
 	}
 
-	async newConversation(): Promise<void> {
-		if (!this.#state.workspace) throw new Error("Open a project folder before starting the agent.");
-		await this.#openChat(createChatId(), this.#state.workspace);
+	async newConversation(workspaceId?: string): Promise<void> {
+		const workspace = workspaceId
+			? this.workspaces.find((item) => item.id === workspaceId)
+			: this.#state.workspace;
+		if (!workspace) throw new Error("Open a project folder before starting the agent.");
+		await this.#openChat(createChatId(), workspace);
 	}
 
-	async selectChat(chatId: string): Promise<void> {
+	async refreshWorkspaces(): Promise<void> {
+		await this.#syncWorkspaces();
+	}
+
+	selectChat(chatId: string): Promise<void> {
+		const select = () => this.#selectChat(chatId);
+		const pending = this.#chatSelection.then(select, select);
+		this.#chatSelection = pending.catch(() => undefined);
+		return pending;
+	}
+
+	async #selectChat(chatId: string): Promise<void> {
 		await this.#sessionStore.hydrate();
 		const meta = this.#sessionStore.list().find((item) => item.id === chatId);
 		const workspaceId = this.#sessions.get(chatId)?.workspace.info.id ?? meta?.workspaceId ?? this.#state.workspace?.id;
@@ -345,7 +361,14 @@ export class AgentController {
 		this.#emit();
 	}
 
-	async selectWorkspace(workspaceIdOrUri: string): Promise<void> {
+	selectWorkspace(workspaceIdOrUri: string): Promise<void> {
+		const select = () => this.#selectWorkspace(workspaceIdOrUri);
+		const pending = this.#workspaceSelection.then(select, select);
+		this.#workspaceSelection = pending.catch(() => undefined);
+		return pending;
+	}
+
+	async #selectWorkspace(workspaceIdOrUri: string): Promise<void> {
 		await this.#sessionStore.hydrate();
 		const info = this.workspaces.find((workspace) => workspace.id === workspaceIdOrUri || workspace.rootUri === workspaceIdOrUri);
 		if (!info) throw new Error("The selected Acode workspace is no longer open.");

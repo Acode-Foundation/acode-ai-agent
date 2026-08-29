@@ -16,6 +16,9 @@ A mobile-first coding agent that runs directly inside an Acode editor page. It u
 - Project `AGENTS.md`, active-file, and selection context
 - Workspace-scoped conversation persistence with key-shaped text redaction
 - Acode plugin-scoped secure storage for provider credentials
+- Native Acode sidebar app for one-tap sessions in any open project
+- Collapsible, project-filtered session management with running/current state, search, resume, deletion, and separate editor tabs
+- Random starter projects created with Acode's filesystem API in Home (`file:///…/files/alpine/home`) and added through `openFolder`
 
 The agent keeps shell support optional. Core file workflows have no shell dependency; `bash` is registered only when the active folder is backed by Acode Terminal's own filesystem and the Executor bridge is available.
 

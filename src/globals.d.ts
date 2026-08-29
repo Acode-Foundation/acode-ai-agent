@@ -3,7 +3,6 @@ declare module "*.css" {
 	export default content;
 }
 
-
 interface SDcardDocumentFile {
 	uri: string;
 	url?: string;
@@ -26,4 +25,14 @@ interface SDcard {
 	): void;
 }
 
-declare const sdcard: SDcard | undefined;
+interface SystemPlugin {
+	getFilesDir(success: (dir: string) => void, error?: (err: unknown) => void): void;
+}
+
+interface BuildInfoPlugin {
+	packageName?: string;
+}
+
+declare var sdcard: SDcard | undefined;
+declare var system: SystemPlugin | undefined;
+declare var BuildInfo: BuildInfoPlugin | undefined;

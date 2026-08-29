@@ -24,9 +24,12 @@ import { modelAcceptsImages } from "../platform/promptImages";
 import { draftFromParts, promptTextFromDraft, type ComposerDraft } from "./composerDraft";
 import { parseSlashCommand } from "../core/slashCommands";
 
-type Props = { controller: AgentController };
+type Props = {
+	controller: AgentController;
+	onActiveChatChange?: (chatId: string) => void;
+};
 
-export function App({ controller }: Props) {
+export function App({ controller, onActiveChatChange }: Props) {
 	const [state, setState] = useState<PublicAgentState>(controller.state);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [piSettingsOpen, setPiSettingsOpen] = useState(false);
@@ -37,8 +40,16 @@ export function App({ controller }: Props) {
 	const [toast, setToast] = useState("");
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const composerRef = useRef<ComposerHandle>(null);
+	const bindingReady = useRef(false);
 
 	useEffect(() => controller.changes.subscribe(setState), [controller]);
+	useEffect(() => {
+		if (!bindingReady.current) {
+			bindingReady.current = true;
+			return;
+		}
+		if (state.activeChatId) onActiveChatChange?.(state.activeChatId);
+	}, [state.activeChatId, onActiveChatChange]);
 	const running = state.status === "running";
 	const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}`;
 	const { showLatest, jumpToLatest, pin, captureThread } = useChatScroll(scrollRef, followKey);
