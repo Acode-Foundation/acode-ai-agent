@@ -19,13 +19,14 @@ marked.use({
 	gfm: true,
 	breaks: true,
 	renderer: {
-		code({ text, lang, raw }: Tokens.Code): string {
+		code({ text, lang, raw, codeBlockStyle }: Tokens.Code): string {
 			if (!text.trim()) return "";
 			const info = fenceInfo(raw, lang);
 			const langAttr = info.lang ? ` data-lang="${escapeHtml(info.lang)}"` : "";
+			const pending = codeBlockStyle !== "indented" && !isClosedFence(raw) ? " data-pending" : "";
 			const title = info.title || info.lang || "code";
 			return [
-				`<figure class="md-code is-wrap"${langAttr}>`,
+				`<figure class="md-code is-wrap"${langAttr}${pending}>`,
 				`<figcaption class="md-code-head">`,
 				`<span class="md-code-lang">${escapeHtml(title)}</span>`,
 				`<span class="md-code-actions">`,
@@ -94,7 +95,7 @@ function sanitize(html: string): string {
 	if (typeof window === "undefined") return html;
 	return DOMPurify.sanitize(html, {
 		ADD_TAGS: ["figure", "figcaption", "aside", "input"],
-		ADD_ATTR: ["data-lang", "data-path", "data-kind", "data-copy", "data-wrap", "target", "rel", "disabled", "checked", "type"],
+		ADD_ATTR: ["data-lang", "data-path", "data-kind", "data-copy", "data-wrap", "data-pending", "target", "rel", "disabled", "checked", "type"],
 	});
 }
 
@@ -105,6 +106,20 @@ function referenceChip(kind: "web" | "file", href: string, label: string, extraA
 		`<span class="md-ref-label">${label}</span>`,
 		`</a>`,
 	].join("");
+}
+
+/** True when `raw` includes a CommonMark closing fence, not an in-progress stream. */
+function isClosedFence(raw: string): boolean {
+	const open = /^( {0,3})([`~]{3,})/.exec(raw);
+	if (!open) return true;
+	const marker = open[2]![0]!;
+	const min = open[2]!.length;
+	const lines = raw.split(/\r?\n/);
+	let last = lines[lines.length - 1] ?? "";
+	if (last === "" && lines.length > 1) last = lines[lines.length - 2] ?? "";
+	if (last === lines[0]) return false;
+	const close = /^( {0,3})([`~]+)\s*$/.exec(last);
+	return Boolean(close && close[2]![0] === marker && close[2]!.length >= min);
 }
 
 function fenceInfo(raw: string, lang: string | undefined): { lang: string; title: string } {

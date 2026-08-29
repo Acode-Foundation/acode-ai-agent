@@ -18,9 +18,17 @@ export function getCodeHighlight(): CodeHighlightApi | null {
 	}
 }
 
+const highlightCache = new Map<string, Promise<string | null>>();
+const HIGHLIGHT_CACHE_MAX = 64;
+
+export function clearCodeHighlightCache(): void {
+	highlightCache.clear();
+}
+
 /**
  * Highlight fenced markdown blocks in place when the host API exists.
  * Leaves escaped source untouched if the API is missing or highlighting fails.
+ * Unclosed fences (`data-pending`) stay plain until the closing fence arrives.
  */
 export async function highlightCodeBlocks(
 	root: ParentNode,
@@ -35,11 +43,13 @@ export async function highlightCodeBlocks(
 	await Promise.all(
 		blocks.map(async (code) => {
 			if (code.dataset.cmHighlighted === "1") return;
-			const language = code.closest(".md-code")?.getAttribute("data-lang") ?? "";
+			const block = code.closest(".md-code");
+			if (block?.hasAttribute("data-pending")) return;
+			const language = block?.getAttribute("data-lang") ?? "";
 			const source = code.textContent ?? "";
 			if (!source.trim()) return;
 			try {
-				const html = await api.highlightCodeBlock(source, language || undefined);
+				const html = await cachedHighlight(api, source, language);
 				if (options.cancelled?.() || !code.isConnected) return;
 				if (!html) return;
 				const highlightClass = api.HIGHLIGHT_CLASS || "cm-highlighted";
@@ -52,6 +62,22 @@ export async function highlightCodeBlocks(
 			}
 		}),
 	);
+}
+
+function cachedHighlight(api: CodeHighlightApi, source: string, language: string): Promise<string | null> {
+	const key = `${language}\0${source}`;
+	const existing = highlightCache.get(key);
+	if (existing) return existing;
+	const pending = api.highlightCodeBlock(source, language || undefined).then(
+		(html) => html || null,
+		() => null,
+	);
+	highlightCache.set(key, pending);
+	if (highlightCache.size > HIGHLIGHT_CACHE_MAX) {
+		const first = highlightCache.keys().next().value;
+		if (first !== undefined && first !== key) highlightCache.delete(first);
+	}
+	return pending;
 }
 
 function applyHostStyles(api: CodeHighlightApi, root: ParentNode): void {

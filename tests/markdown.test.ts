@@ -90,3 +90,21 @@ test("escapes fenced code", () => {
 	expect(html).toMatch(/&lt;div class=&quot;x&quot;&gt;&amp;&lt;\/div&gt;/);
 	expect(html).not.toMatch(/<div class="x">/);
 });
+
+test("marks unclosed fences as pending and leaves closed fences complete", () => {
+	const open = renderMarkdown("```ts\nconst x = 1;");
+	expect(open).toMatch(/data-pending/);
+	expect(open).toMatch(/const x = 1;/);
+
+	const closed = renderMarkdown("```ts\nconst x = 1;\n```");
+	expect(closed).not.toMatch(/data-pending/);
+	expect(closed).toMatch(/data-lang="ts"/);
+});
+
+test("marks only the trailing unclosed fence as pending", () => {
+	const html = renderMarkdown("```ts\nconst a = 1;\n```\n\n```js\nconst b = 2;");
+	expect(html.match(/data-lang="ts"/g)).toHaveLength(1);
+	expect(html.match(/data-lang="js"/g)).toHaveLength(1);
+	expect(html.match(/data-pending/g)).toHaveLength(1);
+	expect(html).toContain('data-lang="js" data-pending');
+});
