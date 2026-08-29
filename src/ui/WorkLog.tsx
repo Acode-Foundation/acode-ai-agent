@@ -1,10 +1,12 @@
-import { ChevronDown, ChevronRight, ExternalLink, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, SquareTerminal, Wrench } from "lucide-preact";
+import { Bot, ChevronDown, ChevronRight, ExternalLink, Eye, File, Folder, FolderOpen, Globe, LoaderCircle, Pencil, Search, Sparkles, SquareTerminal, Wrench } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Collapse, RotateIcon } from "./Collapse";
 import { Markdown } from "./markdown";
 import { ErrorNotice } from "./ErrorNotice";
 import type { WorkspaceInfo } from "../core/types";
+import { parseSubagentRunId } from "../subagents/format";
+import type { SubagentRunView } from "../subagents/types";
 import { openCustomTab } from "../platform/authTab";
 import { openWorkspaceFile } from "../platform/editorNavigation";
 import { loadDiffViewRuntime } from "../platform/pluginAssets";
@@ -14,7 +16,17 @@ import { formatWorkDuration, groupWorkEntries, parseDirListing, parseToolFileRes
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
 const workRowOpen = new Map<string, boolean>();
 
-export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: WorkspaceInfo }) {
+export function WorkLog({
+	turn,
+	workspace,
+	runs,
+	onOpenSubagent,
+}: {
+	turn: ChatTurn;
+	workspace?: WorkspaceInfo;
+	runs?: SubagentRunView[];
+	onOpenSubagent?: (id: string) => void;
+}) {
 	const [expanded, setExpanded] = useState(false);
 	useEffect(() => {
 		if (turn.streaming) setExpanded(false);
@@ -28,8 +40,8 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
 		<div class={turn.streaming ? "work-stream" : "work-list"}>
 			{groups.map((group, index) => (
 				group.kind === "content"
-					? <WorkContent key={group.entry.id} turnId={turn.id} entry={group.entry} workspace={workspace} />
-					: <WorkBurst key={`burst-${group.entries[0]?.id ?? index}`} turnId={turn.id} entries={group.entries} workspace={workspace} live={turn.streaming} />
+					? <WorkContent key={group.entry.id} turnId={turn.id} entry={group.entry} workspace={workspace} runs={runs} onOpenSubagent={onOpenSubagent} />
+					: <WorkBurst key={`burst-${group.entries[0]?.id ?? index}`} turnId={turn.id} entries={group.entries} workspace={workspace} live={turn.streaming} runs={runs} onOpenSubagent={onOpenSubagent} />
 			))}
 		</div>
 	);
@@ -70,7 +82,7 @@ export function WorkingIndicator({ startedAt }: { startedAt?: number }) {
 	);
 }
 
-function WorkBurst({ turnId, entries, workspace, live }: { turnId: string; entries: WorkEntry[]; workspace?: WorkspaceInfo; live?: boolean }) {
+function WorkBurst({ turnId, entries, workspace, live, runs, onOpenSubagent }: { turnId: string; entries: WorkEntry[]; workspace?: WorkspaceInfo; live?: boolean; runs?: SubagentRunView[]; onOpenSubagent?: (id: string) => void }) {
 	const [showPrevious, setShowPrevious] = useState(false);
 	const { featured, grouped } = splitWorkBurst(entries, Boolean(live));
 	if (!featured.length) return null;
@@ -78,11 +90,11 @@ function WorkBurst({ turnId, entries, workspace, live }: { turnId: string; entri
 		<div class="work-burst">
 			<Collapse open={showPrevious}>
 				{grouped.map((entry) => (
-					<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
+					<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} runs={runs} onOpenSubagent={onOpenSubagent} />
 				))}
 			</Collapse>
 			{featured.map((entry) => (
-				<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
+				<WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} runs={runs} onOpenSubagent={onOpenSubagent} />
 			))}
 			{grouped.length > 0 && (
 				<button type="button" class="work-more" aria-expanded={showPrevious} onClick={() => setShowPrevious((value) => !value)}>
@@ -96,12 +108,12 @@ function WorkBurst({ turnId, entries, workspace, live }: { turnId: string; entri
 	);
 }
 
-function WorkContent({ turnId, entry, workspace }: { turnId: string; entry: WorkEntry; workspace?: WorkspaceInfo }) {
+function WorkContent({ turnId, entry, workspace, runs, onOpenSubagent }: { turnId: string; entry: WorkEntry; workspace?: WorkspaceInfo; runs?: SubagentRunView[]; onOpenSubagent?: (id: string) => void }) {
 	if (entry.type === "note") return <div class="work-note"><Markdown text={entry.output ?? ""} workspace={workspace} /></div>;
-	return <WorkRow turnId={turnId} entry={entry} workspace={workspace} />;
+	return <WorkRow turnId={turnId} entry={entry} workspace={workspace} runs={runs} onOpenSubagent={onOpenSubagent} />;
 }
 
-function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntry; workspace?: WorkspaceInfo }) {
+function WorkRow({ turnId, entry, workspace, runs, onOpenSubagent }: { turnId: string; entry: WorkEntry; workspace?: WorkspaceInfo; runs?: SubagentRunView[]; onOpenSubagent?: (id: string) => void }) {
 	const key = `${turnId}:${entry.id}`;
 	const [open, setOpen] = useState(() => workRowOpen.get(key) ?? entry.status === "error");
 	useEffect(() => {
@@ -128,6 +140,22 @@ function WorkRow({ turnId, entry, workspace }: { turnId: string; entry: WorkEntr
 			{entry.status === "running" ? <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" /> : tail}
 		</>
 	);
+	if (entry.name === "subagent" && onOpenSubagent) {
+		const runId = parseSubagentRunId(entry.output);
+		const run = runId ? runs?.find((item) => item.id === runId) : undefined;
+		if (runId) {
+			return (
+				<div class={`work-row ${entry.status}`}>
+					<button type="button" class="work-row-toggle work-file-action" onClick={() => onOpenSubagent(runId)}>
+						{summary(<ExternalLink class="work-tail-icon" size={12} strokeWidth={2} aria-hidden="true" />)}
+					</button>
+					{run && (run.status === "running" || run.status === "queued") && run.lastTool && (
+						<div class="work-io"><span class="work-detail">{run.lastTool}</span></div>
+					)}
+				</div>
+			);
+		}
+	}
 	if (directFileAction && path) {
 		return (
 			<div class={`work-row ${entry.status}`}>
@@ -362,6 +390,8 @@ function kindIcon(kind: ToolKind) {
 			return <SquareTerminal {...props} />;
 		case "think":
 			return <Sparkles {...props} />;
+		case "delegate":
+			return <Bot {...props} />;
 		default:
 			return <Wrench {...props} />;
 	}

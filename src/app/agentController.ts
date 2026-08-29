@@ -26,6 +26,7 @@ import { createSessionStore, type SessionStore } from "../platform/sessionStore"
 import { createChatId, messagePlainText } from "../session/sessionText";
 import { ProviderRegistry } from "../providers/providerRegistry";
 import { AgentSession } from "../session/agentSession";
+import type { SubagentInspect } from "../subagents";
 import { pickGlobalSkillsFolder } from "../session/workspaceResources";
 import { sanitizeModelId } from "../providers/customModels";
 import { clampThinkingLevel } from "../providers/thinkingLevels";
@@ -68,6 +69,7 @@ export class AgentController {
 			contextTokens: 0,
 			chats: [],
 			commands: BUILT_IN_SLASH_COMMANDS,
+			subagentRuns: [],
 		};
 		this.settings.subscribe((settings) => {
 			this.#state.settings = settings;
@@ -92,6 +94,7 @@ export class AgentController {
 			queued: [...this.#state.queued],
 			models: [...this.#state.models],
 			commands: [...this.#state.commands],
+			subagentRuns: [...this.#state.subagentRuns],
 			settings: { ...this.#state.settings },
 		};
 	}
@@ -236,6 +239,9 @@ export class AgentController {
 				await this.importConversation();
 				return {};
 			case "hotkeys": return { panel: hotkeysPanel() };
+			case "subagents": return { action: "subagents" };
+			case "subagents-list":
+				return { panel: { title: "Subagents", description: "Roles the parent can delegate to", body: session.listSubagents() } };
 			default: throw new Error(`Command /${command.name} is not available in Acode.`);
 		}
 	}
@@ -762,6 +768,7 @@ export class AgentController {
 			usage: snapshot?.usage ?? { tokens: 0, cost: 0 },
 			contextTokens: snapshot?.contextTokens ?? 0,
 			commands: snapshot?.commands ?? BUILT_IN_SLASH_COMMANDS,
+			subagentRuns: snapshot?.subagentRuns ?? [],
 			model: session?.model ?? this.#state.model,
 			workspace: session?.workspace.info ?? this.#state.workspace,
 		};
@@ -791,6 +798,24 @@ export class AgentController {
 		this.#emit();
 	}
 
+	inspectSubagent(id: string): SubagentInspect {
+		const session = this.#activeSession();
+		if (!session) throw new Error("Open a project folder first.");
+		return session.inspectSubagent(id);
+	}
+
+	async stopSubagent(id: string): Promise<void> {
+		const session = this.#activeSession();
+		if (!session) throw new Error("Open a project folder first.");
+		await session.stopSubagent(id);
+	}
+
+	async steerSubagent(id: string, message: string): Promise<void> {
+		const session = this.#activeSession();
+		if (!session) throw new Error("Open a project folder first.");
+		await session.steerSubagent(id, message);
+	}
+
 	async #disposeAllSessions(): Promise<void> {
 		this.#unbindUi();
 		for (const unsubscribe of this.#sessionListeners.values()) unsubscribe();
@@ -802,7 +827,7 @@ export class AgentController {
 }
 
 export type SlashCommandExecution = {
-	action?: "models" | "settings" | "pi-settings" | "sessions" | "tree" | "fork";
+	action?: "models" | "settings" | "pi-settings" | "sessions" | "tree" | "fork" | "subagents";
 	message?: string;
 	copyText?: string;
 	panel?: CommandPanelData;

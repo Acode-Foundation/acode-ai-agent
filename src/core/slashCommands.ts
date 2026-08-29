@@ -33,6 +33,8 @@ export const BUILT_IN_SLASH_COMMANDS: SlashCommand[] = [
 	{ name: "hotkeys", description: "Show composer keyboard shortcuts", source: "action" },
 	{ name: "login", description: "Manage provider credentials", source: "action" },
 	{ name: "logout", description: "Manage provider credentials", source: "action" },
+	{ name: "subagents", description: "Inspect running and recent subagents", source: "action" },
+	{ name: "subagents-list", description: "List available subagent roles", source: "action" },
 ];
 
 export function resourceSlashCommands(resources: { skills?: Skill[]; promptTemplates?: PromptTemplate[] }, options: { enableSkillCommands?: boolean } = {}): SlashCommand[] {

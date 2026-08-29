@@ -16,6 +16,7 @@ import { Sheet } from "./Sheet";
 import { TreeSheet } from "./TreeSheet";
 import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
+import { FleetBar } from "./FleetBar";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
 import { openCustomTab } from "../platform/authTab";
 import { previewImageInAcode } from "../platform/deviceImage";
@@ -38,6 +39,8 @@ export function App({ controller, onActiveChatChange }: Props) {
 	const [commandPanel, setCommandPanel] = useState<CommandPanelData | null>(null);
 	const [treeMode, setTreeMode] = useState<"tree" | "fork" | null>(null);
 	const [preview, setPreview] = useState<{ name: string; content: string; encoding?: "text" | "base64" } | null>(null);
+	const [fleetOpen, setFleetOpen] = useState(false);
+	const [fleetFocus, setFleetFocus] = useState<string | undefined>();
 	const [toast, setToast] = useState("");
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const composerRef = useRef<ComposerHandle>(null);
@@ -75,6 +78,10 @@ export function App({ controller, onActiveChatChange }: Props) {
 				if (result.action === "pi-settings") setPiSettingsOpen(true);
 				if (result.action === "sessions") setChatsOpen(true);
 				if (result.action === "tree" || result.action === "fork") setTreeMode(result.action);
+				if (result.action === "subagents") {
+					setFleetFocus(undefined);
+					setFleetOpen(true);
+				}
 				if (result.panel) setCommandPanel(result.panel);
 				if (result.message) setToast(result.message);
 				return;
@@ -139,7 +146,15 @@ export function App({ controller, onActiveChatChange }: Props) {
 								{turn.notice && (
 									<CompactNotice kind={turn.notice.kind} text={turn.notice.text} workspace={state.workspace} />
 								)}
-								<WorkLog turn={turn} workspace={state.workspace} />
+								<WorkLog
+									turn={turn}
+									workspace={state.workspace}
+									runs={state.subagentRuns}
+									onOpenSubagent={(id) => {
+										setFleetFocus(id);
+										setFleetOpen(true);
+									}}
+								/>
 								{turn.answer && (
 									<article class={`bubble assistant${turn.streaming ? " streaming" : ""}`}>
 										<Markdown text={turn.answer} workspace={state.workspace} />
@@ -165,6 +180,22 @@ export function App({ controller, onActiveChatChange }: Props) {
 			{state.approval && (
 				<ApprovalPanel approval={state.approval} onApprove={(decision) => controller.approve(decision)} />
 			)}
+
+			<FleetBar
+				runs={state.subagentRuns}
+				controller={controller}
+				open={fleetOpen}
+				focusId={fleetFocus}
+				onOpen={(id) => {
+					setFleetFocus(id);
+					setFleetOpen(true);
+				}}
+				onClose={() => {
+					setFleetOpen(false);
+					setFleetFocus(undefined);
+				}}
+				onToast={setToast}
+			/>
 
 			<Composer
 				ref={composerRef}
@@ -563,6 +594,14 @@ function PiSettingsSheet({
 						<SettingsSelect label="Follow-up mode" hint="How queued follow-ups are delivered" value={settings.followUpMode} options={[{ value: "one-at-a-time", label: "One at a time" }, { value: "all", label: "All" }]} onChange={(value) => update({ followUpMode: value as typeof settings.followUpMode })} />
 						<SettingsToggle label="Hide thinking" hint="Hide thinking blocks in assistant responses" checked={settings.hideThinkingBlock} onChange={(value) => update({ hideThinkingBlock: value })} />
 						<SettingsSelect label="Autocomplete max items" hint="Visible items in the @ and / picker" value={String(settings.autocompleteMaxVisible)} options={[7, 10, 15, 20].map((value) => ({ value: String(value), label: String(value) }))} onChange={(value) => update({ autocompleteMaxVisible: Number(value) })} />
+						<SettingsSelect label="Subagent concurrency" hint="How many children may run at once" value={String(settings.subagentMaxConcurrent)} options={[1, 2, 3, 4].map((value) => ({ value: String(value), label: String(value) }))} onChange={(value) => update({ subagentMaxConcurrent: Number(value) })} />
+						<SettingsSelect label="Subagent timeout" hint="Deadline for each child run" value={String(settings.subagentTimeoutMs)} options={[
+							{ value: "180000", label: "3 min" },
+							{ value: "480000", label: "8 min" },
+							{ value: "720000", label: "12 min" },
+							{ value: "1200000", label: "20 min" },
+						]} onChange={(value) => update({ subagentTimeoutMs: Number(value) })} />
+						<SettingsToggle label="Background subagents" hint="Return a receipt and keep the parent working. Off waits for the child." checked={settings.subagentDefaultAsync} onChange={(value) => update({ subagentDefaultAsync: value })} />
 
 						<section class="settings-section">
 							<header><b>Skills</b><small>Project skills are detected automatically from .pi/skills and .agents/skills</small></header>

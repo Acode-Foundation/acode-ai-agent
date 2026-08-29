@@ -1,5 +1,6 @@
 import type { AgentMessage, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, Transport } from "@earendil-works/pi-ai";
+import type { SubagentRunView } from "../subagents/types";
 import type { PermissionMode } from "./schema";
 import type { SlashCommand } from "./slashCommands";
 
@@ -34,6 +35,9 @@ export type AgentSettings = {
 	globalSkillRoots: string[];
 	maxHistoryMessages: number;
 	maxWalkFiles: number;
+	subagentMaxConcurrent: number;
+	subagentTimeoutMs: number;
+	subagentDefaultAsync: boolean;
 	activeWorkspaceId: string;
 	activeChatId: string;
 	customModels: Record<string, string[]>;
@@ -118,6 +122,7 @@ export type PublicAgentState = {
 	error?: string;
 	chats: ChatSummary[];
 	commands: SlashCommand[];
+	subagentRuns: SubagentRunView[];
 	activeChatId?: string;
 	authFlow?: {
 		providerId: ProviderId;

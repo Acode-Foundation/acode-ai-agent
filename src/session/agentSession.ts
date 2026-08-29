@@ -24,6 +24,7 @@ import { MutationGate } from "../permissions/mutationGate";
 import type { ProviderRegistry } from "../providers/providerRegistry";
 import type { SessionStore } from "../platform/sessionStore";
 import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
+import { createSubagentTool, SubagentRuntime, type SubagentInspect, type SubagentRunView } from "../subagents";
 import { createWorkspaceTools } from "../tools/createTools";
 import { createTerminalBashTool } from "../tools/bash";
 import { createWebSearchContext } from "../tools/web/context";
@@ -41,6 +42,7 @@ export type AgentSessionSnapshot = {
 	usage: { tokens: number; cost: number };
 	contextTokens: number;
 	commands: SlashCommand[];
+	subagentRuns: SubagentRunView[];
 	error?: string;
 };
 
@@ -68,6 +70,8 @@ export class AgentSession {
 	#running = false;
 	#compacting = false;
 	#compactPromise?: Promise<void>;
+	#subagents: SubagentRuntime;
+	#subagentUnsub?: () => void;
 	#snapshot: AgentSessionSnapshot = {
 		messages: [],
 		activities: [],
@@ -77,6 +81,7 @@ export class AgentSession {
 		usage: { tokens: 0, cost: 0 },
 		contextTokens: 0,
 		commands: resourceSlashCommands({}),
+		subagentRuns: [],
 	};
 
 	constructor(options: {
@@ -97,6 +102,33 @@ export class AgentSession {
 		this.#settings = options.settings;
 		this.#store = options.store;
 		this.mutationGate = options.mutationGate;
+		this.#subagents = new SubagentRuntime({
+			workspace: this.workspace,
+			providers: this.#providers,
+			settings: this.#settings,
+			mutationGate: this.mutationGate,
+			tools: () => this.#parentTools(),
+			messages: () => this.#messages,
+			parentPrompt: () => this.#baseSystemPrompt(),
+			model: () => this.#harness?.getModel(),
+		});
+		this.#subagentUnsub = this.#subagents.changes.subscribe(() => this.#publish());
+	}
+
+	inspectSubagent(id: string): SubagentInspect {
+		return this.#subagents.inspect(id);
+	}
+
+	async stopSubagent(id: string): Promise<string> {
+		return this.#subagents.stop(id);
+	}
+
+	async steerSubagent(id: string, message: string): Promise<string> {
+		return this.#subagents.steer(id, message);
+	}
+
+	listSubagents(): string {
+		return this.#subagents.listAgents();
 	}
 
 	get snapshot(): AgentSessionSnapshot {
@@ -106,6 +138,7 @@ export class AgentSession {
 			activities: [...this.#snapshot.activities],
 			queued: [...this.#snapshot.queued],
 			commands: [...this.#snapshot.commands],
+			subagentRuns: [...this.#snapshot.subagentRuns],
 		};
 	}
 
@@ -153,6 +186,9 @@ export class AgentSession {
 			this.#runAbort.signal,
 		));
 		this.#snapshot = { ...this.#snapshot, commands: resourceSlashCommands(resources, settings) };
+		await this.#subagents.reloadCatalog().catch((error) => {
+			console.warn("AI subagent catalog could not be loaded", error);
+		});
 		await this.#refreshContext();
 		this.#publish();
 	}
@@ -168,6 +204,9 @@ export class AgentSession {
 		const resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
 		this.#resources = resources;
 		await harness.setResources(resources);
+		await this.#subagents.reloadCatalog().catch((error) => {
+			console.warn("AI subagent catalog could not be loaded", error);
+		});
 		this.#snapshot = { ...this.#snapshot, commands: resourceSlashCommands(resources, settings), error: undefined };
 		this.#publish();
 		return {
@@ -308,6 +347,7 @@ export class AgentSession {
 		this.#running = false;
 		this.#queued = [];
 		this.#settleActivities();
+		await this.#subagents.stopAll().catch(() => undefined);
 		this.#publish();
 		if (!harness) return [];
 		try {
@@ -347,11 +387,14 @@ export class AgentSession {
 
 	async dispose(): Promise<void> {
 		this.#runAbort.abort();
+		await this.#subagents.dispose().catch(() => undefined);
 		await this.#harness?.abort().catch(() => undefined);
 		await this.#harness?.waitForIdle().catch(() => undefined);
 		await this.persist().catch(() => undefined);
 		this.#unsubscribe?.();
 		this.#unsubscribe = undefined;
+		this.#subagentUnsub?.();
+		this.#subagentUnsub = undefined;
 		this.mutationGate.dispose();
 		this.changes.clear();
 		this.#harness = undefined;
@@ -467,6 +510,7 @@ export class AgentSession {
 		this.#running = true;
 		this.#activities.clear();
 		this.#streaming = undefined;
+		this.#subagents.beginParentRun();
 		this.#snapshot = { ...this.#snapshot, error: undefined };
 	}
 
@@ -492,12 +536,17 @@ export class AgentSession {
 			usage: this.#snapshot.usage,
 			contextTokens: this.#snapshot.contextTokens,
 			commands: this.#snapshot.commands,
+			subagentRuns: this.#subagents.views(),
 			error: overrides?.error ?? this.#snapshot.error,
 		};
 		this.changes.emit(this.snapshot);
 	}
 
 	#tools(): AgentTool[] {
+		return [...this.#parentTools(), createSubagentTool(this.#subagents)];
+	}
+
+	#parentTools(): AgentTool[] {
 		const bash = createTerminalBashTool(this.workspace);
 		return [
 			...createWorkspaceTools(this.workspace, {
@@ -540,6 +589,12 @@ export class AgentSession {
 	}
 
 	async #systemPrompt(): Promise<string> {
+		const base = await this.#baseSystemPrompt();
+		const delegation = this.#subagents.parentPromptBlock();
+		return delegation ? `${base}\n\n${delegation}` : base;
+	}
+
+	async #baseSystemPrompt(): Promise<string> {
 		try {
 			const prompt = await buildSystemPrompt(this.workspace, this.#settings(), this.#extensions);
 			const skills = this.#harness?.getResources().skills ?? [];

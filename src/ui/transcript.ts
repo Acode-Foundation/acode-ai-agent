@@ -3,7 +3,7 @@ import type { ToolActivity } from "../core/types";
 import { userPartsFromMessage, type UserPart } from "./composerDraft";
 
 export type WorkStatus = "running" | "done" | "error";
-export type ToolKind = "read" | "change" | "search" | "web" | "list" | "terminal" | "think" | "other";
+export type ToolKind = "read" | "change" | "search" | "web" | "list" | "terminal" | "think" | "delegate" | "other";
 
 export type WorkEntry = {
 	id: string;
@@ -143,6 +143,12 @@ export function presentTool(name: string, args: Record<string, unknown> = {}, ou
 			return { kind: "terminal", label: "Ran command", detail: inlinePreview(firstString(args, ["command", "cmd"])) };
 		case "thinking":
 			return { kind: "think", label: "Reasoned", detail: undefined };
+		case "subagent":
+			return {
+				kind: "delegate",
+				label: "Subagent",
+				detail: firstString(args, ["agent"]) ?? firstString(args, ["action"]) ?? query ?? subagentDetail(output),
+			};
 		default:
 			return { kind: "other", label: humanize(name) || "Used tool", detail: path ?? query };
 	}
@@ -444,6 +450,13 @@ function firstString(args: Record<string, unknown>, keys: string[]): string | un
 		if (typeof value === "string" && value.trim()) return value.trim();
 	}
 	return undefined;
+}
+
+function subagentDetail(output?: string): string | undefined {
+	if (!output) return undefined;
+	return /^Started (\S+)/.exec(output)?.[1]
+		?? /^agent: (\S+)/m.exec(output)?.[1]
+		?? inlinePreview(output.split("\n")[0]);
 }
 
 function inlinePreview(value: string | undefined): string | undefined {

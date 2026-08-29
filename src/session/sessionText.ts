@@ -63,6 +63,9 @@ export function messagePlainText(message: AgentMessage): string {
 			? message.content
 			: message.content.filter((part) => part.type === "text").map((part) => part.text).join("");
 	}
+	if (message.role === "assistant" && Array.isArray(message.content)) {
+		return message.content.filter((part) => part.type === "text").map((part) => part.text).join("");
+	}
 	if ("summary" in message && typeof message.summary === "string") return message.summary;
 	return "";
 }
