@@ -149,11 +149,15 @@ export class ProviderRegistry {
 	}
 
 	getModels(providerId: ProviderId): Model<any>[] {
-		const catalog = mergeCatalogOverlay(
+		let catalog = mergeCatalogOverlay(
 			providerId,
 			[...this.models.getModels(providerId)].filter((model) => model.input.includes("text")),
 		).sort((left, right) => left.name.localeCompare(right.name));
 		const available = this.#availableModelIds.get(providerId);
+		if (providerId === "openai-codex" && available?.size) {
+			const known = new Map(catalog.map((model) => [model.id, model]));
+			catalog = [...available].map((id) => known.get(id) ?? createCustomModel(providerId, id));
+		}
 		const endpoint = this.customEndpoint(providerId);
 		const template = endpoint ? customEndpointModel(endpoint, endpoint.models[0] ?? "custom") : undefined;
 		return mergeCustomModels(catalog, providerId, this.#customModels()[providerId] ?? [], template)
@@ -162,9 +166,13 @@ export class ProviderRegistry {
 	}
 
 	/** Cache pi's credential-specific model policy for the synchronous mobile picker. */
-	async refreshModelAvailability(providerId: ProviderId): Promise<Model<any>[]> {
+	async refreshModelAvailability(providerId: ProviderId, force = false): Promise<Model<any>[]> {
 		let credential = await this.#credentials.read(providerId);
-		if (providerId === "openai-codex" && credential?.type === "oauth" && !Array.isArray(credential.availableModelIds)) {
+		if (providerId === "openai-codex" && credential?.type === "oauth" && (
+			force || !Array.isArray(credential.availableModelIds) || !credential.availableModelIds.length
+			|| typeof credential.availableModelsFetchedAt !== "number"
+			|| Date.now() - credential.availableModelsFetchedAt > 60 * 60 * 1000
+		)) {
 			try {
 				credential = await this.#credentials.modify(providerId, async (current) => current?.type === "oauth"
 					? refreshPortableCodexModels(current)
@@ -172,6 +180,16 @@ export class ProviderRegistry {
 			} catch (error) {
 				console.warn("Codex account model availability could not be refreshed", error);
 			}
+		}
+		if (providerId === "openai-codex") {
+			// Discovery is not an entitlement check. Empty/unavailable metadata must
+			// not erase Pi's built-in catalog or a user's existing connection.
+			const ids = credential?.type === "oauth" && Array.isArray(credential.availableModelIds)
+				? credential.availableModelIds.filter((id): id is string => typeof id === "string" && sanitizeModelId(id) === id)
+				: [];
+			if (ids.length) this.#availableModelIds.set(providerId, new Set(ids));
+			else this.#availableModelIds.delete(providerId);
+			return this.getModels(providerId);
 		}
 		const provider = this.models.getProvider(providerId);
 		if (credential?.type !== "oauth" || !provider?.filterModels) {
@@ -257,7 +275,7 @@ function portableProviders(): Provider[] {
 	return [
 		{ ...openrouter, auth: { ...openrouter.auth, oauth: portableOpenRouterOAuth } },
 		openaiProvider(),
-		{ ...codex, auth: { ...codex.auth, oauth: portableCodexOAuth }, filterModels: filterOAuthAccountModels },
+		{ ...codex, auth: { ...codex.auth, oauth: portableCodexOAuth } },
 		{ ...anthropic, auth: { ...anthropic.auth, oauth: portableAnthropicOAuth } },
 		{ ...githubCopilot, auth: { ...githubCopilot.auth, oauth: portableGitHubCopilotOAuth } },
 		googleProvider(),

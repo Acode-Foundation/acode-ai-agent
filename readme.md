@@ -14,7 +14,7 @@ If you already use Pi on a desktop, the same ideas apply here:
 - Project instructions from `AGENTS.md`
 - Import / export of Pi JSON and JSONL sessions
 
-What Pi’s desktop CLI does with a real terminal, cwd, and Node is adapted for Acode: files go through `fsOperation` (local, SAF, FTP, SFTP), `bash` exists only on Terminal-backed folders, and OAuth uses device codes instead of a localhost callback. Pi packages, tmux, and the Pi TUI are not part of this plugin.
+What Pi’s desktop CLI does with a real terminal, cwd, and Node is adapted for Acode: files go through `fsOperation` (local, SAF, FTP, SFTP), `bash` exists only on Terminal-backed folders, and OAuth uses device codes or a pasted browser callback instead of running a localhost server. Pi packages, tmux, and the Pi TUI are not part of this plugin.
 
 ## Requirements
 
@@ -67,7 +67,7 @@ Pick a provider in **Provider access**. Keys and OAuth tokens go into Acode plug
 
 OpenRouter, OpenAI, Anthropic, Google Gemini, xAI, Groq, DeepSeek, Cerebras, Fireworks, Together, Moonshot / Kimi, MiniMax, Z.AI, Kimi Coding, Qwen Token Plan, Ant Ling, Xiaomi.
 
-**Subscription / device-code sign-in**
+**Subscription sign-in**
 
 | Provider | Sign-in |
 | --- | --- |
@@ -77,6 +77,8 @@ OpenRouter, OpenAI, Anthropic, Google Gemini, xAI, Groq, DeepSeek, Cerebras, Fir
 | GitHub Copilot | Copilot subscription |
 | xAI | Grok / X subscription |
 | Kimi Coding | Kimi Code |
+
+Codex offers browser sign-in and device-code sign-in. Device-code sign-in connects automatically after approval; first enable device-code authorization in ChatGPT Settings → Security. For browser sign-in, complete ChatGPT sign-in in the browser, then copy the full `http://localhost:1455/auth/callback?...` address and paste it into Acode. The localhost page may show a connection error because Acode does not run a callback server; copying its address completes the sign-in. This browser OAuth flow does not require enabling device-code authorization in ChatGPT settings.
 
 ## What it can do
 

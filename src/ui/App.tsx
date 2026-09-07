@@ -502,7 +502,17 @@ function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }
 							{authFlow && (
 								<div class={`device ${authFlow.status}`}>
 									{authFlow.userCode && <code>{authFlow.userCode}</code>}
-									<p>{authFlow.message}</p>
+									{providerId === "openai-codex" && authFlow.prompt?.type === "manual_code" ? (
+										<div class="auth-walkthrough">
+											<b>Finish connecting ChatGPT</b>
+											<ol>
+												<li>Complete sign-in in your browser.</li>
+												<li>On the final page, copy the full link from the address bar.</li>
+												<li>Return here, paste the link below, and connect.</li>
+											</ol>
+											<p>The final page may say “localhost can’t be reached”. Your sign-in is still valid; the link completes the connection.</p>
+										</div>
+									) : <p role="status">{authFlow.message}</p>}
 									{authFlow.prompt && (
 										<SubscriptionPrompt
 											prompt={authFlow.prompt}
@@ -574,11 +584,14 @@ function SubscriptionPrompt({ prompt, value, onValue, onSubmit }: {
 				type={prompt.type === "secret" ? "password" : "text"}
 				value={value}
 				placeholder={prompt.placeholder}
+				aria-label={prompt.type === "manual_code" ? "Sign-in return link or code" : prompt.message}
+				autoComplete="off"
+				spellcheck={false}
 				autoCapitalize="none"
 				autoCorrect="off"
 				onInput={(event) => onValue(event.currentTarget.value)}
 			/>
-			<button type="submit" disabled={required && !value.trim()}>Continue</button>
+			<button type="submit" disabled={required && !value.trim()}>{prompt.type === "manual_code" ? "Connect account" : "Continue"}</button>
 		</form>
 	);
 }

@@ -570,7 +570,7 @@ export class AgentController {
 		this.#authAbort?.abort();
 		const abort = new AbortController();
 		this.#authAbort = abort;
-		this.#state.authFlow = { providerId, status: "waiting", message: "Requesting a secure device code…" };
+		this.#state.authFlow = { providerId, status: "waiting", message: "Preparing secure sign-in…" };
 		this.#emit();
 		try {
 			await this.providers.models.login(providerId, "oauth", {
@@ -581,9 +581,12 @@ export class AgentController {
 				},
 			});
 			if (abort.signal.aborted) return;
-			this.#state.authFlow = { providerId, status: "connected", message: "Subscription connected securely." };
-			this.#state.error = undefined;
+			this.#state.authFlow = { providerId, status: "waiting", message: "Signed in. Loading your models…" };
+			this.#emit();
 			await this.selectProvider(providerId);
+			if (abort.signal.aborted) return;
+			this.#state.authFlow = { providerId, status: "connected", message: "Subscription connected. Choose a model to start chatting." };
+			this.#state.error = undefined;
 			this.#emit();
 		} catch (error) {
 			if (abort.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
@@ -684,7 +687,9 @@ export class AgentController {
 				status: "waiting",
 				userCode: event.userCode,
 				verificationUri: event.verificationUri,
-				message: "Open the provider page and enter this one-time code. Acode never sees your password.",
+				message: providerId === "openai-codex"
+					? "Enter this code in ChatGPT and approve. Acode will connect automatically. If approval is disabled, enable device-code authorization in ChatGPT Settings → Security, then retry."
+					: "Open the provider page and enter this one-time code. Acode never sees your password.",
 			};
 			this.#emit();
 			void openAuthTab(event.verificationUri).catch((error) => {
@@ -769,7 +774,7 @@ export class AgentController {
 	async #refreshProviderModel(providerId: ProviderId, modelId: string, force = false): Promise<void> {
 		let model: Model<any>;
 		try {
-			const available = await this.providers.refreshModelAvailability(providerId);
+			const available = await this.providers.refreshModelAvailability(providerId, force);
 			const availableModelId = available.some((entry) => entry.id === modelId)
 				? modelId
 				: available[0]?.id ?? modelId;
