@@ -74,15 +74,15 @@ export function createCustomModel(providerId: ProviderId, modelId: string, templ
 	} as unknown as Model<any>;
 }
 
-export function mergeCustomModels(catalog: Model<any>[], providerId: ProviderId, customIds: string[]): Model<any>[] {
-	const template = catalog[0];
+export function mergeCustomModels(catalog: Model<any>[], providerId: ProviderId, customIds: string[], template?: Model<any>): Model<any>[] {
+	const base = catalog[0] ?? template;
 	const seen = new Set(catalog.map((model) => model.id));
 	const extras: Model<any>[] = [];
 	for (const id of customIds) {
 		const safe = sanitizeModelId(id);
 		if (!safe || seen.has(safe)) continue;
 		seen.add(safe);
-		extras.push(createCustomModel(providerId, safe, template));
+		extras.push(createCustomModel(providerId, safe, base));
 	}
 	return [...extras, ...catalog];
 }

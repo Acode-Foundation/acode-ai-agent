@@ -10,9 +10,11 @@ export class PortableCredentialStore implements CredentialStore {
 	#ctx: Acode.PluginContext | null;
 	#memory = new Map<string, Credential>();
 	#chains = new Map<string, Promise<unknown>>();
+	#extraIds: () => readonly string[];
 
-	constructor(ctx: Acode.PluginContext | null) {
+	constructor(ctx: Acode.PluginContext | null, extraIds: () => readonly string[] = () => []) {
 		this.#ctx = ctx;
+		this.#extraIds = extraIds;
 	}
 
 	async read(providerId: string): Promise<Credential | undefined> {
@@ -27,11 +29,12 @@ export class PortableCredentialStore implements CredentialStore {
 	}
 
 	async list(): Promise<readonly CredentialInfo[]> {
-		const providerIds = [
+		const providerIds = [...new Set([
 			"openrouter", "openai", "openai-codex", "anthropic", "github-copilot", "google", "xai", "groq",
 			"deepseek", "cerebras", "fireworks", "together", "moonshotai", "minimax", "zai", "kimi-coding",
 			"qwen-token-plan", "ant-ling", "xiaomi",
-		];
+			...this.#extraIds(),
+		])];
 		const credentials = await Promise.all(providerIds.map(async (providerId) => ({
 			providerId,
 			credential: await this.read(providerId),

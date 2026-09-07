@@ -12,6 +12,7 @@ const TRANSPORTS = ["sse", "websocket", "websocket-cached", "auto"] as const sat
 export const thinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 export const customModelsSchema = z.record(z.string(), z.array(z.string().min(1).max(120))).catch({});
+export const customEndpointsSchema = z.array(z.unknown()).max(20).catch([]);
 
 export const settingsSchema = z.object({
 	providerId: z.string().min(1).catch("openrouter"),
@@ -43,6 +44,7 @@ export const settingsSchema = z.object({
 	activeWorkspaceId: z.string().catch(""),
 	activeChatId: z.string().catch(""),
 	customModels: customModelsSchema,
+	customEndpoints: customEndpointsSchema,
 }).passthrough();
 
 export const chatMetaSchema = z.object({

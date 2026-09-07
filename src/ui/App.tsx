@@ -3,7 +3,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { AgentController, CommandPanelData } from "../app/agentController";
 import { PERMISSION_MODES } from "../core/schema";
 import type { ChatSummary, MutationDecision, MutationRequest, ProviderId, PublicAgentState, WorkspaceInfo } from "../core/types";
-import { PROVIDERS } from "../providers/providerRegistry";
+import { isLoopbackUrl, isLocalUrl, probeOpenAIModels, type CustomEndpoint } from "../providers/customEndpoints";
+import { providerDescriptors } from "../providers/providerRegistry";
 import { thinkingLevelsFor } from "../providers/thinkingLevels";
 import { backActionId, useBackAction } from "./actionStack";
 import { Collapse } from "./Collapse";
@@ -407,18 +408,47 @@ function EmptyState({ hasWorkspace, onPrompt, onSettings }: { hasWorkspace: bool
 }
 
 function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }: { controller: AgentController; state: PublicAgentState; onClose: () => void; onOpenPiSettings: () => void; onToast: (message: string) => void }) {
-	const [providerId, setProviderId] = useState<ProviderId>(PROVIDERS.some((item) => item.id === state.settings.providerId) ? state.settings.providerId : PROVIDERS[0]!.id);
+	const providers = providerDescriptors(state.settings.customEndpoints);
+	const [providerId, setProviderId] = useState<ProviderId>(providers.some((item) => item.id === state.settings.providerId) ? state.settings.providerId : providers[0]!.id);
 	const [key, setKey] = useState("");
 	const [authPromptValue, setAuthPromptValue] = useState("");
 	const [connected, setConnected] = useState(false);
+	const [endpointView, setEndpointView] = useState<{ endpoint?: CustomEndpoint } | null>(null);
 	useEffect(() => { void controller.hasCredential(providerId).then(setConnected); }, [controller, providerId, state.authFlow?.status]);
-	const provider = PROVIDERS.find((item) => item.id === providerId)!;
+	const provider = providers.find((item) => item.id === providerId) ?? providers[0]!;
+	const selectedEndpoint = state.settings.customEndpoints.find((endpoint) => endpoint.id === providerId);
 	const authFlow = state.authFlow?.providerId === providerId ? state.authFlow : undefined;
 	const authPromptKey = `${providerId}:${authFlow?.prompt?.type ?? ""}:${authFlow?.prompt?.message ?? ""}`;
 	useEffect(() => setAuthPromptValue(""), [authPromptKey]);
+	useBackAction(backActionId("settings-endpoint"), () => setEndpointView(null), Boolean(endpointView));
 	return (
 		<Sheet onClose={onClose}>
-			{(close) => (
+			{(close) => endpointView ? (
+				<>
+					<header class="sheet-header with-back">
+						<button type="button" class="sheet-back" onClick={() => setEndpointView(null)} aria-label="Back">
+							<ChevronLeft size={20} strokeWidth={2} />
+						</button>
+						<h2>{endpointView.endpoint ? "Edit endpoint" : "Local endpoint"}</h2>
+						<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+					</header>
+					<EndpointForm
+						controller={controller}
+						state={state}
+						endpoint={endpointView.endpoint}
+						onSaved={(saved) => {
+							setProviderId(saved.id);
+							setEndpointView(null);
+							onToast(`${saved.name} saved`);
+						}}
+						onRemoved={() => {
+							setEndpointView(null);
+							setProviderId(providers.find((item) => item.id !== providerId)?.id ?? "openrouter");
+							onToast("Endpoint removed");
+						}}
+					/>
+				</>
+			) : (
 				<>
 				<header class="sheet-header">
 					<h2>Provider access</h2>
@@ -427,11 +457,12 @@ function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }
 
 				<label class="field-label">Provider</label>
 				<div class="provider-list">
-					{PROVIDERS.map((item) => (
+					{providers.map((item) => (
 						<button class={providerId === item.id ? "selected" : ""} type="button" key={item.id} onClick={() => setProviderId(item.id)}>
 							{item.name}
 						</button>
 					))}
+					<button type="button" onClick={() => setEndpointView({})}>Custom</button>
 				</div>
 
 				<div class="credential">
@@ -494,6 +525,11 @@ function SettingsSheet({ controller, state, onClose, onOpenPiSettings, onToast }
 						setConnected(false);
 						onToast(`${provider.name} removed`);
 					}).catch((error) => onToast(String(error)))}>Disconnect</button>}
+					{selectedEndpoint && (
+						<button class="text-button" type="button" onClick={() => setEndpointView({ endpoint: selectedEndpoint })}>
+							Edit endpoint
+						</button>
+					)}
 				</div>
 
 				<label class="toggle">
@@ -695,11 +731,13 @@ function CommandResultSheet({ panel, onClose, onToast }: { panel: CommandPanelDa
 }
 
 function ConfigSheet({ controller, state, initialView, onClose, onOpenPiSettings }: { controller: AgentController; state: PublicAgentState; initialView: "main" | "models"; onClose: () => void; onOpenPiSettings: () => void }) {
-	const [view, setView] = useState<"main" | "providers" | "models">(initialView);
+	const [view, setView] = useState<"main" | "providers" | "models" | "endpoint">(initialView);
+	const [editing, setEditing] = useState<CustomEndpoint | "new" | null>(null);
 	const [error, setError] = useState("");
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const firstView = useRef(true);
-	const provider = PROVIDERS.find((item) => item.id === state.settings.providerId);
+	const providers = providerDescriptors(state.settings.customEndpoints);
+	const provider = providers.find((item) => item.id === state.settings.providerId);
 	const effortLevels = thinkingLevelsFor(state.model);
 	const modelId = state.model?.id ?? state.settings.modelId;
 	const modelName = state.model?.name ?? "Choose model";
@@ -716,7 +754,13 @@ function ConfigSheet({ controller, state, initialView, onClose, onOpenPiSettings
 		void fadeInUp(body);
 	}, [view]);
 	const go = (next: typeof view) => setView(next);
-	useBackAction(backActionId("config-view"), () => go("main"), view !== "main");
+	const back = () => go(view === "endpoint" ? "providers" : "main");
+	useBackAction(backActionId("config-view"), back, view !== "main");
+	const openEndpoint = (value: CustomEndpoint | "new") => {
+		setError("");
+		setEditing(value);
+		go("endpoint");
+	};
 	return (
 		<Sheet class={`config${view === "main" ? "" : " picker"}`} onClose={onClose}>
 			{(close) => (
@@ -742,6 +786,26 @@ function ConfigSheet({ controller, state, initialView, onClose, onOpenPiSettings
 												setError(caught instanceof Error ? caught.message : String(caught));
 											});
 										}}
+										onAdd={() => openEndpoint("new")}
+									/>
+								</div>
+							</>
+						) : view === "endpoint" ? (
+							<>
+								<header class="sheet-header with-back">
+									<button type="button" class="sheet-back" onClick={back} aria-label="Back">
+										<ChevronLeft size={20} strokeWidth={2} />
+									</button>
+									<h2>{editing && editing !== "new" ? "Edit endpoint" : "Local endpoint"}</h2>
+									<button type="button" onClick={close} aria-label="Close"><X size={16} strokeWidth={2} /></button>
+								</header>
+								<div class="picker-body">
+									<EndpointForm
+										controller={controller}
+										state={state}
+										endpoint={editing === "new" ? undefined : editing ?? undefined}
+										onSaved={() => go("models")}
+										onRemoved={() => go("providers")}
 									/>
 								</div>
 							</>
@@ -824,12 +888,19 @@ function ConfigSheet({ controller, state, initialView, onClose, onOpenPiSettings
 	);
 }
 
-function ProviderPicker({ state, error, onPick }: { state: PublicAgentState; error: string; onPick: (providerId: ProviderId) => void }) {
+function ProviderPicker({ state, error, onPick, onAdd }: {
+	state: PublicAgentState;
+	error: string;
+	onPick: (providerId: ProviderId) => void;
+	onAdd: () => void;
+}) {
 	const [query, setQuery] = useState("");
+	const providers = providerDescriptors(state.settings.customEndpoints);
 	const filtered = useMemo(() => {
 		const needle = query.trim().toLowerCase();
-		return PROVIDERS.filter((provider) => !needle || `${provider.name} ${provider.id} ${provider.hint}`.toLowerCase().includes(needle));
-	}, [query]);
+		return providers.filter((provider) => !needle || `${provider.name} ${provider.id} ${provider.hint}`.toLowerCase().includes(needle));
+	}, [providers, query]);
+	const showCustom = !query.trim() || "custom".includes(query.trim().toLowerCase());
 	return (
 		<>
 			<input
@@ -837,7 +908,7 @@ function ProviderPicker({ state, error, onPick }: { state: PublicAgentState; err
 				autoFocus
 				type="search"
 				value={query}
-				placeholder={`Search ${PROVIDERS.length} providers`}
+				placeholder={`Search ${providers.length} providers`}
 				onInput={(event) => setQuery(event.currentTarget.value)}
 			/>
 			{error && <p class="custom-model-error">{error}</p>}
@@ -853,9 +924,141 @@ function ProviderPicker({ state, error, onPick }: { state: PublicAgentState; err
 						</button>
 					</div>
 				))}
-				{filtered.length === 0 && <p class="custom-model-hint">No providers match that search.</p>}
+				{showCustom && (
+					<div class="model-row">
+						<button type="button" onClick={onAdd}>
+							<span>
+								<b>Custom</b>
+								<code>llama.cpp, vLLM, or any /v1 endpoint</code>
+							</span>
+						</button>
+					</div>
+				)}
+				{filtered.length === 0 && !showCustom && <p class="custom-model-hint">No providers match that search.</p>}
 			</div>
 		</>
+	);
+}
+
+function EndpointForm({
+	controller,
+	state,
+	endpoint,
+	onSaved,
+	onRemoved,
+}: {
+	controller: AgentController;
+	state: PublicAgentState;
+	endpoint?: CustomEndpoint;
+	onSaved: (endpoint: CustomEndpoint) => void;
+	onRemoved: () => void;
+}) {
+	const extraIds = endpoint ? state.settings.customModels[endpoint.id] ?? [] : [];
+	const [name, setName] = useState(endpoint?.name ?? "");
+	const [baseUrl, setBaseUrl] = useState(endpoint?.baseUrl ?? "");
+	const [apiKey, setApiKey] = useState("");
+	const [models, setModels] = useState([...new Set([...(endpoint?.models ?? []), ...extraIds])].join("\n"));
+	const [busy, setBusy] = useState<"save" | "probe" | "remove" | "">("");
+	const [error, setError] = useState("");
+	const urlForHints = baseUrl.includes("://") ? baseUrl : baseUrl.trim() ? `http://${baseUrl.trim()}` : "";
+	const loopback = Boolean(urlForHints) && isLoopbackUrl(urlForHints);
+	const local = Boolean(urlForHints) && isLocalUrl(urlForHints);
+	const save = () => {
+		setBusy("save");
+		setError("");
+		void controller.saveCustomEndpoint({
+			id: endpoint?.id,
+			name,
+			baseUrl,
+			models,
+			fetchModels: true,
+			localCompat: true,
+			vision: endpoint?.vision ?? false,
+			reasoning: endpoint?.reasoning ?? false,
+		}, apiKey).then(onSaved).catch((caught) => {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		}).finally(() => setBusy(""));
+	};
+	const probe = () => {
+		setBusy("probe");
+		setError("");
+		void probeOpenAIModels(baseUrl, apiKey).then((ids) => {
+			setModels((current) => [...new Set([...current.split(/[\n,]+/).map((item) => item.trim()).filter(Boolean), ...ids])].join("\n"));
+		}).catch((caught) => {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		}).finally(() => setBusy(""));
+	};
+	const remove = () => {
+		if (!endpoint) return;
+		setBusy("remove");
+		setError("");
+		void controller.removeCustomEndpoint(endpoint.id).then(onRemoved).catch((caught) => {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		}).finally(() => setBusy(""));
+	};
+	return (
+		<form
+			class="endpoint-form"
+			onSubmit={(event) => {
+				event.preventDefault();
+				if (!busy) save();
+			}}
+		>
+			<label class="field-label">
+				Name
+				<input value={name} placeholder="llama.cpp" autoCapitalize="words" onInput={(event) => setName(event.currentTarget.value)} />
+			</label>
+			<label class="field-label">
+				Base URL
+				<input
+					value={baseUrl}
+					placeholder="http://192.168.1.10:8080/v1"
+					inputMode="url"
+					autoCapitalize="none"
+					autoCorrect="off"
+					onInput={(event) => setBaseUrl(event.currentTarget.value)}
+				/>
+			</label>
+			<p class="custom-model-hint">
+				Point at the OpenAI-compatible `/v1` URL on your computer. Replace `192.168.1.10` with that machine's LAN IP.
+			</p>
+			{loopback && (
+				<p class="endpoint-warn">localhost on Android is this phone, not your computer. Use the computer's LAN IP instead.</p>
+			)}
+			<label class="field-label">
+				API key {local ? "(optional)" : ""}
+				<input
+					type="password"
+					value={apiKey}
+					placeholder={endpoint ? "Replacement key" : local ? "Leave blank for local servers" : "sk-…"}
+					autoCapitalize="none"
+					autoCorrect="off"
+					onInput={(event) => setApiKey(event.currentTarget.value)}
+				/>
+			</label>
+			<label class="field-label">
+				Model ids
+				<textarea
+					value={models}
+					placeholder={"qwen2.5-coder\nllama-3.1-8b"}
+					onInput={(event) => setModels(event.currentTarget.value)}
+				/>
+			</label>
+			<button class="text-button" type="button" disabled={Boolean(busy) || !baseUrl.trim()} onClick={probe}>
+				{busy === "probe" ? "Loading…" : "Load from /models"}
+			</button>
+			{error && <p class="custom-model-error">{error}</p>}
+			<div class="endpoint-actions">
+				<button class="endpoint-save" type="submit" disabled={Boolean(busy) || !name.trim() || !baseUrl.trim()}>
+					{busy === "save" ? "Saving…" : endpoint ? "Save endpoint" : "Add endpoint"}
+				</button>
+				{endpoint && (
+					<button class="endpoint-remove" type="button" disabled={Boolean(busy)} onClick={remove}>
+						{busy === "remove" ? "Removing…" : "Remove"}
+					</button>
+				)}
+			</div>
+		</form>
 	);
 }
 
@@ -863,6 +1066,7 @@ function ModelPicker({ controller, state, onPicked }: { controller: AgentControl
 	const [query, setQuery] = useState("");
 	const [error, setError] = useState("");
 	const customIds = state.settings.customModels[state.settings.providerId] ?? [];
+	const endpoint = state.settings.customEndpoints.find((item) => item.id === state.settings.providerId);
 	const filtered = useMemo(() => {
 		const needle = query.trim().toLowerCase();
 		return state.models.filter((model) => !needle || `${model.name} ${model.id}`.toLowerCase().includes(needle));
@@ -899,7 +1103,27 @@ function ModelPicker({ controller, state, onPicked }: { controller: AgentControl
 				/>
 				<button type="button" disabled={!query.trim()} onClick={addCustom}>Use this id</button>
 			</div>
-			<p class="custom-model-hint">Bundled catalog may lag the provider. Any valid model id works.</p>
+			<p class="custom-model-hint">
+				{endpoint
+					? `Local OpenAI-compatible at ${endpoint.baseUrl}. Paste a model id or load GET /models.`
+					: "Bundled catalog may lag the provider. Any valid model id works."}
+			</p>
+			{endpoint && (
+				<button
+					class="text-button"
+					type="button"
+					onClick={() => {
+						void controller.refreshCustomEndpointModels().then(() => {
+							setError("");
+							setQuery("");
+						}).catch((caught) => {
+							setError(caught instanceof Error ? caught.message : String(caught));
+						});
+					}}
+				>
+					Load from /models
+				</button>
+			)}
 			{error && <p class="custom-model-error">{error}</p>}
 			<div class="model-list">
 				{filtered.map((model) => {

@@ -29,6 +29,14 @@ import { createChatId, messagePlainText } from "../session/sessionText";
 import { ProviderRegistry } from "../providers/providerRegistry";
 import { AgentSession } from "../session/agentSession";
 import { pickGlobalSkillsFolder } from "../session/workspaceResources";
+import {
+	finalizeCustomEndpoint,
+	isLocalUrl,
+	probeOpenAIModels,
+	upsertCustomEndpoint,
+	type CustomEndpoint,
+	type CustomEndpointDraft,
+} from "../providers/customEndpoints";
 import { sanitizeModelId } from "../providers/customModels";
 import { clampThinkingLevel } from "../providers/thinkingLevels";
 import { AcodeWorkspace } from "../workspace/acodeWorkspace";
@@ -55,8 +63,13 @@ export class AgentController {
 	#state: PublicAgentState;
 
 	constructor(ctx: Acode.PluginContext | null) {
-		this.credentials = new PortableCredentialStore(ctx);
-		this.providers = new ProviderRegistry(this.credentials, () => this.settings.value.customModels, createModelCatalogStore(ctx));
+		this.credentials = new PortableCredentialStore(ctx, () => this.settings.value.customEndpoints.map((endpoint) => endpoint.id));
+		this.providers = new ProviderRegistry(
+			this.credentials,
+			() => this.settings.value.customModels,
+			createModelCatalogStore(ctx),
+			() => this.settings.value.customEndpoints,
+		);
 		this.#sessionStore = createSessionStore(ctx);
 		this.#state = {
 			status: "booting",
@@ -73,6 +86,7 @@ export class AgentController {
 			tasks: [],
 		};
 		this.settings.subscribe((settings) => {
+			this.providers.syncCustomEndpoints();
 			this.#state.settings = settings;
 			void this.#activeSession()?.applySettings(settings);
 			this.#emit();
@@ -413,9 +427,69 @@ export class AgentController {
 		await this.#openChat(existing?.id ?? createChatId(), info);
 	}
 
+	listProviders() {
+		return this.providers.descriptors();
+	}
+
+	async saveCustomEndpoint(draft: CustomEndpointDraft, apiKey?: string): Promise<CustomEndpoint> {
+		const existing = this.settings.value.customEndpoints;
+		const endpoint = finalizeCustomEndpoint(draft, existing);
+		let models = endpoint.models;
+		const key = apiKey?.trim();
+		if (endpoint.fetchModels) {
+			try {
+				const discovered = await probeOpenAIModels(endpoint.baseUrl, key);
+				models = [...new Set([...models, ...discovered])].slice(0, 50);
+			} catch (error) {
+				if (!models.length) throw error;
+			}
+		}
+		if (!models.length) throw new Error("Add at least one model id, or load the list from /models.");
+		const saved = { ...endpoint, models };
+		const customModels = { ...this.settings.value.customModels };
+		delete customModels[saved.id];
+		this.settings.update({
+			customEndpoints: upsertCustomEndpoint(existing, saved),
+			customModels,
+		});
+		if (key) await this.credentials.setApiKey(saved.id, key);
+		await this.selectProvider(saved.id);
+		return saved;
+	}
+
+	async removeCustomEndpoint(id: string): Promise<void> {
+		const remaining = this.settings.value.customEndpoints.filter((endpoint) => endpoint.id !== id);
+		if (remaining.length === this.settings.value.customEndpoints.length) return;
+		const customModels = { ...this.settings.value.customModels };
+		delete customModels[id];
+		const switching = this.settings.value.providerId === id;
+		this.settings.update({ customEndpoints: remaining, customModels });
+		await this.credentials.delete(id);
+		if (switching) await this.selectProvider(remaining[0]?.id ?? "openrouter");
+	}
+
+	async refreshCustomEndpointModels(providerId: ProviderId = this.settings.value.providerId): Promise<string[]> {
+		const endpoint = this.providers.customEndpoint(providerId);
+		if (!endpoint) throw new Error("That provider is not a custom OpenAI-compatible endpoint.");
+		const credential = await this.credentials.read(providerId);
+		const key = credential?.type === "api_key" ? credential.key : undefined;
+		const discovered = await probeOpenAIModels(endpoint.baseUrl, key);
+		const models = [...new Set([...endpoint.models, ...discovered])].slice(0, 50);
+		this.settings.update({
+			customEndpoints: upsertCustomEndpoint(this.settings.value.customEndpoints, { ...endpoint, models }),
+		});
+		this.#refreshModels();
+		return discovered;
+	}
+
 	async selectProvider(providerId: ProviderId): Promise<void> {
 		const models = await this.providers.refreshModelAvailability(providerId);
-		if (!models.length) throw new Error(`No models are available for this ${providerId} account.`);
+		if (!models.length) {
+			const endpoint = this.providers.customEndpoint(providerId);
+			throw new Error(endpoint
+				? "Add a model id for this endpoint, or load the list from /models."
+				: `No models are available for this ${providerId} account.`);
+		}
 		const currentModel = providerId === this.settings.value.providerId
 			? models.find((model) => model.id === this.settings.value.modelId)
 			: undefined;
@@ -551,7 +625,9 @@ export class AgentController {
 	}
 
 	async hasCredential(providerId: ProviderId): Promise<boolean> {
-		return Boolean(await this.credentials.read(providerId));
+		if (await this.credentials.read(providerId)) return true;
+		const endpoint = this.providers.customEndpoint(providerId);
+		return Boolean(endpoint && isLocalUrl(endpoint.baseUrl) && await this.providers.models.checkAuth(providerId));
 	}
 
 	async #requireProviderAuth(): Promise<void> {

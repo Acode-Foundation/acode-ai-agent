@@ -1,4 +1,5 @@
 import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
+import { sanitizeCustomEndpoints } from "../providers/customEndpoints";
 import { parseSettings } from "./schema";
 import type { AgentSettings } from "./types";
 
@@ -34,6 +35,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
 	activeWorkspaceId: "",
 	activeChatId: "",
 	customModels: {},
+	customEndpoints: [],
 };
 
 export class SettingsStore {
@@ -45,7 +47,12 @@ export class SettingsStore {
 	}
 
 	get value(): AgentSettings {
-		return { ...this.#value, customModels: { ...this.#value.customModels }, globalSkillRoots: [...this.#value.globalSkillRoots] };
+		return {
+			...this.#value,
+			customModels: { ...this.#value.customModels },
+			customEndpoints: this.#value.customEndpoints.map((endpoint) => ({ ...endpoint, models: [...endpoint.models] })),
+			globalSkillRoots: [...this.#value.globalSkillRoots],
+		};
 	}
 
 	update(patch: Partial<AgentSettings>): AgentSettings {
@@ -78,6 +85,11 @@ export class SettingsStore {
 	}
 
 	#sanitize(value: AgentSettings): AgentSettings {
-		return { ...DEFAULT_SETTINGS, ...parseSettings(value) };
+		const parsed = parseSettings(value);
+		return {
+			...DEFAULT_SETTINGS,
+			...parsed,
+			customEndpoints: sanitizeCustomEndpoints(parsed.customEndpoints),
+		};
 	}
 }

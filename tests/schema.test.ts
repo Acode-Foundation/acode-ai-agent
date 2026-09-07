@@ -22,6 +22,8 @@ test("compaction defaults come from Pi instead of a local copy", () => {
 	expect(parseSettings({}).compactionReserveTokens).toBe(DEFAULT_COMPACTION_SETTINGS.reserveTokens);
 	expect(parseSettings({}).showTaskTray).toBe(true);
 	expect(DEFAULT_SETTINGS.showTaskTray).toBe(true);
+	expect(parseSettings({}).customEndpoints).toEqual([]);
+	expect(DEFAULT_SETTINGS.customEndpoints).toEqual([]);
 });
 
 test("chat index drops malformed rows", () => {

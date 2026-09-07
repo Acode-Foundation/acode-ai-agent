@@ -2166,7 +2166,8 @@ button.tree-gutter {
 .model-row b, .model-row code { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-row b { font-size: 13px; }
 .model-row code { color: var(--muted); font: 11px ui-monospace, monospace; }
-.model-row small { display: grid; place-items: center; color: var(--muted); font-size: 11px; }
+.model-row small { display: grid; place-items: center; width: 16px; height: 16px; color: var(--muted); font-size: 11px; }
+.model-row small svg { width: 16px; height: 16px; }
 .model-row.selected small { color: var(--accent); }
 .model-remove {
 	display: grid;
@@ -2187,6 +2188,57 @@ button.tree-gutter {
 	cursor: pointer;
 	margin-bottom: 8px;
 }
+.endpoint-form {
+	display: grid;
+	align-content: start;
+	gap: 10px;
+	padding-bottom: 8px;
+}
+.picker-body .endpoint-form {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+}
+.endpoint-form .field-label { display: grid; gap: 6px; margin: 0; }
+.endpoint-form input,
+.endpoint-form textarea {
+	width: 100%;
+	min-width: 0;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	outline: 0;
+	padding: 9px;
+	background: var(--bg);
+}
+.endpoint-form textarea {
+	min-height: 88px;
+	resize: vertical;
+	font: 12px/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+.endpoint-warn {
+	margin: 0;
+	color: #d4a017;
+	font-size: 11px;
+	line-height: 1.35;
+}
+.endpoint-actions {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 8px;
+}
+.endpoint-save,
+.endpoint-remove {
+	min-height: 44px;
+	border-radius: 10px;
+	padding: 0 14px;
+	font-size: 13px;
+	font-weight: 650;
+	cursor: pointer;
+}
+.endpoint-save { background: var(--accent); color: var(--accent-ink); }
+.endpoint-remove { background: var(--surface); color: var(--danger); }
+.endpoint-save:disabled,
+.endpoint-remove:disabled { opacity: .38; }
 .field-label select { margin-top: 6px; }
 .chats-body { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 button.project-select, label.project-select {

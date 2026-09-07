@@ -22,6 +22,11 @@ import type { PortableCredentialStore } from "../platform/credentials";
 import type { ProviderId } from "../core/types";
 import { nativeFetch } from "../platform/nativeHttp";
 import { mergeCatalogOverlay } from "./catalogOverlay";
+import {
+	createOpenAICompatibleProvider,
+	customEndpointModel,
+	type CustomEndpoint,
+} from "./customEndpoints";
 import { createCustomModel, mergeCustomModels, sanitizeModelId } from "./customModels";
 import {
 	portableAnthropicOAuth,
@@ -66,10 +71,25 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
 	{ id: "xiaomi", name: "Xiaomi", hint: "MiMo API key", keyPlaceholder: "…", keyUrl: "https://platform.xiaomimimo.com", apiKey: true },
 ] as const;
 
+export function providerDescriptors(customEndpoints: readonly CustomEndpoint[] = []): ProviderDescriptor[] {
+	return [
+		...PROVIDERS,
+		...customEndpoints.map((endpoint): ProviderDescriptor => ({
+			id: endpoint.id,
+			name: endpoint.name,
+			hint: endpoint.baseUrl,
+			keyPlaceholder: "sk-… or leave blank for local",
+			apiKey: true,
+		})),
+	];
+}
+
 export class ProviderRegistry {
 	readonly models: MutableModels;
 	#credentials: PortableCredentialStore;
 	#customModels: () => Record<string, string[]>;
+	#customEndpoints: () => CustomEndpoint[];
+	#registeredCustom = new Set<string>();
 	#overrides = new Map<string, Model<any>>();
 	#catalogs = new Map<string, RemoteCatalog>();
 	#availableModelIds = new Map<string, ReadonlySet<string>>();
@@ -78,9 +98,11 @@ export class ProviderRegistry {
 		credentials: PortableCredentialStore,
 		customModels: () => Record<string, string[]> = () => ({}),
 		catalogStore: ModelsStore = new InMemoryModelsStore(),
+		customEndpoints: () => CustomEndpoint[] = () => [],
 	) {
 		this.#credentials = credentials;
 		this.#customModels = customModels;
+		this.#customEndpoints = customEndpoints;
 		const models = createModels({
 			credentials,
 			modelsStore: catalogStore,
@@ -95,6 +117,30 @@ export class ProviderRegistry {
 			models.setProvider(catalog.provider);
 		}
 		this.models = withNativeFetch(models);
+		this.syncCustomEndpoints();
+	}
+
+	descriptors(): ProviderDescriptor[] {
+		return providerDescriptors(this.#customEndpoints());
+	}
+
+	syncCustomEndpoints(): void {
+		const endpoints = this.#customEndpoints();
+		const nextIds = new Set(endpoints.map((endpoint) => endpoint.id));
+		for (const id of this.#registeredCustom) {
+			if (nextIds.has(id)) continue;
+			this.models.deleteProvider(id);
+			this.#registeredCustom.delete(id);
+			this.#availableModelIds.delete(id);
+		}
+		for (const endpoint of endpoints) {
+			this.models.setProvider(createOpenAICompatibleProvider(endpoint));
+			this.#registeredCustom.add(endpoint.id);
+		}
+	}
+
+	customEndpoint(providerId: ProviderId): CustomEndpoint | undefined {
+		return this.#customEndpoints().find((endpoint) => endpoint.id === providerId);
 	}
 
 	register(provider: Provider): () => void {
@@ -108,7 +154,9 @@ export class ProviderRegistry {
 			[...this.models.getModels(providerId)].filter((model) => model.input.includes("text")),
 		).sort((left, right) => left.name.localeCompare(right.name));
 		const available = this.#availableModelIds.get(providerId);
-		return mergeCustomModels(catalog, providerId, this.#customModels()[providerId] ?? [])
+		const endpoint = this.customEndpoint(providerId);
+		const template = endpoint ? customEndpointModel(endpoint, endpoint.models[0] ?? "custom") : undefined;
+		return mergeCustomModels(catalog, providerId, this.#customModels()[providerId] ?? [], template)
 			.map((model) => this.#overrides.get(`${providerId}:${model.id}`) ?? model)
 			.filter((model) => !available || available.has(model.id));
 	}
@@ -149,7 +197,14 @@ export class ProviderRegistry {
 		}
 		const catalog = this.models.getModel(providerId, modelId);
 		if (catalog) return catalog;
-		if (id) return createCustomModel(providerId, id, this.models.getModels(providerId)[0]);
+		if (id) {
+			const endpoint = this.customEndpoint(providerId);
+			return createCustomModel(
+				providerId,
+				id,
+				this.models.getModels(providerId)[0] ?? (endpoint ? customEndpointModel(endpoint, id) : undefined),
+			);
+		}
 		const fallback = this.getModels(providerId)[0];
 		if (!fallback) throw new Error(`No models are available for ${providerId}.`);
 		return fallback;
