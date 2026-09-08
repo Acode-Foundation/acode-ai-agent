@@ -249,6 +249,7 @@ function countSessions(chats: ChatSummary[]): Map<string, number> {
 }
 
 function formatAge(updatedAt: number): string {
+	if (!Number.isFinite(updatedAt) || updatedAt <= 0 || !Number.isFinite(new Date(updatedAt).getTime())) return "";
 	const elapsed = Math.max(0, Date.now() - updatedAt);
 	const minutes = Math.floor(elapsed / 60_000);
 	if (minutes < 1) return "now";

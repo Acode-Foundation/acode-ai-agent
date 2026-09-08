@@ -83,3 +83,41 @@ test("manual compaction uses Pi's summary and keeps the session usable", async (
 	await session.prompt("Continue");
 	expect(session.snapshot.messages.at(-1)?.role).toBe("assistant");
 });
+
+
+test("idles the composer as soon as the assistant finishes, before persistence", async () => {
+	const { session, faux, store } = await setup();
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => { release = resolve; });
+	vi.spyOn(store, "saveTasks").mockImplementation(() => held);
+	faux.setResponses([fauxAssistantMessage("CodeMirror 6 is the real editor.")]);
+	const idled = new Promise<void>((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error("UI stayed running after the assistant finished")), 5_000);
+		session.changes.subscribe((snapshot) => {
+			const answer = snapshot.messages.find((message) => message.role === "assistant");
+			if (!answer || snapshot.isRunning || snapshot.streamingMessage) return;
+			clearTimeout(timer);
+			resolve();
+		});
+	});
+	const run = session.prompt("Which editor is actually used");
+	try {
+		await idled;
+		expect(session.snapshot.isRunning).toBe(false);
+		expect(session.snapshot.streamingMessage).toBeUndefined();
+	} finally {
+		release();
+	}
+	await run;
+});
+
+test("closing an idle session preserves its last activity time", async () => {
+	const { session, store } = await setup();
+	await session.rename("Last activity");
+	const activity = store.load("integration")!.updatedAt;
+	const clock = vi.spyOn(Date, "now").mockReturnValue(activity + 86_400_000);
+	try {
+		await session.dispose();
+		expect(store.load("integration")!.updatedAt).toBe(activity);
+	} finally { clock.mockRestore(); }
+});

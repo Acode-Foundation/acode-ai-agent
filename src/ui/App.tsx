@@ -167,7 +167,7 @@ export function App({ controller, onActiveChatChange }: Props) {
 							</section>
 						))}
 						{state.compacting && <div class="compact-status">Compacting earlier turns…</div>}
-						{running && !state.compacting && !turns.some((turn) => turn.streaming) && <WorkingIndicator label={workingLabel} />}
+						{running && !state.compacting && !turns.some((turn) => turn.streaming) && !turns.at(-1)?.answer && <WorkingIndicator label={workingLabel} />}
 					</div>
 				)}
 				{state.error && !turns.some((turn) => turn.error === state.error) && <ErrorNotice message={state.error} />}
@@ -1258,6 +1258,7 @@ function workspaceLabel(chat: ChatSummary, workspaces: WorkspaceInfo[]): string 
 }
 
 function formatChatTime(timestamp: number): string {
+	if (!Number.isFinite(timestamp) || timestamp <= 0 || !Number.isFinite(new Date(timestamp).getTime())) return "";
 	const delta = Date.now() - timestamp;
 	if (delta < 45_000) return "Just now";
 	if (delta < 3_600_000) return `${Math.max(1, Math.round(delta / 60_000))}m ago`;

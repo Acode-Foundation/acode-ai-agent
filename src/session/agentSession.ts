@@ -81,7 +81,7 @@ export class AgentSession {
 	#model?: Model<any>;
 	#resources: LoadedWorkspaceResources = { skills: [], promptTemplates: [], skillRoots: [] };
 	#unsubscribe?: () => void;
-	#persistMeta?: (patch: { title?: string; providerId?: string; modelId?: string }) => void;
+	#persistMeta?: (patch: { title?: string; providerId?: string; modelId?: string }, activity?: boolean) => void;
 	#flushPersist?: () => Promise<void>;
 	#activities = new Map<string, ToolActivity>();
 	#messages: AgentMessage[] = [];
@@ -90,6 +90,7 @@ export class AgentSession {
 	#runAbort = new AbortController();
 	#running = false;
 	#compacting = false;
+	#storeWork?: Promise<void>;
 	#tasks = new TaskList();
 	#cadence = createCadenceState();
 	#taskUnsubs: Array<() => void> = [];
@@ -257,8 +258,7 @@ export class AgentSession {
 		this.#publish();
 		try {
 			assertOperation(getOrThrow(await this.#requireLane().compact({ customInstructions: customInstructions?.trim() || undefined }, context)).compaction);
-			await this.#refreshContext();
-			await this.persist();
+			await this.#settleStore();
 		} finally {
 			this.#compacting = false;
 			this.#publish();
@@ -301,9 +301,7 @@ export class AgentSession {
 		const user = selected?.type === "message" && selected.message.role === "user" ? selected : undefined;
 		const outcome = getOrThrow(await this.#requireLane().navigateTree(user ? user.parentId : targetId, options, context));
 		assertOperation(outcome.navigation);
-		await this.#refreshContext();
-		await this.persist();
-		this.#publish();
+		await this.#settleStore();
 		return user && outcome.navigation.status === "completed" ? messagePlainText(user.message) : undefined;
 	}
 
@@ -334,9 +332,8 @@ export class AgentSession {
 		} finally {
 			this.#running = false;
 			this.#settleActivities();
-			await this.#refreshContext();
-			await this.persist();
 			this.#publish();
+			await this.#settleStore();
 		}
 	}
 
@@ -376,15 +373,29 @@ export class AgentSession {
 		await this.#requireLane().setThinkingLevel(level, context);
 	}
 
-	async persist(): Promise<void> {
+	async persist(activity = true): Promise<void> {
 		if (!this.#pi) return;
 		this.title = await this.#pi.getName(context) || titleFromMessages(this.#messages);
 		this.#persistMeta?.({
 			title: this.title,
 			providerId: this.#model?.provider,
 			modelId: this.#model?.id,
-		});
+		}, activity);
 		await Promise.all([this.#flushPersist?.(), this.#store.saveTasks(this.id, this.#tasks.snapshot())]);
+	}
+
+	#settleStore(activity = true): Promise<void> {
+		const next = (this.#storeWork ?? Promise.resolve())
+			.catch(() => undefined)
+			.then(async () => {
+				await this.#refreshContext();
+				await this.persist(activity);
+				this.#publish();
+			});
+		this.#storeWork = next.finally(() => {
+			if (this.#storeWork === next) this.#storeWork = undefined;
+		});
+		return this.#storeWork;
 	}
 
 	updateTaskStatus(id: string, status: TaskStatus | "deleted"): void {
@@ -409,7 +420,8 @@ export class AgentSession {
 		this.questionGate.cancel();
 		await this.#lane?.abort(context).catch(() => undefined);
 		await this.#lane?.waitForIdle(context).catch(() => undefined);
-		await this.persist().catch(() => undefined);
+		await this.#storeWork?.catch(() => undefined);
+		await this.persist(false).catch(() => undefined);
 		this.#unsubscribe?.();
 		this.#unsubscribe = undefined;
 		for (const unsubscribe of this.#taskUnsubs.splice(0)) unsubscribe();
@@ -429,38 +441,49 @@ export class AgentSession {
 			this.#queued = event.queues.flatMap((item) => item.type === "message" && (item.kind === "steer" || item.kind === "followUp") ? [queuedFromMessage(item.message, item.kind)] : []);
 		}
 		if (event.type === "turn_start") {
+			this.#running = true;
 			onTurnStart(this.#cadence);
 			noteResolvedBoundary(this.#cadence, this.#tasks.list());
 			if (shouldAutoClear(this.#cadence, this.#tasks.list())) this.#tasks.clearAll();
 		}
 		if (event.type === "turn_end") markStaleInProgress(this.#cadence, this.#tasks.list());
 		if (event.type === "run_start") this.#beginRun();
-		if (event.type === "run_end" || event.type === "operation_abort") {
-			this.#running = false;
-			this.#settleActivities();
-			if (event.type === "operation_abort") this.#queued = [];
-			await this.#refreshContext();
-			await this.persist();
-		}
-		if (event.type === "compaction_end") {
-			await this.#refreshContext();
-			await this.persist();
-		}
-		if (event.type === "message_end" || event.type === "entry_added") await this.#refreshContext();
 		if (event.type === "compaction_start") this.#compacting = true;
 		if (event.type === "compaction_end") this.#compacting = false;
 		if (event.type === "fault") this.#snapshot.error = event.message;
 		if ((event.type === "run_end" || event.type === "compaction_end" || event.type === "navigation_end") && event.status === "failed") this.#snapshot.error = event.error.message;
+		if (event.type === "run_end" || event.type === "operation_abort") {
+			this.#running = false;
+			this.#settleActivities();
+			if (event.type === "operation_abort") this.#queued = [];
+			this.#publish();
+			void this.#settleStore();
+			return;
+		}
+		if (event.type === "compaction_end") {
+			this.#publish();
+			void this.#settleStore();
+			return;
+		}
 		this.#publish();
 	}
 
 	#onAgentEvent(event: HarnessEvent): void {
-		if (event.type === "message_start" || event.type === "message_update") {
-			if (event.message.role === "assistant") this.#streaming = event.message;
-			if (event.message.role === "user") this.#rememberUserMessage(event.message);
+		if (event.type === "entry_added" && event.entry.type === "message") this.#rememberMessage(event.entry.message);
+		if (event.type === "usage") {
+			this.#snapshot.usage = { tokens: event.totals.totalTokens, cost: event.totals.cost.total };
+		}
+		if (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") {
+			this.#rememberMessage(event.message);
+			if (event.message.role === "assistant") {
+				this.#streaming = event.type === "message_end" ? undefined : event.message;
+				if (event.type === "message_end" && event.message.stopReason !== "toolUse") {
+					this.#running = false;
+					this.#settleActivities();
+				}
+			}
 		}
 		if (event.type === "message_end") {
-			this.#streaming = undefined;
 			if (event.message.role === "assistant" && (event.message.stopReason === "error" || event.message.stopReason === "aborted")) {
 				this.#snapshot = {
 					...this.#snapshot,
@@ -515,10 +538,11 @@ export class AgentSession {
 		this.#snapshot = { ...this.#snapshot, error: undefined };
 	}
 
-	#rememberUserMessage(message: AgentMessage): void {
-		if (message.role !== "user") return;
-		const exists = this.#messages.some((item) => item.role === "user" && "timestamp" in item && item.timestamp === message.timestamp);
-		if (!exists) this.#messages = [...this.#messages, message];
+	#rememberMessage(message: AgentMessage): void {
+		const index = this.#messages.findIndex((item) => item.role === message.role && "timestamp" in item && "timestamp" in message && item.timestamp === message.timestamp
+			&& (item.role !== "toolResult" || message.role !== "toolResult" || item.toolCallId === message.toolCallId));
+		if (index < 0) this.#messages = [...this.#messages, message];
+		else this.#messages = this.#messages.map((item, position) => position === index ? message : item);
 	}
 
 	#settleActivities(): void {

@@ -76,7 +76,7 @@ export class SessionFileSystem implements FileSystem {
 	async #info(path: string): Promise<FileInfo> {
 		const addressed = this.#path(path);
 		const stat = await this.fs(this.#uri(addressed)).stat();
-		return { path: addressed, name: addressed.split("/").at(-1) || "", kind: stat.isDirectory ? "directory" : "file", size: stat.size, mtimeMs: Number(stat.modifiedDate) };
+		return { path: addressed, name: addressed.split("/").at(-1) || "", kind: stat.isDirectory ? "directory" : "file", size: stat.size, mtimeMs: sessionTimestamp(stat.modifiedDate) ?? 0 };
 	}
 	fileInfo(path: string, _context: Context) { return this.#result(path, () => this.#info(path)); }
 	listDir(path: string, _context: Context) { return this.#result(path, async () => Promise.all((await this.fs(this.#uri(path)).lsDir()).map((entry) => this.#info(`${this.#path(path)}/${entry.name}`)))); }
@@ -123,4 +123,14 @@ export function privateSessionFileSystem(): SessionFileSystem {
 	const directory = (globalThis as unknown as { cordova?: { file?: { dataDirectory?: string } } }).cordova?.file?.dataDirectory;
 	if (!directory) throw new Error("Acode internal data storage is unavailable. Chats cannot be persisted.");
 	return new SessionFileSystem(`${directory.replace(/\/+$/, "")}/ai-agent`);
+}
+
+/** Host file dates may be milliseconds, numeric strings, or serialized dates. */
+export function sessionTimestamp(value: unknown): number | undefined {
+	if (value === null || value === undefined || value === "") return undefined;
+	const timestamp = typeof value === "number" ? value
+		: value instanceof Date ? value.getTime()
+		: typeof value === "string" ? (Number.isFinite(Number(value)) ? Number(value) : Date.parse(value))
+		: NaN;
+	return Number.isFinite(timestamp) && timestamp > 0 && Number.isFinite(new Date(timestamp).getTime()) ? timestamp : undefined;
 }

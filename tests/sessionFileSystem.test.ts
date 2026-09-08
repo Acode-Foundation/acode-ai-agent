@@ -55,3 +55,12 @@ test("Cordova append seeks to byte length and rejects writer failure", async () 
 	writer.write.mockImplementation(() => { writer.onerror?.({ target: { error: new Error("full") } }); writer.onwriteend?.(); });
 	expect((await adapter.appendFile("/test", "x", context)).ok).toBe(false);
 });
+
+
+test.each([1700000000000, "1700000000000", new Date(1700000000000), "2023-11-14T22:13:20.000Z", "invalid", null])("normalizes host file date %s", async (modifiedDate) => {
+	const { host, uri, adapter } = await setup();
+	getOrThrow(await adapter.writeFile("/chat.jsonl", "test", context));
+	const datedHost = ((path: string) => ({ ...host(path), stat: async () => ({ ...await host(path).stat(), modifiedDate }) })) as unknown as Acode.FS;
+	const dated = new SessionFileSystem(uri, datedHost);
+	expect(getOrThrow(await dated.fileInfo("/chat.jsonl", context)).mtimeMs).toBe(modifiedDate === "invalid" || modifiedDate === null ? 0 : 1700000000000);
+});

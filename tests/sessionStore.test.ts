@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "vitest";
-import { AgentHarness, BACKGROUND_CONTEXT as context, getOrThrow } from "@earendil-works/pi-agent-core";
+import { AgentHarness, BACKGROUND_CONTEXT as context, getOrThrow, value } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { SessionStore } from "../src/platform/sessionStore";
@@ -121,4 +121,30 @@ test("Pi tree forks retain alternate paths without moving the source tip", async
 	expect(await lane.getTipId(context)).toBe(activeTip);
 	expect(await fork.session.findEntries(undefined, context)).toHaveLength(4);
 	await store.release("tree-fork");
+});
+
+
+test("restart and reopen preserve activity time despite newer storage writes", async () => {
+	const { store, opened, adapter, harness } = await setup();
+	const activity = Date.now() - 3 * 86_400_000;
+	opened.record.updatedAt = activity;
+	await opened.persist();
+	await harness.close(context); await store.release("c1");
+	for (let restart = 0; restart < 2; restart++) {
+		const reloaded = new SessionStore(adapter);
+		await reloaded.hydrate();
+		expect(reloaded.load("c1")?.updatedAt).toBe(activity);
+		const again = await reloaded.open(options());
+		expect(again.record.updatedAt).toBe(activity);
+		await reloaded.release("c1");
+	}
+});
+
+test("recovers a timestamp previously serialized as null", async () => {
+	const { store, opened, adapter, harness } = await setup();
+	await opened.session.setValue(value("acode", "metadata"), { ...opened.record, updatedAt: null }, context);
+	await harness.close(context); await store.release("c1");
+	const reloaded = new SessionStore(adapter); await reloaded.hydrate();
+	expect(reloaded.load("c1")?.updatedAt).toBeGreaterThan(0);
+	expect(new Date(reloaded.load("c1")!.updatedAt).toString()).not.toBe("Invalid Date");
 });

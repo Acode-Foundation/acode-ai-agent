@@ -1,6 +1,6 @@
 import { BACKGROUND_CONTEXT as context, JsonlSessionRepo, getOrThrow, value, type FileSystem, type JsonlSessionMetadata, type Session } from "@earendil-works/pi-agent-core";
 import { redactedSessionFileSystem } from "./sessionRedaction";
-import { privateSessionFileSystem } from "./sessionFileSystem";
+import { privateSessionFileSystem, sessionTimestamp } from "./sessionFileSystem";
 export { createChatId, messagePlainText, titleFromEntries, titleFromMessages } from "../session/sessionText";
 
 export type ChatMeta = { id: string; title: string; workspaceId: string; workspaceName: string; updatedAt: number };
@@ -36,7 +36,8 @@ export class SessionStore {
 			const session = await this.#repo.open(metadata, context);
 			try {
 				const record = (await session.getValue(META, context))?.value;
-				if (record) this.#index.set(metadata.id, { ...record, id: metadata.id, updatedAt: Math.max(record.updatedAt, metadata.modifiedAt) });
+				// File writes include opening and closing a harness, not just chat activity.
+				if (record) this.#index.set(metadata.id, { ...record, id: metadata.id, updatedAt: sessionTimestamp(record.updatedAt) ?? sessionTimestamp(metadata.modifiedAt) ?? metadata.createdAt });
 			} finally { await session.close(context); }
 		}
 	}
@@ -60,10 +61,10 @@ export class SessionStore {
 		const session = await this.#session(options.id);
 		const record: SessionRecord = { title: "New chat", workspaceName: "", updatedAt: Date.now(), ...options, ...this.#index.get(options.id) };
 		this.#index.set(options.id, record);
-		await session.setValue(META, record, context);
+		if (!await session.getValue(META, context)) await session.setValue(META, record, context);
 		return {
 			session, record,
-			update: (patch: SessionMetaPatch) => { Object.assign(record, patch, { updatedAt: Date.now() }); },
+			update: (patch: SessionMetaPatch, activity = true) => { Object.assign(record, patch, activity ? { updatedAt: Date.now() } : {}); },
 			persist: async () => { await session.setValue(META, { ...record }, context); },
 		};
 	}
