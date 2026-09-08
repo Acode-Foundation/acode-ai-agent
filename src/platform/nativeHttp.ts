@@ -24,15 +24,65 @@ type CordovaHttp = {
 
 const originalFetch = globalThis.fetch.bind(globalThis);
 
+type StreamingSystem = {
+	httpStream(url: string, options: {
+		method: string;
+		headers: Record<string, string>;
+		body?: string;
+		followRedirects: boolean;
+		signal: AbortSignal;
+	}): Promise<Response>;
+};
+
+function getStreamingSystem(): StreamingSystem | undefined {
+	const system = (globalThis as { system?: Partial<StreamingSystem> }).system;
+	return typeof system?.httpStream === "function" ? system as StreamingSystem : undefined;
+}
+
+type CordovaExec = {
+	nativeToJsModes?: { ONLINE_EVENT?: number; EVAL_BRIDGE?: number };
+	setNativeToJsBridgeMode?: (mode: number) => void;
+};
+
+let orderedCallbacksActive = false;
+let previousNativeToJsMode: number | undefined;
+let previousFetch: typeof fetch | undefined;
+
+function getCordovaExec(): CordovaExec | undefined {
+	return (globalThis as { cordova?: { exec?: CordovaExec } }).cordova?.exec;
+}
+
+function selectOrderedNativeCallbacks(): void {
+	if (orderedCallbacksActive) return;
+	const exec = getCordovaExec();
+	const online = exec?.nativeToJsModes?.ONLINE_EVENT;
+	if (typeof online !== "number" || typeof exec?.setNativeToJsBridgeMode !== "function") return;
+	// EVAL_BRIDGE can deliver native stream chunks out of order on Android.
+	previousNativeToJsMode = exec.nativeToJsModes?.EVAL_BRIDGE;
+	exec.setNativeToJsBridgeMode(online);
+	orderedCallbacksActive = true;
+}
+
+function restoreNativeCallbacks(): void {
+	if (!orderedCallbacksActive) return;
+	orderedCallbacksActive = false;
+	const mode = previousNativeToJsMode;
+	previousNativeToJsMode = undefined;
+	const exec = getCordovaExec();
+	if (typeof mode !== "number" || typeof exec?.setNativeToJsBridgeMode !== "function") return;
+	exec.setNativeToJsBridgeMode(mode);
+}
+
 export function getCordovaHttp(): CordovaHttp | undefined {
 	const http = (globalThis as { cordova?: { plugin?: { http?: CordovaHttp } } }).cordova?.plugin?.http;
 	return http && typeof http.sendRequest === "function" ? http : undefined;
 }
 
-/** Routes http(s) through Cordova advanced-http so Eruda/WebView CORS never see it. */
+/** Prefer Acode's native response stream, with buffered HTTP for older versions. */
 export const nativeFetch: typeof fetch = async (input, init) => {
+	const system = getStreamingSystem();
 	const http = getCordovaHttp();
-	if (!http) {
+	if (!system && !http) {
 		const fallback = globalThis.fetch === nativeFetch ? originalFetch : globalThis.fetch;
 		return fallback(input, init);
 	}
@@ -48,6 +98,19 @@ export const nativeFetch: typeof fetch = async (input, init) => {
 	const method = request.method.toLowerCase();
 	const hasBody = method !== "get" && method !== "head";
 	const data = hasBody ? await request.text() : undefined;
+	if (request.signal.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+
+	if (system) {
+		// httpStream already returns a byte-stream Response; the provider owns SSE parsing.
+		return system.httpStream(url, {
+			method: request.method,
+			headers,
+			body: data,
+			followRedirects: request.redirect === "follow",
+			signal: request.signal,
+		});
+	}
+	if (!http) throw new TypeError("Native HTTP is unavailable");
 
 	return new Promise((resolve, reject) => {
 		const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
@@ -91,10 +154,19 @@ export const nativeFetch: typeof fetch = async (input, init) => {
 };
 
 export function installNativeFetch(): boolean {
-	if (!getCordovaHttp()) return false;
-	if (globalThis.fetch === nativeFetch) return true;
-	globalThis.fetch = nativeFetch;
+	if (!getStreamingSystem() && !getCordovaHttp()) return false;
+	if (getStreamingSystem()) selectOrderedNativeCallbacks();
+	if (globalThis.fetch !== nativeFetch) {
+		previousFetch = globalThis.fetch;
+		globalThis.fetch = nativeFetch;
+	}
 	return true;
+}
+
+export function uninstallNativeFetch(): void {
+	restoreNativeCallbacks();
+	if (globalThis.fetch === nativeFetch && previousFetch) globalThis.fetch = previousFetch;
+	previousFetch = undefined;
 }
 
 function toFetchResponse(raw: CordovaHttpResponse): Response {

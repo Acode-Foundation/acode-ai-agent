@@ -2,7 +2,7 @@ import plugin from "../plugin.json";
 import { AgentController } from "./app/agentController";
 import { getCodeHighlight } from "./platform/codeHighlight";
 import { createHomeProject } from "./platform/randomProject";
-import { installNativeFetch } from "./platform/nativeHttp";
+import { installNativeFetch, uninstallNativeFetch } from "./platform/nativeHttp";
 import { setPluginBaseUrl } from "./platform/pluginAssets";
 import { PROVIDERS } from "./providers/providerRegistry";
 import { mountApp, unmountApp } from "./ui/mount";
@@ -52,6 +52,7 @@ class AcodeAiAgentPlugin {
 		await this.#closeTabs();
 		await this.#controller?.dispose();
 		this.#controller = null;
+		uninstallNativeFetch();
 		acode.removeCommand(OPEN_COMMAND);
 		acode.removeCommand(NEW_COMMAND);
 		acode.removeCommand(RANDOM_PROJECT_COMMAND);

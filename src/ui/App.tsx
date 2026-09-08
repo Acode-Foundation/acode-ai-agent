@@ -170,7 +170,7 @@ export function App({ controller, onActiveChatChange }: Props) {
 						{running && !state.compacting && !turns.some((turn) => turn.streaming) && <WorkingIndicator label={workingLabel} />}
 					</div>
 				)}
-				{state.error && <ErrorNotice message={state.error} />}
+				{state.error && !turns.some((turn) => turn.error === state.error) && <ErrorNotice message={state.error} />}
 				<JumpLatest visible={showLatest} onJump={jumpToLatest} />
 			</main>
 
