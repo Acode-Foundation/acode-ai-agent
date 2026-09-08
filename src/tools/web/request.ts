@@ -157,7 +157,7 @@ export function cleanUrl(value: string): string {
     if (url.protocol !== "http:" && url.protocol !== "https:") return "";
     if (JUNK_HOST.test(url.hostname)) return "";
     if (/\/(?:aclick|aclk|pagead)\b/i.test(url.pathname)) return "";
-    for (const key of [...url.searchParams.keys()]) {
+    for (const key of Array.from(url.searchParams.keys())) {
       if (TRACKING_PARAM.test(key)) url.searchParams.delete(key);
     }
     url.hash = "";

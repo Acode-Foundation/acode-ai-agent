@@ -192,7 +192,7 @@ export class SessionFileSystem implements FileSystem {
   async cleanup(_context: Context): Promise<void> {}
 }
 function safeName(value: string): string {
-  if (/[\/\\\0]/.test(value)) throw new FileError("invalid", "Invalid temporary file name");
+  if (/[/\\\0]/.test(value)) throw new FileError("invalid", "Invalid temporary file name");
   return value;
 }
 

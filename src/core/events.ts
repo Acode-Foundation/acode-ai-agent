@@ -9,7 +9,7 @@ export class Signal<T> {
   }
 
   emit(value: T): void {
-    for (const listener of [...this.#listeners]) listener(value);
+    for (const listener of Array.from(this.#listeners)) listener(value);
   }
 
   clear(): void {

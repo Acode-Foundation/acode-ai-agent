@@ -462,22 +462,6 @@ function portableProviders(): Provider[] {
   ];
 }
 
-function filterOAuthAccountModels(
-  models: readonly Model<any>[],
-  credential: unknown,
-): readonly Model<any>[] {
-  if (
-    !credential ||
-    typeof credential !== "object" ||
-    (credential as { type?: unknown }).type !== "oauth"
-  )
-    return models;
-  const ids = (credential as { availableModelIds?: unknown }).availableModelIds;
-  if (!Array.isArray(ids) || !ids.every((id) => typeof id === "string")) return models;
-  const available = new Set(ids);
-  return models.filter((model) => available.has(model.id));
-}
-
 function withNativeFetch(models: MutableModels): MutableModels {
   const streamSimple = models.streamSimple.bind(models);
   const completeSimple = models.completeSimple.bind(models);

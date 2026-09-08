@@ -72,7 +72,7 @@ test("packages picked files for the model while keeping a compact file chip", ()
   const prompt = promptTextFromDraft({
     text: "Review [#file outside.ts]",
     images: [],
-    files: [{ id: "one", name: 'outside\".ts', content: "const end = `]]>`;", encoding: "text" }],
+    files: [{ id: "one", name: 'outside".ts', content: "const end = `]]>`;", encoding: "text" }],
   });
   expect(prompt).toContain('"name":"outside\\\".ts"');
   expect(splitUserText(prompt)).toEqual([

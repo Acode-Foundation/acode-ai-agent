@@ -31,7 +31,7 @@ module.exports = {
         if (signal) {
           try {
             signal.removeEventListener("abort", onAbort);
-          } catch (e) {}
+          } catch {}
         }
       }
 
@@ -78,7 +78,7 @@ module.exports = {
           for (var name in pairs) {
             try {
               h.append(name, pairs[name]);
-            } catch (e) {}
+            } catch {}
           }
           return h;
         }
@@ -87,7 +87,7 @@ module.exports = {
           if (!pair || pair.length < 2) continue;
           try {
             h.append(pair[0], pair[1]);
-          } catch (e) {}
+          } catch {}
         }
         return h;
       }

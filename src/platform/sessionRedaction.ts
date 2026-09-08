@@ -2,7 +2,7 @@ import { err, FileError, type FileSystem } from "@earendil-works/pi-agent-core";
 /** Preserve the existing best-effort secret redaction at the persistence boundary. */
 function redact(text: string): string {
   return text
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{12,}/gi, "Bearer [REDACTED]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]{12,}/gi, "Bearer [REDACTED]")
     .replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_API_KEY]")
     .replace(/\b(or-[A-Za-z0-9_-]{12,})\b/gi, "[REDACTED_API_KEY]")
     .replace(/\b(gsk_[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_API_KEY]")

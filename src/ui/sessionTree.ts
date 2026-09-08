@@ -159,13 +159,13 @@ function applySearch(
 ): void {
   const needle = query.trim().toLowerCase();
   if (!needle) return;
-  for (const id of [...allowed]) {
+  for (const id of Array.from(allowed)) {
     const item = byId.get(id);
     if (!item) continue;
     if (`${item.text} ${item.label ?? ""} ${item.type}`.toLowerCase().includes(needle)) continue;
     allowed.delete(id);
   }
-  for (const id of [...allowed]) {
+  for (const id of Array.from(allowed)) {
     let parent = byId.get(id)?.parentId ?? null;
     while (parent) {
       allowed.add(parent);

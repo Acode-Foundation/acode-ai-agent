@@ -166,7 +166,7 @@ export class TaskList {
 
   clearCompleted(): number {
     let count = 0;
-    for (const [id, task] of [...this.#tasks]) {
+    for (const [id, task] of Array.from(this.#tasks)) {
       if (!isResolvedStatus(task.status)) continue;
       this.#tasks.delete(id);
       count += 1;
@@ -211,7 +211,7 @@ export class TaskList {
   }
 
   #emit(): void {
-    for (const listener of [...this.#listeners]) listener();
+    for (const listener of Array.from(this.#listeners)) listener();
   }
 }
 

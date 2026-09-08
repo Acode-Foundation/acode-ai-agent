@@ -23,9 +23,7 @@ import {
 import { PROVIDERS, ProviderRegistry } from "../src/providers/providerRegistry.ts";
 
 test("reserved ids match the built-in provider list", () => {
-  expect([...BUILTIN_PROVIDER_IDS].sort()).toEqual(
-    [...PROVIDERS.map((provider) => provider.id)].sort(),
-  );
+  expect([...BUILTIN_PROVIDER_IDS].sort()).toEqual(PROVIDERS.map((provider) => provider.id).sort());
 });
 
 test("normalizes OpenAI-compatible base URLs and rejects unsafe ones", () => {
