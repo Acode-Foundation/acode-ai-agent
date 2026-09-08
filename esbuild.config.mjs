@@ -24,20 +24,20 @@ function serveUrls(hosts, port) {
 const isServe = process.argv.includes("--serve");
 
 function packZip() {
-  execFile(process.execPath, ["./pack-zip.js"], (err, stdout) => {
-    if (err) {
-      console.error("Error packing zip:", err);
-      return;
-    }
-    console.log(stdout.trim());
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, ["./pack-zip.js"], (err, stdout) => {
+      if (err) return reject(err);
+      console.log(stdout.trim());
+      resolve();
+    });
   });
 }
 
 const zipPlugin = {
   name: "zip-plugin",
   setup(build) {
-    build.onEnd(() => {
-      packZip();
+    build.onEnd(async (result) => {
+      if (isServe && !result.errors.length) await packZip();
     });
   },
 };
@@ -116,9 +116,11 @@ const buildConfig = {
     if (externalImports.length) {
       throw new Error(`Portable bundle has external runtime imports: ${externalImports.map((entry) => entry.path).join(", ")}`);
     }
-    if ((output?.bytes ?? 0) > 1_950_000) {
-      throw new Error(`AI bundle exceeds the 1.95 MB mobile budget: ${output.bytes} bytes`);
+    // Pi 0.85.1 adds durable lane execution and updated provider SDKs (~2.28 MB).
+    if ((output?.bytes ?? 0) > 2_400_000) {
+      throw new Error(`AI bundle exceeds the 2.4 MB mobile budget: ${output.bytes} bytes`);
     }
+    await packZip();
     console.log("Production build complete.");
   }
 })();

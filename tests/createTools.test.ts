@@ -84,7 +84,7 @@ test("read_file returns PNG content through Pi's image processor contract", asyn
 
 	const output = await read.execute("read-1", { path: "shots/home.png" });
 
-	expect(imageProcessor).toHaveBeenCalledWith(png, "image/png", { autoResizeImages: false });
+	expect(imageProcessor).toHaveBeenCalledWith(png, "image/png", { autoResizeImages: false }, expect.objectContaining({ abortSignal: undefined }));
 	expect(output.content).toEqual([
 		{ type: "text", text: "Read image file [image/png]\n[Image resized for inline display.]" },
 		{ type: "image", data: "processed-png", mimeType: "image/png" },

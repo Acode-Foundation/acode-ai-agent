@@ -1,428 +1,120 @@
-import type { AgentMessage, SessionMetadata, SessionStorage, SessionTreeEntry } from "@earendil-works/pi-agent-core";
-import { InMemorySessionStorage, Session } from "@earendil-works/pi-agent-core";
-import { parseChatIndex, parseStoredChat, parseStoredSession } from "../core/schema";
-import { sessionEntriesFromMessages, titleFromEntries, titleFromMessages } from "../session/sessionText";
-import { createKvStore, MemoryKvStore, type KvStore } from "./kvStore";
+import { BACKGROUND_CONTEXT as context, JsonlSessionRepo, getOrThrow, value, type FileSystem, type JsonlSessionMetadata, type Session } from "@earendil-works/pi-agent-core";
+import { redactedSessionFileSystem } from "./sessionRedaction";
+import { privateSessionFileSystem } from "./sessionFileSystem";
+export { createChatId, messagePlainText, titleFromEntries, titleFromMessages } from "../session/sessionText";
 
-export { createChatId, messagePlainText, sessionEntriesFromMessages, titleFromEntries, titleFromMessages } from "../session/sessionText";
+export type ChatMeta = { id: string; title: string; workspaceId: string; workspaceName: string; updatedAt: number };
+export type SessionRecord = ChatMeta & { providerId: string; modelId: string };
+export type SessionMetaPatch = Partial<Pick<SessionRecord, "title" | "providerId" | "modelId">>;
+const META = value<SessionRecord>("acode", "metadata");
+const TASKS = value<unknown>("acode", "tasks");
+const CWD = "/acode";
 
-const INDEX_KEY = "acode.ai-agent.chats.v3";
-const SESSION_PREFIX = "acode.ai-agent.session.v3:";
-const TASKS_PREFIX = "acode.ai-agent.tasks.v1:";
-const V2_INDEX_KEY = "acode.ai-agent.chats.v2";
-const V2_PREFIX = "acode.ai-agent.chat.v2:";
-const LEGACY_PREFIX = "acode.ai-agent.session.v1:";
-const INDEX_LIMIT = 40;
+export function createSessionStore(_ctx?: Acode.PluginContext | null): SessionStore { return new SessionStore(); }
 
-export type ChatMeta = {
-	id: string;
-	title: string;
-	workspaceId: string;
-	workspaceName: string;
-	updatedAt: number;
-};
-
-export type StoredSessionRecord = ChatMeta & {
-	providerId: string;
-	modelId: string;
-	createdAt: string;
-	leafId: string | null;
-	entries: SessionTreeEntry[];
-};
-
-export type SessionMetaPatch = Partial<Pick<StoredSessionRecord, "title" | "providerId" | "modelId">>;
-
-export function createSessionStore(ctx?: Acode.PluginContext | null): SessionStore {
-	return new SessionStore(createKvStore(ctx));
-}
-
+/** One repository owner per plugin instance. Pi owns all session transactions. */
 export class SessionStore {
-	#kv: KvStore;
-	#index: ChatMeta[] = [];
+	readonly driver = "filesystem" as const;
+	#fs?: FileSystem;
+	#repo?: JsonlSessionRepo;
+	#index = new Map<string, SessionRecord>();
+	#metadata = new Map<string, JsonlSessionMetadata>();
+	#sessions = new Map<string, Session<JsonlSessionMetadata>>();
 	#ready?: Promise<void>;
-	#queue: Promise<void> = Promise.resolve();
-
-	constructor(kv: KvStore = new MemoryKvStore()) {
-		this.#kv = kv;
-	}
-
-	get driver(): KvStore["driver"] {
-		return this.#kv.driver;
-	}
-
-	list(): ChatMeta[] {
-		return this.#index.map((item) => ({ ...item }));
-	}
-
-	load(id: string): ChatMeta | undefined {
-		const item = this.#index.find((chat) => chat.id === id);
-		return item ? { ...item } : undefined;
-	}
-
+	constructor(fileSystem?: FileSystem) { this.#fs = fileSystem; }
+	list(): ChatMeta[] { return [...this.#index.values()].sort((a, b) => b.updatedAt - a.updatedAt).map((item) => ({ ...item })); }
+	load(id: string): ChatMeta | undefined { const item = this.#index.get(id); return item && { ...item }; }
 	async hydrate(): Promise<void> {
-		this.#ready ??= this.#hydrate().catch((error) => {
-			this.#kv = new MemoryKvStore();
-			this.#index = [];
-			console.warn("AI session storage failed; chats will not persist", error);
-		});
-		await this.#ready;
+		this.#ready ??= this.#hydrate().catch((error) => { this.#ready = undefined; throw error; });
+		return this.#ready;
 	}
-
-	async open(options: {
-		id: string;
-		workspaceId: string;
-		workspaceName?: string;
-		providerId: string;
-		modelId: string;
-		title?: string;
-	}): Promise<{
-		session: Session<SessionMetadata>;
-		record: Omit<StoredSessionRecord, "entries" | "leafId">;
-		update(patch: SessionMetaPatch): void;
-		persist(): Promise<void>;
-	}> {
+	async #hydrate(): Promise<void> {
+		this.#fs ??= privateSessionFileSystem();
+		this.#repo ??= new JsonlSessionRepo({ fileSystem: redactedSessionFileSystem(this.#fs), sessionsRoot: "/sessions" });
+		for (const metadata of await this.#repo.list(undefined, context)) {
+			this.#metadata.set(metadata.id, metadata);
+			const session = await this.#repo.open(metadata, context);
+			try {
+				const record = (await session.getValue(META, context))?.value;
+				if (record) this.#index.set(metadata.id, { ...record, id: metadata.id, updatedAt: Math.max(record.updatedAt, metadata.modifiedAt) });
+			} finally { await session.close(context); }
+		}
+	}
+	async #session(id: string): Promise<Session<JsonlSessionMetadata>> {
 		await this.hydrate();
-		const existing = await this.#read(options.id);
-		const record: Omit<StoredSessionRecord, "entries" | "leafId"> = {
-			id: options.id,
-			title: existing?.title || options.title || "New chat",
-			workspaceId: existing?.workspaceId || options.workspaceId,
-			workspaceName: options.workspaceName || existing?.workspaceName || "",
-			providerId: existing?.providerId || options.providerId,
-			modelId: existing?.modelId || options.modelId,
-			createdAt: existing?.createdAt || new Date().toISOString(),
-			updatedAt: existing?.updatedAt ?? Date.now(),
-		};
-		this.#upsertIndex(record);
-		const inner = new InMemorySessionStorage({
-			entries: existing?.entries ?? [],
-			metadata: { id: record.id, createdAt: record.createdAt },
-		});
-		const persist = async () => {
-			const [entries, leafId] = await Promise.all([inner.getEntries(), inner.getLeafId()]);
-			await this.#write({ ...record, entries, leafId, updatedAt: Date.now() });
-		};
-		let flush = Promise.resolve();
-		const schedule = () => {
-			flush = flush.then(persist, persist);
-		};
-		const storage = new PersistedSessionStorage(inner, schedule);
+		const existing = this.#sessions.get(id);
+		if (existing) return existing;
+		const metadata = this.#metadata.get(id);
+		if (!metadata) throw new Error(`Unknown chat: ${id}`);
+		const session = await this.#repo!.open(metadata, context);
+		this.#sessions.set(id, session);
+		return session;
+	}
+	async open(options: { id: string; workspaceId: string; workspaceName?: string; providerId: string; modelId: string; title?: string }) {
+		await this.hydrate();
+		if (!this.#metadata.has(options.id)) {
+			const session = await this.#repo!.create({ id: options.id, cwd: CWD }, context);
+			this.#metadata.set(options.id, session.metadata);
+			this.#sessions.set(options.id, session);
+		}
+		const session = await this.#session(options.id);
+		const record: SessionRecord = { title: "New chat", workspaceName: "", updatedAt: Date.now(), ...options, ...this.#index.get(options.id) };
+		this.#index.set(options.id, record);
+		await session.setValue(META, record, context);
 		return {
-			session: new Session(storage),
-			record,
-			update(patch) {
-				if (patch.title !== undefined) record.title = patch.title || record.title;
-				if (patch.providerId) record.providerId = patch.providerId;
-				if (patch.modelId) record.modelId = patch.modelId;
-				schedule();
-			},
-			persist() {
-				return flush.then(persist, persist);
-			},
+			session, record,
+			update: (patch: SessionMetaPatch) => { Object.assign(record, patch, { updatedAt: Date.now() }); },
+			persist: async () => { await session.setValue(META, { ...record }, context); },
 		};
 	}
-
+	async release(id: string): Promise<void> {
+		const session = this.#sessions.get(id);
+		if (session) { await session.close(context); this.#sessions.delete(id); }
+	}
 	async remove(id: string): Promise<void> {
 		await this.hydrate();
-		this.#index = this.#index.filter((item) => item.id !== id);
-		await this.#enqueue(async () => {
-			await this.#kv.delete(`${SESSION_PREFIX}${id}`);
-			await this.#kv.delete(`${TASKS_PREFIX}${id}`);
-			await this.#kv.set(INDEX_KEY, { chats: this.#index });
-		});
+		await this.release(id);
+		const metadata = this.#metadata.get(id);
+		if (metadata) await this.#repo!.delete(metadata, context);
+		this.#metadata.delete(id); this.#index.delete(id);
 	}
-
-	async loadTasks(id: string): Promise<unknown> {
+	async loadTasks(id: string): Promise<unknown> { return (await (await this.#session(id)).getValue(TASKS, context))?.value; }
+	async saveTasks(id: string, tasks: unknown): Promise<void> { await (await this.#session(id)).setValue(TASKS, tasks, context); }
+	async copyTasks(fromId: string, toId: string): Promise<void> { const tasks = await this.loadTasks(fromId); if (tasks !== undefined) await this.saveTasks(toId, tasks); }
+	async fork(fromId: string, options: SessionRecord, targetId?: string, branch = "main", wholeTree = false): Promise<void> {
 		await this.hydrate();
-		return this.#kv.get(`${TASKS_PREFIX}${id}`);
+		const source = this.#metadata.get(fromId);
+		if (!source) throw new Error("Source chat is unavailable");
+		const session = await this.#repo!.fork(source, wholeTree ? { scope: "tree", id: options.id } : { scope: "branch", branch, id: options.id, ...(targetId ? { entryId: targetId, position: "before" as const } : {}) }, context);
+		this.#metadata.set(options.id, session.metadata); this.#sessions.set(options.id, session);
+		this.#index.set(options.id, options);
+		await session.setValue(META, options, context);
+		await session.setName(options.title, context);
 	}
-
-	async saveTasks(id: string, value: unknown): Promise<void> {
+	async export(id: string): Promise<string> {
 		await this.hydrate();
-		if (!value || typeof value !== "object") {
-			await this.#enqueue(async () => {
-				await this.#kv.delete(`${TASKS_PREFIX}${id}`);
-			});
-			return;
-		}
-		const record = value as { tasks?: unknown };
-		if (Array.isArray(record.tasks) && record.tasks.length === 0) {
-			await this.#enqueue(async () => {
-				await this.#kv.delete(`${TASKS_PREFIX}${id}`);
-			});
-			return;
-		}
-		await this.#enqueue(async () => {
-			await this.#kv.set(`${TASKS_PREFIX}${id}`, value);
-		});
+		const metadata = this.#metadata.get(id);
+		if (!metadata) throw new Error("Chat is unavailable");
+		return getOrThrow(await this.#fs!.readTextFile(metadata.path, context));
 	}
-
-	async copyTasks(fromId: string, toId: string): Promise<void> {
-		const data = await this.loadTasks(fromId);
-		if (data === undefined) return;
-		await this.saveTasks(toId, data);
-	}
-
-	async seed(options: {
-		id: string;
-		title: string;
-		workspaceId: string;
-		workspaceName: string;
-		providerId: string;
-		modelId: string;
-		entries: SessionTreeEntry[];
-	}): Promise<void> {
+	/** Pi validates JSONL and converts supported legacy Pi files; no KV migration. */
+	async import(text: string, options: SessionRecord): Promise<void> {
 		await this.hydrate();
-		const now = Date.now();
-		await this.#write({
-			...options,
-			createdAt: new Date(now).toISOString(),
-			updatedAt: now,
-			leafId: options.entries.at(-1)?.id ?? null,
-			entries: [...options.entries],
-		});
-	}
-
-	async #hydrate(): Promise<void> {
-		await this.#migrate();
-		this.#index = parseChatIndex(await this.#kv.get(INDEX_KEY));
-	}
-
-	async #read(id: string): Promise<StoredSessionRecord | undefined> {
+		const temp = getOrThrow(await this.#fs!.createTempDir("import-", context));
 		try {
-			const parsed = parseStoredSession(await this.#kv.get(`${SESSION_PREFIX}${id}`));
-			return parsed ? { ...parsed, entries: parsed.entries as SessionTreeEntry[] } : undefined;
-		} catch {
-			return undefined;
-		}
+			getOrThrow(await this.#fs!.writeFile(`${temp}/incoming/session.jsonl`, text, context));
+			const importer = new JsonlSessionRepo({ fileSystem: this.#fs!, sessionsRoot: temp });
+			const candidates = await importer.list(undefined, context);
+			if (candidates.length !== 1) throw new Error("Choose a valid Pi JSONL session export.");
+			// Give the incoming file a fresh identity before crossing repositories.
+			// Otherwise a matching open local ID could shadow the imported file.
+			const staged = await importer.fork(candidates[0], { scope: "tree" }, context);
+			await staged.close(context);
+			const session = await this.#repo!.fork(staged.metadata, { scope: "tree", id: options.id }, context);
+			this.#metadata.set(options.id, session.metadata); this.#sessions.set(options.id, session);
+			this.#index.set(options.id, options);
+			await session.setValue(META, options, context);
+			await session.setName(options.title, context);
+		} finally { getOrThrow(await this.#fs!.remove(temp, { recursive: true, force: true }, context)); }
 	}
-
-	async #write(record: StoredSessionRecord): Promise<void> {
-		const safe = redactDeep({
-			...record,
-			title: record.title || titleFromEntries(record.entries) || "New chat",
-			updatedAt: Date.now(),
-		});
-		this.#upsertIndex(safe);
-		try {
-			await this.#enqueue(async () => {
-				await this.#kv.set(`${SESSION_PREFIX}${record.id}`, safe);
-				await this.#kv.set(INDEX_KEY, { chats: this.#index.slice(0, INDEX_LIMIT) });
-			});
-		} catch (error) {
-			console.warn("AI session could not be persisted", error);
-		}
-	}
-
-	#upsertIndex(record: Pick<StoredSessionRecord, "id" | "title" | "workspaceId" | "workspaceName" | "updatedAt">): void {
-		const next: ChatMeta = {
-			id: record.id,
-			title: record.title || "New chat",
-			workspaceId: record.workspaceId,
-			workspaceName: record.workspaceName || "",
-			updatedAt: record.updatedAt,
-		};
-		this.#index = [next, ...this.#index.filter((item) => item.id !== record.id)].slice(0, INDEX_LIMIT);
-	}
-
-	async #migrate(): Promise<void> {
-		const existing = parseChatIndex(await this.#kv.get(INDEX_KEY));
-		if (existing.length) {
-			this.#index = existing;
-			return;
-		}
-		const records = collectLegacySessions();
-		if (!records.length) return;
-		const chats: ChatMeta[] = [];
-		for (const record of records) {
-			await this.#kv.set(`${SESSION_PREFIX}${record.id}`, record);
-			chats.push({ id: record.id, title: record.title, workspaceId: record.workspaceId, workspaceName: record.workspaceName || "", updatedAt: record.updatedAt });
-		}
-		this.#index = chats;
-		await this.#kv.set(INDEX_KEY, { chats });
-		clearLegacyLocalStorage();
-	}
-
-	#enqueue(task: () => Promise<void>): Promise<void> {
-		this.#queue = this.#queue.then(task, task);
-		return this.#queue;
-	}
-}
-
-class PersistedSessionStorage implements SessionStorage<SessionMetadata> {
-	#inner: InMemorySessionStorage<SessionMetadata>;
-	#onChange: () => void;
-
-	constructor(inner: InMemorySessionStorage<SessionMetadata>, onChange: () => void) {
-		this.#inner = inner;
-		this.#onChange = onChange;
-	}
-
-	getMetadata() { return this.#inner.getMetadata(); }
-	getLeafId() { return this.#inner.getLeafId(); }
-	createEntryId() { return this.#inner.createEntryId(); }
-	getEntry(id: string) { return this.#inner.getEntry(id); }
-	findEntries<TType extends SessionTreeEntry["type"]>(type: TType) { return this.#inner.findEntries(type); }
-	getLabel(id: string) { return this.#inner.getLabel(id); }
-	getSessionName() { return this.#inner.getSessionName(); }
-	getSessionStats() { return this.#inner.getSessionStats(); }
-	getPathToRootOrCompaction(leafId: string | null) { return this.#inner.getPathToRootOrCompaction(leafId); }
-	getEntries(options?: Parameters<SessionStorage["getEntries"]>[0]) { return this.#inner.getEntries(options); }
-
-	async setLeafId(leafId: string | null): Promise<void> {
-		await this.#inner.setLeafId(leafId);
-		this.#onChange();
-	}
-
-	async appendEntry(entry: SessionTreeEntry): Promise<void> {
-		await this.#inner.appendEntry(entry);
-		this.#onChange();
-	}
-}
-
-function collectLegacySessions(): StoredSessionRecord[] {
-	const records: StoredSessionRecord[] = [];
-	const v3Index = parseChatIndex(readLocalJson(INDEX_KEY));
-	const seen = new Set<string>();
-	for (const meta of v3Index) {
-		const parsed = parseStoredSession(readLocalJson(`${SESSION_PREFIX}${meta.id}`));
-		if (!parsed) continue;
-		seen.add(parsed.id);
-		records.push({ ...parsed, entries: parsed.entries as SessionTreeEntry[] });
-	}
-	const v2Index = parseChatIndex(readLocalJson(V2_INDEX_KEY));
-	for (const meta of v2Index) {
-		const parsed = parseStoredChat(readLocalJson(`${V2_PREFIX}${meta.id}`));
-		if (!parsed || seen.has(parsed.id)) continue;
-		seen.add(parsed.id);
-		records.push(recordFromMessages({ ...parsed, messages: parsed.messages as AgentMessage[] }));
-	}
-	const storage = localStorageOrNull();
-	if (!storage) return records;
-	for (let index = 0; index < storage.length; index += 1) {
-		const key = storage.key(index);
-		if (!key?.startsWith(LEGACY_PREFIX)) continue;
-		const raw = readLocalJson(key) as {
-			workspaceId?: string;
-			providerId?: string;
-			modelId?: string;
-			messages?: AgentMessage[];
-			updatedAt?: number;
-		} | null;
-		if (!raw?.workspaceId) continue;
-		const id = `legacy-${raw.workspaceId}`;
-		if (seen.has(id)) continue;
-		records.push(recordFromMessages({
-			id,
-			title: titleFromMessages(raw.messages ?? []) || "Imported chat",
-			workspaceId: raw.workspaceId,
-			providerId: raw.providerId ?? "openrouter",
-			modelId: raw.modelId ?? "",
-			messages: raw.messages ?? [],
-			updatedAt: raw.updatedAt ?? Date.now(),
-		}));
-	}
-	return records;
-}
-
-function recordFromMessages(chat: {
-	id: string;
-	title: string;
-	workspaceId: string;
-	providerId: string;
-	modelId: string;
-	messages: AgentMessage[];
-	updatedAt: number;
-}): StoredSessionRecord {
-	const entries = sessionEntriesFromMessages(chat.messages);
-	return {
-		id: chat.id,
-		title: chat.title || titleFromMessages(chat.messages) || "Imported chat",
-		workspaceId: chat.workspaceId,
-		workspaceName: "",
-		providerId: chat.providerId,
-		modelId: chat.modelId,
-		createdAt: new Date(chat.updatedAt).toISOString(),
-		updatedAt: chat.updatedAt,
-		leafId: entries.at(-1)?.id ?? null,
-		entries,
-	};
-}
-
-function clearLegacyLocalStorage(): void {
-	const storage = localStorageOrNull();
-	if (!storage) return;
-	const keys: string[] = [];
-	for (let index = 0; index < storage.length; index += 1) {
-		const key = storage.key(index);
-		if (!key) continue;
-		if (
-			key === INDEX_KEY
-			|| key === V2_INDEX_KEY
-			|| key.startsWith(SESSION_PREFIX)
-			|| key.startsWith(V2_PREFIX)
-			|| key.startsWith(LEGACY_PREFIX)
-		) {
-			keys.push(key);
-		}
-	}
-	for (const key of keys) {
-		try {
-			storage.removeItem(key);
-		} catch {
-			// Ignore quota or private-mode failures.
-		}
-	}
-}
-
-function readLocalJson(key: string): unknown {
-	const storage = localStorageOrNull();
-	if (!storage) return null;
-	try {
-		return JSON.parse(storage.getItem(key) ?? "null");
-	} catch {
-		return null;
-	}
-}
-
-function localStorageOrNull(): Storage | null {
-	try {
-		return globalThis.localStorage ?? null;
-	} catch {
-		return null;
-	}
-}
-
-function redact(text: string): string {
-	return text
-		.replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{12,}/gi, "Bearer [REDACTED]")
-		.replace(/\b(sk-[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_API_KEY]")
-		.replace(/\b(or-[A-Za-z0-9_-]{12,})\b/gi, "[REDACTED_API_KEY]")
-		.replace(/\b(gsk_[A-Za-z0-9_-]{12,})\b/g, "[REDACTED_API_KEY]")
-		.replace(/\b(xai-[A-Za-z0-9_-]{12,})\b/gi, "[REDACTED_API_KEY]")
-		.replace(/\b(AIza[A-Za-z0-9_-]{20,})\b/g, "[REDACTED_API_KEY]");
-}
-
-function redactDeep<T>(value: T): T {
-	if (typeof value === "string") return redact(value) as T;
-	if (Array.isArray(value)) return value.map(redactDeep) as T;
-	if (value && typeof value === "object") {
-		const record = value as Record<string, unknown>;
-		if (record.type === "image" && typeof record.data === "string") {
-			return {
-				...record,
-				mimeType: typeof record.mimeType === "string" ? record.mimeType : "image/jpeg",
-				data: record.data,
-			} as T;
-		}
-		return Object.fromEntries(
-			Object.entries(record).map(([key, item]) => [
-				key,
-				/(?:api.?key|authorization|access.?token|refresh.?token|password|passphrase|secret|credential)/i.test(key)
-					? "[REDACTED_SECRET]"
-					: redactDeep(item),
-			]),
-		) as T;
-	}
-	return value;
 }
