@@ -32,10 +32,7 @@ if (readmeDotMd) {
 }
 
 if (changelogDotMd) {
-  zip.file(
-    json.changelogs || path.basename(changelogDotMd),
-    fs.readFileSync(changelogDotMd),
-  );
+  zip.file(json.changelogs || path.basename(changelogDotMd), fs.readFileSync(changelogDotMd));
 }
 
 loadFile("", distFolder);

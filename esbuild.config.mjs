@@ -53,7 +53,8 @@ const portableNodeGuard = {
       namespace: "portable-node-stub",
     }));
     build.onLoad({ filter: /.*/, namespace: "portable-node-stub" }, () => ({
-      contents: 'export function readFileSync() { throw new Error("Node filesystem is unavailable in the portable agent runtime"); }',
+      contents:
+        'export function readFileSync() { throw new Error("Node filesystem is unavailable in the portable agent runtime"); }',
       loader: "js",
     }));
     build.onResolve({ filter: /^node:/ }, (args) => ({
@@ -112,9 +113,13 @@ const buildConfig = {
     console.log("Building for production...");
     const result = await esbuild.build(buildConfig);
     const output = result.metafile.outputs["dist/main.js"];
-    const externalImports = Object.values(result.metafile.outputs).flatMap((entry) => entry.imports.filter((item) => item.external));
+    const externalImports = Object.values(result.metafile.outputs).flatMap((entry) =>
+      entry.imports.filter((item) => item.external),
+    );
     if (externalImports.length) {
-      throw new Error(`Portable bundle has external runtime imports: ${externalImports.map((entry) => entry.path).join(", ")}`);
+      throw new Error(
+        `Portable bundle has external runtime imports: ${externalImports.map((entry) => entry.path).join(", ")}`,
+      );
     }
     // Pi 0.85.1 adds durable lane execution and updated provider SDKs (~2.28 MB).
     if ((output?.bytes ?? 0) > 2_400_000) {

@@ -1,5 +1,18 @@
-import { addResult, isAbortError, matchesDomainFilters, normalizeCount, splitDomainFilter, throwIfAborted } from "./request";
-import { SearchError, type ExtractedContent, type SearchOptions, type SearchResponse, type SearchResult } from "./types";
+import {
+  addResult,
+  isAbortError,
+  matchesDomainFilters,
+  normalizeCount,
+  splitDomainFilter,
+  throwIfAborted,
+} from "./request";
+import {
+  SearchError,
+  type ExtractedContent,
+  type SearchOptions,
+  type SearchResponse,
+  type SearchResult,
+} from "./types";
 
 const PAGE_TIMEOUT_MS = 12_000;
 const SEARCH_TIMEOUT_MS = 32_000;
@@ -127,183 +140,244 @@ const PAGE_SCRAPE = `(function(){
 })()`;
 
 export function getWebViewApi(): Acode.WebViewApi | undefined {
-	try {
-		const api = acode.require("webview") as Acode.WebViewApi | undefined;
-		return api && typeof api.create === "function" ? api : undefined;
-	} catch {
-		return undefined;
-	}
+  try {
+    const api = acode.require("webview") as Acode.WebViewApi | undefined;
+    return api && typeof api.create === "function" ? api : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-export async function searchWithWebView(query: string, options: SearchOptions = {}): Promise<SearchResponse> {
-	const encoded = encodeURIComponent(withRecency(query, options));
-	const results = await withHiddenWebView(options.signal, async (view) => {
-		for (const [url, match] of [
-			[`https://html.duckduckgo.com/html/?q=${encoded}`, "duckduckgo.com"],
-			[`https://lite.duckduckgo.com/lite/?q=${encoded}`, "duckduckgo.com"],
-			[`https://www.bing.com/search?q=${encoded}`, "bing.com"],
-		] as const) {
-			const found = await scrape(view, url, SEARCH_SCRAPE, options, (href) => href.includes(match));
-			if (found.length) return found;
-		}
-		return [];
-	});
-	if (!results.length) throw new SearchError("webview", "invalid-response", "Device search returned no parseable results.");
-	return { provider: "webview", answer: "", results };
+export async function searchWithWebView(
+  query: string,
+  options: SearchOptions = {},
+): Promise<SearchResponse> {
+  const encoded = encodeURIComponent(withRecency(query, options));
+  const results = await withHiddenWebView(options.signal, async (view) => {
+    for (const [url, match] of [
+      [`https://html.duckduckgo.com/html/?q=${encoded}`, "duckduckgo.com"],
+      [`https://lite.duckduckgo.com/lite/?q=${encoded}`, "duckduckgo.com"],
+      [`https://www.bing.com/search?q=${encoded}`, "bing.com"],
+    ] as const) {
+      const found = await scrape(view, url, SEARCH_SCRAPE, options, (href) => href.includes(match));
+      if (found.length) return found;
+    }
+    return [];
+  });
+  if (!results.length)
+    throw new SearchError(
+      "webview",
+      "invalid-response",
+      "Device search returned no parseable results.",
+    );
+  return { provider: "webview", answer: "", results };
 }
 
-export async function fetchViaWebView(url: string, signal?: AbortSignal): Promise<ExtractedContent> {
-	const scraped = await withHiddenWebView(signal, async (view) => {
-		const raw = await loadAndEvaluate(view, url, PAGE_SCRAPE, signal);
-		return parseJson(raw) as { title?: string; content?: string } | undefined;
-	});
-	const content = typeof scraped?.content === "string" ? scraped.content.trim() : "";
-	if (!content) throw new SearchError("webview", "invalid-response", "Device WebView returned empty page text.");
-	return {
-		url,
-		title: typeof scraped?.title === "string" && scraped.title.trim() ? scraped.title.trim() : url,
-		content: content.slice(0, MAX_INLINE_CHARS),
-	};
+export async function fetchViaWebView(
+  url: string,
+  signal?: AbortSignal,
+): Promise<ExtractedContent> {
+  const scraped = await withHiddenWebView(signal, async (view) => {
+    const raw = await loadAndEvaluate(view, url, PAGE_SCRAPE, signal);
+    return parseJson(raw) as { title?: string; content?: string } | undefined;
+  });
+  const content = typeof scraped?.content === "string" ? scraped.content.trim() : "";
+  if (!content)
+    throw new SearchError(
+      "webview",
+      "invalid-response",
+      "Device WebView returned empty page text.",
+    );
+  return {
+    url,
+    title: typeof scraped?.title === "string" && scraped.title.trim() ? scraped.title.trim() : url,
+    content: content.slice(0, MAX_INLINE_CHARS),
+  };
 }
 
 export function parseScrapedResults(value: unknown, options: SearchOptions = {}): SearchResult[] {
-	const items = Array.isArray(value) ? value : parseJson(value);
-	if (!Array.isArray(items)) return [];
-	const filters = splitDomainFilter(options.domainFilter);
-	const results: SearchResult[] = [];
-	const seen = new Set<string>();
-	for (const item of items) {
-		if (!item || typeof item !== "object") continue;
-		const record = item as { title?: unknown; url?: unknown; snippet?: unknown };
-		if (typeof record.url !== "string" || !matchesDomainFilters(record.url, filters)) continue;
-		addResult(results, seen, record.url, record.title, typeof record.snippet === "string" ? record.snippet : "");
-		if (results.length >= normalizeCount(options.numResults)) break;
-	}
-	return results;
+  const items = Array.isArray(value) ? value : parseJson(value);
+  if (!Array.isArray(items)) return [];
+  const filters = splitDomainFilter(options.domainFilter);
+  const results: SearchResult[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as { title?: unknown; url?: unknown; snippet?: unknown };
+    if (typeof record.url !== "string" || !matchesDomainFilters(record.url, filters)) continue;
+    addResult(
+      results,
+      seen,
+      record.url,
+      record.title,
+      typeof record.snippet === "string" ? record.snippet : "",
+    );
+    if (results.length >= normalizeCount(options.numResults)) break;
+  }
+  return results;
 }
 
 export function parseJson(value: unknown): unknown {
-	if (typeof value !== "string") return value;
-	try {
-		const once = JSON.parse(value) as unknown;
-		return typeof once === "string" ? JSON.parse(once) : once;
-	} catch {
-		return undefined;
-	}
+  if (typeof value !== "string") return value;
+  try {
+    const once = JSON.parse(value) as unknown;
+    return typeof once === "string" ? JSON.parse(once) : once;
+  } catch {
+    return undefined;
+  }
 }
 
-async function withHiddenWebView<T>(signal: AbortSignal | undefined, task: (view: Acode.WebViewInstance) => Promise<T>): Promise<T> {
-	const api = getWebViewApi();
-	if (!api) throw new SearchError("webview", "credential", "Acode WebView API is not available on this build.");
-	throwIfAborted(signal);
-	const view = await withTimeout(api.create({ mode: "hidden", allowNavigation: true, visible: false }), CREATE_TIMEOUT_MS, "Device browser failed to start.", signal);
-	const onAbort = () => {
-		void view.destroy().catch(() => undefined);
-	};
-	signal?.addEventListener("abort", onAbort);
-	try {
-		throwIfAborted(signal);
-		return await withTimeout(task(view), SEARCH_TIMEOUT_MS, "Device search timed out.", signal);
-	} finally {
-		signal?.removeEventListener("abort", onAbort);
-		await view.destroy().catch(() => undefined);
-	}
+async function withHiddenWebView<T>(
+  signal: AbortSignal | undefined,
+  task: (view: Acode.WebViewInstance) => Promise<T>,
+): Promise<T> {
+  const api = getWebViewApi();
+  if (!api)
+    throw new SearchError(
+      "webview",
+      "credential",
+      "Acode WebView API is not available on this build.",
+    );
+  throwIfAborted(signal);
+  const view = await withTimeout(
+    api.create({ mode: "hidden", allowNavigation: true, visible: false }),
+    CREATE_TIMEOUT_MS,
+    "Device browser failed to start.",
+    signal,
+  );
+  const onAbort = () => {
+    void view.destroy().catch(() => undefined);
+  };
+  signal?.addEventListener("abort", onAbort);
+  try {
+    throwIfAborted(signal);
+    return await withTimeout(task(view), SEARCH_TIMEOUT_MS, "Device search timed out.", signal);
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    await view.destroy().catch(() => undefined);
+  }
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string, signal?: AbortSignal): Promise<T> {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => finish(new SearchError("webview", "transient", message)), timeoutMs);
-		const onAbort = () => finish(new DOMException("Operation aborted", "AbortError"));
-		const finish = (error?: unknown, value?: T) => {
-			clearTimeout(timer);
-			signal?.removeEventListener("abort", onAbort);
-			if (error) reject(error);
-			else resolve(value as T);
-		};
-		if (signal?.aborted) {
-			finish(new DOMException("Operation aborted", "AbortError"));
-			return;
-		}
-		signal?.addEventListener("abort", onAbort, { once: true });
-		promise.then((value) => finish(undefined, value), (error) => finish(error));
-	});
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => finish(new SearchError("webview", "transient", message)),
+      timeoutMs,
+    );
+    const onAbort = () => finish(new DOMException("Operation aborted", "AbortError"));
+    const finish = (error?: unknown, value?: T) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (error) reject(error);
+      else resolve(value as T);
+    };
+    if (signal?.aborted) {
+      finish(new DOMException("Operation aborted", "AbortError"));
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => finish(undefined, value),
+      (error) => finish(error),
+    );
+  });
 }
 
 async function scrape(
-	view: Acode.WebViewInstance,
-	url: string,
-	script: string,
-	options: SearchOptions,
-	match?: (url: string) => boolean,
+  view: Acode.WebViewInstance,
+  url: string,
+  script: string,
+  options: SearchOptions,
+  match?: (url: string) => boolean,
 ): Promise<SearchResult[]> {
-	try {
-		const first = parseScrapedResults(await loadAndEvaluate(view, url, script, options.signal, match), options);
-		if (first.length) return first;
-		await settle(options.signal, RETRY_SETTLE_MS);
-		return parseScrapedResults(await view.evaluate(script), options);
-	} catch (error) {
-		if (isAbortError(error)) throw error;
-		return [];
-	}
+  try {
+    const first = parseScrapedResults(
+      await loadAndEvaluate(view, url, script, options.signal, match),
+      options,
+    );
+    if (first.length) return first;
+    await settle(options.signal, RETRY_SETTLE_MS);
+    return parseScrapedResults(await view.evaluate(script), options);
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    return [];
+  }
 }
 
 async function loadAndEvaluate(
-	view: Acode.WebViewInstance,
-	url: string,
-	script: string,
-	signal: AbortSignal | undefined,
-	match?: (url: string) => boolean,
+  view: Acode.WebViewInstance,
+  url: string,
+  script: string,
+  signal: AbortSignal | undefined,
+  match?: (url: string) => boolean,
 ): Promise<unknown> {
-	const finished = waitForPage(view, signal, match);
-	await view.loadURL(url);
-	await finished;
-	await settle(signal, SETTLE_MS);
-	return view.evaluate(script);
+  const finished = waitForPage(view, signal, match);
+  await view.loadURL(url);
+  await finished;
+  await settle(signal, SETTLE_MS);
+  return view.evaluate(script);
 }
 
-function waitForPage(view: Acode.WebViewInstance, signal: AbortSignal | undefined, match?: (url: string) => boolean): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => finish(new Error("Page load timed out")), PAGE_TIMEOUT_MS);
-		const onAbort = () => finish(new DOMException("Operation aborted", "AbortError"));
-		const onPage: Acode.WebViewEventCallback = (_event, data) => {
-			const url = data && typeof data === "object" && "url" in data ? String((data as { url?: unknown }).url ?? "") : "";
-			if (url === "about:blank") return;
-			if (match && url && !match(url)) return;
-			finish();
-		};
-		const finish = (error?: Error) => {
-			clearTimeout(timer);
-			signal?.removeEventListener("abort", onAbort);
-			view.off("pageFinished", onPage);
-			if (error) reject(error);
-			else resolve();
-		};
-		if (signal?.aborted) {
-			finish(new DOMException("Operation aborted", "AbortError"));
-			return;
-		}
-		signal?.addEventListener("abort", onAbort, { once: true });
-		view.on("pageFinished", onPage);
-	});
+function waitForPage(
+  view: Acode.WebViewInstance,
+  signal: AbortSignal | undefined,
+  match?: (url: string) => boolean,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error("Page load timed out")), PAGE_TIMEOUT_MS);
+    const onAbort = () => finish(new DOMException("Operation aborted", "AbortError"));
+    const onPage: Acode.WebViewEventCallback = (_event, data) => {
+      const url =
+        data && typeof data === "object" && "url" in data
+          ? String((data as { url?: unknown }).url ?? "")
+          : "";
+      if (url === "about:blank") return;
+      if (match && url && !match(url)) return;
+      finish();
+    };
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      view.off("pageFinished", onPage);
+      if (error) reject(error);
+      else resolve();
+    };
+    if (signal?.aborted) {
+      finish(new DOMException("Operation aborted", "AbortError"));
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    view.on("pageFinished", onPage);
+  });
 }
 
 function settle(signal: AbortSignal | undefined, ms: number): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(resolve, ms);
-		const onAbort = () => {
-			clearTimeout(timer);
-			reject(new DOMException("Operation aborted", "AbortError"));
-		};
-		if (signal?.aborted) {
-			onAbort();
-			return;
-		}
-		signal?.addEventListener("abort", onAbort, { once: true });
-	});
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("Operation aborted", "AbortError"));
+    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function withRecency(query: string, options: SearchOptions): string {
-	if (!options.recencyFilter) return query;
-	const labels = { day: "past 24 hours", week: "past week", month: "past month", year: "past year" };
-	return `${query} ${labels[options.recencyFilter]}`;
+  if (!options.recencyFilter) return query;
+  const labels = {
+    day: "past 24 hours",
+    week: "past week",
+    month: "past month",
+    year: "past year",
+  };
+  return `${query} ${labels[options.recencyFilter]}`;
 }

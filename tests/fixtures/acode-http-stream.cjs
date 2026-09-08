@@ -7,7 +7,7 @@ module.exports = {
 
     var nativeOptions = {};
     for (var key in options) {
-      if (key !== 'signal') nativeOptions[key] = options[key];
+      if (key !== "signal") nativeOptions[key] = options[key];
     }
 
     return new Promise(function (resolve, reject) {
@@ -24,13 +24,13 @@ module.exports = {
       function sendCancel() {
         if (cancelSent) return;
         cancelSent = true;
-        cordova.exec(null, null, 'System', 'http-stream-cancel', [requestId]);
+        cordova.exec(null, null, "System", "http-stream-cancel", [requestId]);
       }
 
       function teardownSignal() {
         if (signal) {
           try {
-            signal.removeEventListener('abort', onAbort);
+            signal.removeEventListener("abort", onAbort);
           } catch (e) {}
         }
       }
@@ -53,8 +53,8 @@ module.exports = {
       function onAbort() {
         if (terminal) return;
         if (started) sendCancel();
-        var err = new Error('The http stream was aborted');
-        err.name = 'AbortError';
+        var err = new Error("The http stream was aborted");
+        err.name = "AbortError";
         fail(err);
       }
 
@@ -67,7 +67,7 @@ module.exports = {
         var delta = consumed - ackedBytes;
         if (delta > 0) {
           ackedBytes = consumed;
-          cordova.exec(null, null, 'System', 'http-stream-ack', [requestId, delta]);
+          cordova.exec(null, null, "System", "http-stream-ack", [requestId, delta]);
         }
       }
 
@@ -92,29 +92,32 @@ module.exports = {
         return h;
       }
 
-      var stream = new ReadableStream({
-        start: function (c) {
-          controller = c;
+      var stream = new ReadableStream(
+        {
+          start: function (c) {
+            controller = c;
+          },
+          pull: function () {
+            ackConsumed();
+          },
+          cancel: function () {
+            finish();
+            if (started) sendCancel();
+          },
         },
-        pull: function () {
-          ackConsumed();
+        {
+          highWaterMark: HIGH_WATER_MARK,
+          size: function (chunk) {
+            return chunk.byteLength;
+          },
         },
-        cancel: function () {
-          finish();
-          if (started) sendCancel();
-        }
-      }, {
-        highWaterMark: HIGH_WATER_MARK,
-        size: function (chunk) {
-          return chunk.byteLength;
-        }
-      });
+      );
 
       if (signal) {
         if (signal.aborted) {
           onAbort();
         } else {
-          signal.addEventListener('abort', onAbort);
+          signal.addEventListener("abort", onAbort);
         }
       }
       if (terminal) return;
@@ -122,10 +125,10 @@ module.exports = {
       started = true;
       cordova.exec(
         function (event) {
-          if (!event || typeof event !== 'object' || terminal) return;
+          if (!event || typeof event !== "object" || terminal) return;
 
           switch (event.type) {
-            case 'headers': {
+            case "headers": {
               headersReceived = true;
               var status = event.status;
               var cannotHaveBody = status === 204 || status === 205 || status === 304;
@@ -134,52 +137,50 @@ module.exports = {
               if (cannotHaveBody) {
                 response = new Response(null, {
                   status: status,
-                  statusText: event.statusText || '',
-                  headers: headers
+                  statusText: event.statusText || "",
+                  headers: headers,
                 });
               } else {
                 response = new Response(stream, {
                   status: status,
-                  statusText: event.statusText || '',
-                  headers: headers
+                  statusText: event.statusText || "",
+                  headers: headers,
                 });
               }
               if (event.url) {
-                Object.defineProperty(response, 'url', { value: event.url, configurable: true });
+                Object.defineProperty(response, "url", { value: event.url, configurable: true });
               }
               resolve(response);
               break;
             }
-            case 'data': {
+            case "data": {
               if (controller && event.chunk) {
-                var bytes = event.b64
-                  ? base64ToBytes(event.chunk)
-                  : latin1ToBytes(event.chunk);
+                var bytes = event.b64 ? base64ToBytes(event.chunk) : latin1ToBytes(event.chunk);
                 controller.enqueue(bytes);
                 receivedBytes += bytes.byteLength;
               }
               break;
             }
-            case 'complete': {
+            case "complete": {
               finish();
               if (controller) controller.close();
               break;
             }
-            case 'error': {
-              fail(new Error(event.message || 'Stream failed'));
+            case "error": {
+              fail(new Error(event.message || "Stream failed"));
               break;
             }
           }
         },
         function (err) {
-          fail(typeof err === 'string' ? new Error(err) : err);
+          fail(typeof err === "string" ? new Error(err) : err);
         },
-        'System',
-        'http-stream-start',
-        [requestId, url, nativeOptions]
+        "System",
+        "http-stream-start",
+        [requestId, url, nativeOptions],
       );
     });
-  }
+  },
 };
 
 function base64ToBytes(base64) {

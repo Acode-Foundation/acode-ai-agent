@@ -6,7 +6,6 @@ A coding agent that runs inside [Acode](https://acode.app) as an editor tab. It 
 
 This is not a from-scratch agent. The model loop, providers, sessions, skills, compaction, and tool calling come from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` 0.85.1). This plugin is the Acode/Android host: editor UI, workspace sandbox, approvals, and anything that has to work in a WebView without Node.
 
-
 If you already use Pi on a desktop, the same ideas apply here:
 
 - Providers, models, thinking levels, and device-code / API-key login
@@ -52,10 +51,10 @@ The agent needs a folder. Without one, tools have no sandbox.
 
 **Commands registered with Acode**
 
-| Command | What it does |
-| --- | --- |
-| `AI Agent: Open` | Opens the agent tab |
-| `AI Agent: New conversation` | Starts a new session in the current folder |
+| Command                        | What it does                                      |
+| ------------------------------ | ------------------------------------------------- |
+| `AI Agent: Open`               | Opens the agent tab                               |
+| `AI Agent: New conversation`   | Starts a new session in the current folder        |
 | `AI Agent: New Random project` | Creates a starter project under Home and opens it |
 
 Sessions are stored per project. The sidebar lists them, can search them, and can open a session in a dedicated tab.
@@ -70,14 +69,14 @@ OpenRouter, OpenAI, Anthropic, Google Gemini, xAI, Groq, DeepSeek, Cerebras, Fir
 
 **Subscription sign-in**
 
-| Provider | Sign-in |
-| --- | --- |
-| OpenRouter | OpenRouter account |
-| Codex | ChatGPT Plus / Pro |
-| Anthropic | Claude Pro / Max |
-| GitHub Copilot | Copilot subscription |
-| xAI | Grok / X subscription |
-| Kimi Coding | Kimi Code |
+| Provider       | Sign-in               |
+| -------------- | --------------------- |
+| OpenRouter     | OpenRouter account    |
+| Codex          | ChatGPT Plus / Pro    |
+| Anthropic      | Claude Pro / Max      |
+| GitHub Copilot | Copilot subscription  |
+| xAI            | Grok / X subscription |
+| Kimi Coding    | Kimi Code             |
 
 Codex offers browser sign-in and device-code sign-in. Device-code sign-in connects automatically after approval; first enable device-code authorization in ChatGPT Settings → Security. For browser sign-in, complete ChatGPT sign-in in the browser, then copy the full `http://localhost:1455/auth/callback?...` address and paste it into Acode. The localhost page may show a connection error because Acode does not run a callback server; copying its address completes the sign-in. This browser OAuth flow does not require enabling device-code authorization in ChatGPT settings.
 
@@ -111,11 +110,11 @@ Completed `edit_file` / `write_file` calls show a CodeMirror diff card in the wo
 
 Three modes, from the composer:
 
-| Mode | Behavior |
-| --- | --- |
-| **Ask** | Approve each edit and each terminal command |
+| Mode            | Behavior                                            |
+| --------------- | --------------------------------------------------- |
+| **Ask**         | Approve each edit and each terminal command         |
 | **Allow edits** | Workspace writes this session; still ask for `bash` |
-| **Full access** | Skip those prompts |
+| **Full access** | Skip those prompts                                  |
 
 Approvals can also be granted for the rest of the session from the prompt itself (`Allow for session`). Session grants reset on a new/forked/cloned session.
 
@@ -158,25 +157,25 @@ Focus on bugs, missing tests, and API breakage. Do not rewrite style-only issues
 
 ## Slash commands
 
-| Command | Action |
-| --- | --- |
-| `/model` | Choose the model for this session |
-| `/settings` | Open Pi settings |
-| `/login` `/logout` | Provider credentials |
-| `/resume` | Session list |
-| `/new` | Fresh session |
-| `/compact` | Summarize older context |
-| `/name` | Rename this session |
-| `/session` | Usage and identity |
-| `/tasks` | Task list (`clear`, `clear-completed`) |
-| `/tree` | Jump to an earlier point |
-| `/fork` | Fork from a user message |
-| `/clone` | Clone the active branch |
-| `/copy` | Copy the latest assistant reply |
-| `/export` | Show Pi JSONL (copy from the sheet) |
-| `/import` | Import a Pi JSONL session |
-| `/reload` | Reload skills and prompts |
-| `/hotkeys` | Composer shortcuts |
+| Command            | Action                                 |
+| ------------------ | -------------------------------------- |
+| `/model`           | Choose the model for this session      |
+| `/settings`        | Open Pi settings                       |
+| `/login` `/logout` | Provider credentials                   |
+| `/resume`          | Session list                           |
+| `/new`             | Fresh session                          |
+| `/compact`         | Summarize older context                |
+| `/name`            | Rename this session                    |
+| `/session`         | Usage and identity                     |
+| `/tasks`           | Task list (`clear`, `clear-completed`) |
+| `/tree`            | Jump to an earlier point               |
+| `/fork`            | Fork from a user message               |
+| `/clone`           | Clone the active branch                |
+| `/copy`            | Copy the latest assistant reply        |
+| `/export`          | Show Pi JSONL (copy from the sheet)    |
+| `/import`          | Import a Pi JSONL session              |
+| `/reload`          | Reload skills and prompts              |
+| `/hotkeys`         | Composer shortcuts                     |
 
 Project prompts and `/skill:name` are added to this list when they load.
 
@@ -184,11 +183,11 @@ Project prompts and `/skill:name` are added to this list when they load.
 
 The agent talks in workspace-relative POSIX paths. Device URIs, absolute paths, `..`, and credential-bearing remote URLs are rejected and never sent to the model.
 
-| Folder type | Files | `bash` |
-| --- | --- | --- |
-| Local / Acode Terminal FS | yes | yes, if Executor is present |
-| SAF `content://` | yes | no |
-| FTP / SFTP | yes, bounded walks | no |
+| Folder type               | Files              | `bash`                      |
+| ------------------------- | ------------------ | --------------------------- |
+| Local / Acode Terminal FS | yes                | yes, if Executor is present |
+| SAF `content://`          | yes                | no                          |
+| FTP / SFTP                | yes, bounded walks | no                          |
 
 Remote walks stay sequential and capped (default 200 files, lower on FTP/SFTP search).
 
