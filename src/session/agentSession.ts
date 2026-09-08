@@ -1,17 +1,20 @@
 import {
 	AgentHarness,
-	AgentHarnessError,
+	BACKGROUND_CONTEXT as context,
+	getOrThrow,
+	createCompactionSummaryMessage,
+	createBranchSummaryMessage,
+	type AgentLane,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
 	parseCommandArgs,
-	shouldCompact,
-	type AgentEvent,
-	type AgentHarnessEvent,
+
+	type HarnessEvent,
 	type AgentHarnessTool,
 	type AgentMessage,
 	type AgentTool,
 	type Session,
-	type SessionTreeEntry,
+	type Entry,
 } from "@earendil-works/pi-agent-core";
 import { Type, type ImageContent, type Model, type RetryPolicy } from "@earendil-works/pi-ai";
 import { Signal } from "../core/events";
@@ -73,7 +76,9 @@ export class AgentSession {
 	#settings: () => AgentSettings;
 	#store: SessionStore;
 	#pi?: Session;
-	#harness?: AgentHarness;
+	#harness?: AgentHarness<undefined>;
+	#lane?: AgentLane;
+	#model?: Model<any>;
 	#resources: LoadedWorkspaceResources = { skills: [], promptTemplates: [], skillRoots: [] };
 	#unsubscribe?: () => void;
 	#persistMeta?: (patch: { title?: string; providerId?: string; modelId?: string }) => void;
@@ -85,7 +90,6 @@ export class AgentSession {
 	#runAbort = new AbortController();
 	#running = false;
 	#compacting = false;
-	#compactPromise?: Promise<void>;
 	#tasks = new TaskList();
 	#cadence = createCadenceState();
 	#taskUnsubs: Array<() => void> = [];
@@ -132,8 +136,10 @@ export class AgentSession {
 		};
 	}
 
+	get laneName(): string { return this.#lane?.name ?? "main"; }
+
 	get model(): Model<any> | undefined {
-		return this.#harness?.getModel();
+		return this.#model;
 	}
 
 	async initialize(): Promise<void> {
@@ -154,7 +160,7 @@ export class AgentSession {
 		const model = this.#providers.resolveModel(settings.providerId, storedModelId || settings.modelId);
 		const resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
 		this.#resources = resources;
-		this.#harness = new AgentHarness({
+		const created = await AgentHarness.create({
 			session: opened.session,
 			models: this.#providers.models,
 			model,
@@ -166,15 +172,22 @@ export class AgentSession {
 			followUpMode: settings.followUpMode,
 			systemPrompt: () => this.#systemPrompt(),
 			streamOptions: streamOptions(settings),
-		});
-		this.#unsubscribe = this.#harness.subscribe((event) => this.#onEvent(event));
-		this.#harness.on("tool_call", async (event) => this.mutationGate.request(
-			event.toolName,
-			event.input,
-			this.workspace,
-			this.#settings().permissionMode,
-			this.#runAbort.signal,
-		));
+			compaction: compactionSettings(settings),
+		}, context);
+		this.#harness = created.harness;
+		const lanes = await this.#harness.lanes(context);
+		const laneName = lanes.find((lane) => lane.name === "main")?.name ?? lanes[0]?.name ?? "main";
+		this.#lane = await this.#harness.lane(laneName, context);
+		this.#model = await this.#lane.getModel(context) ?? model;
+		const watch = await this.#lane.watch(context);
+		this.#unsubscribe = watch.unsubscribe;
+		watch.start((event) => this.#onEvent(event));
+		this.#taskUnsubs.push(this.#harness.hooks.on("before_tool", async (event, toolContext) => {
+			const decision = await this.mutationGate.request(event.toolName, event.args, this.workspace, this.#settings().permissionMode, toolContext.abortSignal ?? this.#runAbort.signal);
+			return decision.block ? { block: { reason: decision.reason || "User denied this action." } } : undefined;
+		}));
+		// Never replay a previously interrupted mutation automatically on reopening.
+		if (created.open.some((operation) => operation.lane === laneName)) await this.#lane.abort(context);
 		this.#bindTaskRuntime();
 		await this.#loadTasks();
 		this.#snapshot = { ...this.#snapshot, commands: resourceSlashCommands(resources, settings), tasks: this.#tasks.list() };
@@ -184,7 +197,9 @@ export class AgentSession {
 
 	async refreshTools(): Promise<void> {
 		if (!this.#harness) return;
-		await this.#harness.setTools(toHarnessTools(this.#tools()));
+		const tools = this.#tools();
+		await this.#harness.setTools(toHarnessTools(tools), context);
+		await this.#requireLane().setActiveTools(tools.map((tool) => tool.name), context);
 	}
 
 	async reloadResources(): Promise<{ skills: string[]; prompts: string[]; roots: string[] }> {
@@ -192,7 +207,7 @@ export class AgentSession {
 		const settings = this.#settings();
 		const resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
 		this.#resources = resources;
-		await harness.setResources(resources);
+		await harness.setResources(resources, context);
 		this.#snapshot = { ...this.#snapshot, commands: resourceSlashCommands(resources, settings), error: undefined };
 		this.#publish();
 		return {
@@ -206,9 +221,11 @@ export class AgentSession {
 		const harness = this.#harness;
 		if (!harness) return;
 		await Promise.all([
-			harness.setSteeringMode(settings.steeringMode),
-			harness.setFollowUpMode(settings.followUpMode),
-			harness.setStreamOptions(streamOptions(settings)),
+			harness.setSteeringMode(settings.steeringMode, context),
+			harness.setFollowUpMode(settings.followUpMode, context),
+			harness.setCompactionSettings(compactionSettings(settings), context),
+			harness.setRetryPolicy(retryPolicy(settings), context),
+			harness.setStreamOptions(streamOptions(settings), context),
 		]);
 		this.#snapshot = { ...this.#snapshot, commands: resourceSlashCommands(this.#resources, settings) };
 		this.#publish();
@@ -217,7 +234,7 @@ export class AgentSession {
 	async invokeResource(commandName: string, args: string): Promise<void> {
 		const harness = this.#requireHarness();
 		if (this.#running || this.#compacting) throw new Error("Wait for the current run to finish before starting a command.");
-		const resources = harness.getResources();
+		const resources = await harness.getResources(context);
 		this.#runAbort = new AbortController();
 		this.#snapshot = { ...this.#snapshot, error: undefined };
 		if (commandName.startsWith("skill:")) {
@@ -225,21 +242,21 @@ export class AgentSession {
 			if (!(resources.skills ?? []).some((skill) => skill.name.toLowerCase() === name.toLowerCase())) {
 				throw new Error(`Unknown skill command: /${commandName}`);
 			}
-			await harness.skill(name, args || undefined);
+			assertOperation(getOrThrow(await this.#requireLane().skill(name, args || undefined, context)));
 			return;
 		}
 		const template = (resources.promptTemplates ?? []).find((item) => item.name.toLowerCase() === commandName.toLowerCase());
 		if (!template) throw new Error(`Unknown command: /${commandName}`);
-		await harness.promptFromTemplate(template.name, parseCommandArgs(args));
+		assertOperation(getOrThrow(await this.#requireLane().promptFromTemplate(template.name, parseCommandArgs(args), context)));
 	}
 
 	async compact(customInstructions?: string): Promise<void> {
 		if (this.#running || this.#compacting) throw new Error("Wait for the current run to finish before compacting.");
-		const harness = this.#requireHarness();
+		this.#requireHarness();
 		this.#compacting = true;
 		this.#publish();
 		try {
-			await harness.compact(customInstructions?.trim() || undefined);
+			assertOperation(getOrThrow(await this.#requireLane().compact({ customInstructions: customInstructions?.trim() || undefined }, context)).compaction);
 			await this.#refreshContext();
 			await this.persist();
 		} finally {
@@ -252,7 +269,7 @@ export class AgentSession {
 		const next = name.replace(/[\r\n]+/g, " ").trim();
 		if (!next) throw new Error("Add a name after /name.");
 		if (!this.#pi) throw new Error("Agent session has not been initialized.");
-		await this.#pi.appendSessionName(next);
+		await this.#pi.setName(next, context);
 		this.title = next;
 		this.#persistMeta?.({ title: next });
 		await this.#flushPersist?.();
@@ -273,57 +290,53 @@ export class AgentSession {
 
 	async treeItems(): Promise<SessionTreeItem[]> {
 		if (!this.#pi) return [];
-		const [entries, leafId] = await Promise.all([this.#pi.getEntries(), this.#pi.getLeafId()]);
-		return buildTreeItems(entries, leafId);
+		const [entries, leafId] = await Promise.all([this.#pi.findEntries({ order: "asc" }, context), this.#requireLane().getTipId(context)]);
+		const items = buildTreeItems(entries, leafId);
+		return Promise.all(items.map(async (item) => ({ ...item, label: await this.#pi!.getLabel(item.id, context) })));
 	}
 
 	async navigateTree(targetId: string, options: { summarize?: boolean; customInstructions?: string } = {}): Promise<string | undefined> {
 		if (this.#running || this.#compacting) throw new Error("Wait for the current run to finish before navigating the tree.");
-		const result = await this.#requireHarness().navigateTree(targetId, options);
+		const selected = await this.#pi?.getEntry(targetId, context);
+		const user = selected?.type === "message" && selected.message.role === "user" ? selected : undefined;
+		const outcome = getOrThrow(await this.#requireLane().navigateTree(user ? user.parentId : targetId, options, context));
+		assertOperation(outcome.navigation);
 		await this.#refreshContext();
 		await this.persist();
 		this.#publish();
-		return result.cancelled ? undefined : result.editorText;
+		return user && outcome.navigation.status === "completed" ? messagePlainText(user.message) : undefined;
 	}
 
-	async branchEntries(targetId?: string): Promise<SessionTreeEntry[]> {
+	async branchEntries(targetId?: string): Promise<Entry[]> {
 		if (!this.#pi) return [];
-		return this.#pi.getBranch(targetId);
+		return this.#requireLane().findEntries({ ...(targetId ? { start: targetId } : {}), order: "oldestFirst" }, context);
 	}
 
-	async exportJson(): Promise<string> {
-		if (!this.#pi) throw new Error("Agent session has not been initialized.");
-		const [entries, metadata] = await Promise.all([this.#pi.getEntries(), this.#pi.getMetadata()]);
-		return JSON.stringify({ version: 1, metadata, name: this.title, workspace: this.workspace.info, entries }, null, 2);
+	async exportJsonl(): Promise<string> {
+		await this.persist();
+		return this.#store.export(this.id);
 	}
 
 	async prompt(text: string, mode: "steer" | "followUp" = "steer", images?: ImageContent[]): Promise<void> {
-		const harness = this.#requireHarness();
-		if (this.#compactPromise) await this.#compactPromise;
-		const options = promptImages(images);
+		const lane = this.#requireLane();
+		const attachments = toPiImages(images ?? []);
+		if (this.#running) {
+			getOrThrow(await (mode === "followUp" ? lane.followUp(text, attachments, context) : lane.steer(text, attachments, context)));
+			return;
+		}
+		if (this.#compacting) throw new Error("Wait for compaction to finish.");
+		this.#runAbort = new AbortController();
+		this.#beginRun();
+		this.#publish();
 		try {
-			if (mode === "followUp") {
-				await harness.followUp(text, options);
-				return;
-			}
-			await harness.steer(text, options);
-		} catch (error) {
-			if (!(error instanceof AgentHarnessError) || error.code !== "invalid_state") throw error;
-			this.#runAbort = new AbortController();
-			this.#beginRun();
-			this.#snapshot = { ...this.#snapshot, error: undefined };
+			const result = getOrThrow(await lane.prompt(text, attachments, context));
+			if (result.status === "failed") throw new Error(result.error?.message || "The model request failed.");
+		} finally {
+			this.#running = false;
+			this.#settleActivities();
+			await this.#refreshContext();
+			await this.persist();
 			this.#publish();
-			try {
-				await this.#compactIfNeeded();
-				await harness.prompt(text, options);
-				await this.#compactIfNeeded();
-			} finally {
-				this.#running = false;
-				this.#settleActivities();
-				await this.#refreshContext();
-				await this.persist();
-				this.#publish();
-			}
 		}
 	}
 
@@ -337,8 +350,10 @@ export class AgentSession {
 		this.#publish();
 		if (!harness) return [];
 		try {
-			const result = await harness.abort();
-			const restored = [...result.clearedSteer, ...result.clearedFollowUp].map(restorePrompt).filter((item) => item.text || item.images.length);
+			const outcome = await this.#requireLane().abort(context);
+			if (!outcome.ok) return [];
+			const result = outcome.value;
+			const restored = [...result.steer, ...result.followUp].map(restorePrompt).filter((item) => item.text || item.images.length);
 			await this.#refreshContext();
 			this.#publish();
 			return restored;
@@ -350,23 +365,24 @@ export class AgentSession {
 
 	async setModel(model: Model<any>): Promise<void> {
 		if (!this.#harness) return;
-		await this.#harness.setModel(model);
+		await this.#requireLane().setModel({ provider: model.provider, modelId: model.id }, context);
+		this.#model = model;
 		this.#persistMeta?.({ providerId: model.provider, modelId: model.id });
 		this.#publish();
 	}
 
 	async setThinkingLevel(level: AgentSettings["thinkingLevel"]): Promise<void> {
 		if (!this.#harness) return;
-		await this.#harness.setThinkingLevel(level);
+		await this.#requireLane().setThinkingLevel(level, context);
 	}
 
 	async persist(): Promise<void> {
 		if (!this.#pi) return;
-		this.title = await this.#pi.getSessionName() || titleFromMessages(this.#messages);
+		this.title = await this.#pi.getName(context) || titleFromMessages(this.#messages);
 		this.#persistMeta?.({
 			title: this.title,
-			providerId: this.#harness?.getModel().provider,
-			modelId: this.#harness?.getModel().id,
+			providerId: this.#model?.provider,
+			modelId: this.#model?.id,
 		});
 		await Promise.all([this.#flushPersist?.(), this.#store.saveTasks(this.id, this.#tasks.snapshot())]);
 	}
@@ -391,8 +407,8 @@ export class AgentSession {
 	async dispose(): Promise<void> {
 		this.#runAbort.abort();
 		this.questionGate.cancel();
-		await this.#harness?.abort().catch(() => undefined);
-		await this.#harness?.waitForIdle().catch(() => undefined);
+		await this.#lane?.abort(context).catch(() => undefined);
+		await this.#lane?.waitForIdle(context).catch(() => undefined);
 		await this.persist().catch(() => undefined);
 		this.#unsubscribe?.();
 		this.#unsubscribe = undefined;
@@ -400,17 +416,17 @@ export class AgentSession {
 		this.mutationGate.dispose();
 		this.questionGate.dispose();
 		this.changes.clear();
+		await this.#harness?.close(context);
+		await this.#store.release(this.id);
+		this.#lane = undefined;
 		this.#harness = undefined;
 		this.#pi = undefined;
 	}
 
-	async #onEvent(event: AgentHarnessEvent): Promise<void> {
-		if (isAgentEvent(event)) this.#onAgentEvent(event);
+	async #onEvent(event: HarnessEvent): Promise<void> {
+		this.#onAgentEvent(event);
 		if (event.type === "queue_update") {
-			this.#queued = [
-				...event.steer.map((message) => queuedFromMessage(message, "steer")),
-				...event.followUp.map((message) => queuedFromMessage(message, "followUp")),
-			].filter((item) => item.text.trim() || item.images);
+			this.#queued = event.queues.flatMap((item) => item.type === "message" && (item.kind === "steer" || item.kind === "followUp") ? [queuedFromMessage(item.message, item.kind)] : []);
 		}
 		if (event.type === "turn_start") {
 			onTurnStart(this.#cadence);
@@ -418,23 +434,27 @@ export class AgentSession {
 			if (shouldAutoClear(this.#cadence, this.#tasks.list())) this.#tasks.clearAll();
 		}
 		if (event.type === "turn_end") markStaleInProgress(this.#cadence, this.#tasks.list());
-		if (event.type === "agent_start") this.#beginRun();
-		if (event.type === "settled" || event.type === "abort") {
+		if (event.type === "run_start") this.#beginRun();
+		if (event.type === "run_end" || event.type === "operation_abort") {
 			this.#running = false;
 			this.#settleActivities();
-			if (event.type === "abort") this.#queued = [];
+			if (event.type === "operation_abort") this.#queued = [];
 			await this.#refreshContext();
 			await this.persist();
 		}
-		if (event.type === "session_compact") {
+		if (event.type === "compaction_end") {
 			await this.#refreshContext();
 			await this.persist();
 		}
-		if (event.type === "message_end") await this.#refreshContext();
+		if (event.type === "message_end" || event.type === "entry_added") await this.#refreshContext();
+		if (event.type === "compaction_start") this.#compacting = true;
+		if (event.type === "compaction_end") this.#compacting = false;
+		if (event.type === "fault") this.#snapshot.error = event.message;
+		if ((event.type === "run_end" || event.type === "compaction_end" || event.type === "navigation_end") && event.status === "failed") this.#snapshot.error = event.error.message;
 		this.#publish();
 	}
 
-	#onAgentEvent(event: AgentEvent): void {
+	#onAgentEvent(event: HarnessEvent): void {
 		if (event.type === "message_start" || event.type === "message_update") {
 			if (event.message.role === "assistant") this.#streaming = event.message;
 			if (event.message.role === "user") this.#rememberUserMessage(event.message);
@@ -448,7 +468,7 @@ export class AgentSession {
 				};
 			}
 		}
-		if (event.type === "tool_execution_start") {
+		if (event.type === "tool_start") {
 			this.#activities.set(event.toolCallId, {
 				id: event.toolCallId,
 				name: event.toolName,
@@ -457,11 +477,11 @@ export class AgentSession {
 				startedAt: Date.now(),
 			});
 		}
-		if (event.type === "tool_execution_update") {
+		if (event.type === "tool_update") {
 			const activity = this.#activities.get(event.toolCallId);
 			if (activity) activity.summary = toolResultText(event.partialResult);
 		}
-		if (event.type === "tool_execution_end") {
+		if (event.type === "tool_end") {
 			const activity = this.#activities.get(event.toolCallId);
 			if (activity) {
 				activity.status = event.isError ? "error" : "done";
@@ -472,47 +492,20 @@ export class AgentSession {
 		}
 	}
 
-	async #compactIfNeeded(): Promise<void> {
-		if (this.#compactPromise) return this.#compactPromise;
-		const harness = this.#harness;
-		if (!harness) return;
-		const settings = this.#settings();
-		if (!settings.autoCompaction) return;
-		await this.#refreshContext();
-		const model = harness.getModel();
-		if (!shouldCompact(this.#snapshot.contextTokens, model.contextWindow, {
-			...DEFAULT_COMPACTION_SETTINGS,
-			enabled: settings.autoCompaction,
-			reserveTokens: settings.compactionReserveTokens,
-			keepRecentTokens: settings.compactionKeepRecentTokens,
-		})) return;
-		this.#compacting = true;
-		this.#publish();
-		this.#compactPromise = (async () => {
-			try {
-				await harness.compact();
-				await this.#refreshContext();
-			} catch (error) {
-				console.warn("AI auto-compaction failed", error);
-			} finally {
-				this.#compacting = false;
-				this.#compactPromise = undefined;
-				this.#publish();
-			}
-		})();
-		await this.#compactPromise;
-	}
-
 	async #refreshContext(): Promise<void> {
-		if (!this.#pi) return;
-		const [context, stats] = await Promise.all([this.#pi.buildContext(), this.#pi.getSessionStats()]);
-		this.#messages = context.messages;
-		this.#snapshot = {
-			...this.#snapshot,
-			usage: { tokens: stats.totalTokens, cost: stats.costTotal },
-			contextTokens: estimateContextTokens(context.messages).tokens,
-			commands: this.#snapshot.commands,
-		};
+		if (!this.#pi || !this.#lane) return;
+		const [entries, stats] = await Promise.all([
+			this.#lane.findEntries({ stopAtType: "compaction", order: "oldestFirst" }, context),
+			this.#pi.getStats(context),
+		]);
+		// Projection for the transcript only; Pi constructs provider context itself.
+		this.#messages = entries.flatMap((entry): AgentMessage[] => {
+			if (entry.type === "message") return [entry.message];
+			if (entry.type === "compaction") return [createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp), ...entry.retainedTail];
+			if (entry.type === "branch_summary") return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
+			return [];
+		});
+		this.#snapshot = { ...this.#snapshot, usage: { tokens: stats.usage.totalTokens, cost: stats.usage.cost.total }, contextTokens: estimateContextTokens(this.#messages).tokens };
 	}
 
 	#beginRun(): void {
@@ -597,7 +590,7 @@ export class AgentSession {
 	async #systemPrompt(): Promise<string> {
 		try {
 			const prompt = await buildSystemPrompt(this.workspace, this.#settings(), this.#extensions);
-			const skills = this.#harness?.getResources().skills ?? [];
+			const skills = this.#resources.skills ?? [];
 			const skillBlock = formatAcodeSkills(skills.filter((skill) => !skill.disableModelInvocation));
 			return skillBlock ? `${prompt}\n\n${skillBlock}` : prompt;
 		} catch (error) {
@@ -611,7 +604,12 @@ export class AgentSession {
 		}
 	}
 
-	#requireHarness(): AgentHarness {
+	#requireLane(): AgentLane {
+		if (!this.#lane) throw new Error("Agent session has not been initialized.");
+		return this.#lane;
+	}
+
+	#requireHarness(): AgentHarness<undefined> {
 		if (!this.#harness) throw new Error("Agent session has not been initialized.");
 		return this.#harness;
 	}
@@ -634,11 +632,11 @@ export class AgentSession {
 				});
 				this.#publish();
 			}),
-			harness.on("tool_result", (event) => {
+			harness.hooks.on("after_tool", (event) => {
 				evaluateReminder(this.#cadence, event.toolName, this.#tasks.list());
 				return undefined;
 			}),
-			harness.on("context", (event) => this.#injectTaskReminder(event.messages)),
+			harness.hooks.on("transform_context", (event) => this.#injectTaskReminder(event.messages)),
 		);
 	}
 
@@ -663,26 +661,8 @@ export class AgentSession {
 function toHarnessTools(tools: AgentTool[]): AgentHarnessTool<undefined>[] {
 	return tools.map((tool) => ({
 		...tool,
-		execute: (toolCallId, params, signal, onUpdate) => tool.execute(toolCallId, params, signal, onUpdate),
+		execute: (toolCallId, params, onUpdate, _toolContext, _invocation, context) => tool.execute(toolCallId, params, context.abortSignal, onUpdate),
 	}));
-}
-
-function isAgentEvent(event: AgentHarnessEvent): event is AgentEvent {
-	return event.type === "agent_start"
-		|| event.type === "agent_end"
-		|| event.type === "turn_start"
-		|| event.type === "turn_end"
-		|| event.type === "message_start"
-		|| event.type === "message_update"
-		|| event.type === "message_end"
-		|| event.type === "tool_execution_start"
-		|| event.type === "tool_execution_update"
-		|| event.type === "tool_execution_end";
-}
-
-function promptImages(images?: ImageContent[]): { images: ImageContent[] } | undefined {
-	const next = toPiImages(images ?? []);
-	return next.length ? { images: next } : undefined;
 }
 
 function restorePrompt(message: AgentMessage): RestoredPrompt {
@@ -759,15 +739,8 @@ function streamOptions(settings: AgentSettings) {
 	};
 }
 
-function buildTreeItems(entries: SessionTreeEntry[], leafId: string | null): SessionTreeItem[] {
+function buildTreeItems(entries: Entry[], leafId: string | null): SessionTreeItem[] {
 	const byId = new Map(entries.map((entry) => [entry.id, entry]));
-	const labels = new Map<string, string>();
-	for (const entry of entries) {
-		if (entry.type === "label") {
-			if (entry.label) labels.set(entry.targetId, entry.label);
-			else labels.delete(entry.targetId);
-		}
-	}
 	const activeIds = new Set<string>();
 	let cursor = leafId;
 	while (cursor) {
@@ -790,15 +763,15 @@ function buildTreeItems(entries: SessionTreeEntry[], leafId: string | null): Ses
 			type: entry.type,
 			kind: described.kind,
 			text: described.text,
-			timestamp: entry.timestamp,
+			timestamp: new Date(entry.timestamp).toISOString(),
 			active: activeIds.has(entry.id),
 			current: entry.id === currentId,
-			label: labels.get(entry.id),
+
 		};
 	});
 }
 
-function describeTreeEntry(entry: SessionTreeEntry): Pick<SessionTreeItem, "kind" | "text"> {
+function describeTreeEntry(entry: Entry): Pick<SessionTreeItem, "kind" | "text"> {
 	if (entry.type === "message") {
 		const role = entry.message.role;
 		return {
@@ -808,15 +781,8 @@ function describeTreeEntry(entry: SessionTreeEntry): Pick<SessionTreeItem, "kind
 	}
 	if (entry.type === "compaction") return { kind: "summary", text: `Compaction · ${entry.summary}` };
 	if (entry.type === "branch_summary") return { kind: "summary", text: `Branch summary · ${entry.summary}` };
-	if (entry.type === "model_change") return { kind: "state", text: `Model · ${entry.provider}/${entry.modelId}` };
-	if (entry.type === "thinking_level_change") return { kind: "state", text: `Thinking · ${entry.thinkingLevel}` };
-	if (entry.type === "active_tools_change") return { kind: "state", text: `Tools · ${entry.activeToolNames.join(", ") || "none"}` };
-	if (entry.type === "custom_message") {
-		const text = typeof entry.content === "string" ? entry.content : entry.content.flatMap((part) => part.type === "text" ? [part.text] : []).join(" ");
-		return { kind: "state", text: text || entry.customType };
-	}
 	if (entry.type === "custom") return { kind: "state", text: `Custom · ${entry.customType}` };
-	return { kind: "state", text: entry.type.replace(/_/g, " ") };
+	return { kind: "state", text: "Session entry" };
 }
 
 function agentMessageText(message: AgentMessage): string {
@@ -867,4 +833,12 @@ async function readSkillRelativeFile(workspace: AcodeWorkspace, skillFilePath: s
 		return acode.fsOperation(acode.joinUrl(base, relativePath)).readFile("utf-8");
 	}
 	return workspace.readText([base, relativePath].filter(Boolean).join("/"));
+}
+
+function compactionSettings(settings: AgentSettings) {
+	return { ...DEFAULT_COMPACTION_SETTINGS, enabled: settings.autoCompaction, reserveTokens: settings.compactionReserveTokens, keepRecentTokens: settings.compactionKeepRecentTokens };
+}
+
+function assertOperation(result: { status: string; error?: { message: string } }): void {
+	if (result.status === "failed") throw new Error(result.error?.message || "Pi operation failed.");
 }

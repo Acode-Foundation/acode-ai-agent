@@ -1,3 +1,4 @@
+import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool, AgentToolResult, ReadImageProcessor } from "@earendil-works/pi-agent-core";
 import { browserReadImageProcessor } from "../platform/readImageProcessor";
@@ -51,7 +52,7 @@ export function createWorkspaceTools(
 					const processor = options.imageProcessor ?? browserReadImageProcessor;
 					const processed = await processor(bytes, mimeType, {
 						autoResizeImages: options.autoResizeImages?.() ?? true,
-					});
+					}, signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT);
 					if (!processed.ok) {
 						return result(`Read image file [${mimeType}]\n${processed.message}`, { operation: "read", path });
 					}

@@ -4,7 +4,8 @@ A coding agent that runs inside [Acode](https://acode.app) as an editor tab. It 
 
 ## Built on Pi
 
-This is not a from-scratch agent. The model loop, providers, sessions, skills, compaction, and tool calling come from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` 0.83.0). This plugin is the Acode/Android host: editor UI, workspace sandbox, approvals, and anything that has to work in a WebView without Node.
+This is not a from-scratch agent. The model loop, providers, sessions, skills, compaction, and tool calling come from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` 0.85.1). This plugin is the Acode/Android host: editor UI, workspace sandbox, approvals, and anything that has to work in a WebView without Node.
+
 
 If you already use Pi on a desktop, the same ideas apply here:
 
@@ -12,7 +13,7 @@ If you already use Pi on a desktop, the same ideas apply here:
 - Session trees, compaction, steer / follow-up queues, fork, clone, `/tree`
 - Skills and prompt templates (`.pi/skills`, `.agents/skills`, `/skill:name`, `load_skill`)
 - Project instructions from `AGENTS.md`
-- Import / export of Pi JSON and JSONL sessions
+- Import / export of Pi JSONL sessions
 
 What Pi’s desktop CLI does with a real terminal, cwd, and Node is adapted for Acode: files go through `fsOperation` (local, SAF, FTP, SFTP), `bash` exists only on Terminal-backed folders, and OAuth uses device codes or a pasted browser callback instead of running a localhost server. Pi packages, tmux, and the Pi TUI are not part of this plugin.
 
@@ -172,8 +173,8 @@ Focus on bugs, missing tests, and API breakage. Do not rewrite style-only issues
 | `/fork` | Fork from a user message |
 | `/clone` | Clone the active branch |
 | `/copy` | Copy the latest assistant reply |
-| `/export` | Show portable JSON (copy from the sheet) |
-| `/import` | Import a Pi JSON / JSONL session |
+| `/export` | Show Pi JSONL (copy from the sheet) |
+| `/import` | Import a Pi JSONL session |
 | `/reload` | Reload skills and prompts |
 | `/hotkeys` | Composer shortcuts |
 

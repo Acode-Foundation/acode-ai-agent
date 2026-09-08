@@ -59,30 +59,6 @@ export const chatIndexSchema = z.object({
 	chats: z.array(chatMetaSchema),
 });
 
-export const storedChatSchema = z.object({
-	id: z.string().min(1),
-	title: z.string().min(1),
-	workspaceId: z.string(),
-	workspaceName: z.string().catch(""),
-	providerId: z.string(),
-	modelId: z.string(),
-	messages: z.array(z.unknown()),
-	updatedAt: z.number().int().nonnegative(),
-});
-
-export const storedSessionSchema = z.object({
-	id: z.string().min(1),
-	title: z.string().min(1),
-	workspaceId: z.string(),
-	workspaceName: z.string().catch(""),
-	providerId: z.string(),
-	modelId: z.string(),
-	createdAt: z.string().min(1).catch(""),
-	updatedAt: z.number().int().nonnegative(),
-	leafId: z.string().nullable().catch(null),
-	entries: z.array(z.unknown()).catch([]),
-});
-
 export function parseSettings(value: unknown) {
 	return settingsSchema.parse(value);
 }
@@ -94,23 +70,6 @@ export function parseChatIndex(value: unknown) {
 		const chat = chatMetaSchema.safeParse(item);
 		return chat.success ? [chat.data] : [];
 	});
-}
-
-export function parseStoredChat(value: unknown) {
-	const parsed = storedChatSchema.safeParse(value);
-	return parsed.success ? parsed.data : undefined;
-}
-
-export function parseStoredSession(value: unknown) {
-	const parsed = storedSessionSchema.safeParse(value);
-	if (!parsed.success) return undefined;
-	return {
-		...parsed.data,
-		createdAt: parsed.data.createdAt || new Date(parsed.data.updatedAt).toISOString(),
-		entries: parsed.data.entries.filter((entry) => {
-			return Boolean(entry && typeof entry === "object" && "type" in entry && "id" in entry);
-		}),
-	};
 }
 
 export const PERMISSION_MODES: Array<{ id: PermissionMode; label: string; hint: string }> = [

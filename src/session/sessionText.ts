@@ -1,33 +1,6 @@
-import type { AgentMessage, SessionTreeEntry } from "@earendil-works/pi-agent-core";
-import { uuidv7 } from "@earendil-works/pi-ai";
+import type { AgentMessage, Entry } from "@earendil-works/pi-agent-core";
 
-export function sessionEntriesFromMessages(messages: AgentMessage[]): SessionTreeEntry[] {
-	const entries: SessionTreeEntry[] = [];
-	let parentId: string | null = null;
-	for (const message of messages) {
-		const id = nextEntryId(entries);
-		entries.push({
-			type: "message",
-			id,
-			parentId,
-			timestamp: new Date(typeof message.timestamp === "number" ? message.timestamp : Date.now()).toISOString(),
-			message,
-		});
-		parentId = id;
-	}
-	return entries;
-}
-
-function nextEntryId(entries: SessionTreeEntry[]): string {
-	const used = new Set(entries.map((entry) => entry.id));
-	for (let attempt = 0; attempt < 100; attempt += 1) {
-		const id = uuidv7().slice(-8);
-		if (!used.has(id)) return id;
-	}
-	return uuidv7();
-}
-
-export function titleFromEntries(entries: SessionTreeEntry[]): string {
+export function titleFromEntries(entries: Entry[]): string {
 	for (const entry of entries) {
 		if (entry.type !== "message") continue;
 		const title = titleFromMessages([entry.message]);

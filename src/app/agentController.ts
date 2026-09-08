@@ -1,4 +1,4 @@
-import type { AgentTool, SessionTreeEntry } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import { Signal } from "../core/events";
 import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
@@ -259,8 +259,8 @@ export class AgentController {
 				return { panel: resourcePanel(loaded) };
 			}
 			case "export": {
-				const body = await session.exportJson();
-				return { panel: { title: "Export session", description: "Portable JSON export", body, copyText: body } };
+				const body = await session.exportJsonl();
+				return { panel: { title: "Export session", description: "Pi JSONL export", body, copyText: body } };
 			}
 			case "import":
 				await this.importConversation();
@@ -282,7 +282,7 @@ export class AgentController {
 		const session = this.#activeSession();
 		const workspace = this.#state.workspace;
 		if (!session || !workspace) throw new Error("Open a session before forking it.");
-		let entries = await session.branchEntries(targetId);
+		const entries = await session.branchEntries(targetId);
 		if (!entries.length && !targetId) throw new Error("There is no session branch to clone.");
 		let restoredText: string | undefined;
 		if (targetId) {
@@ -291,20 +291,23 @@ export class AgentController {
 				throw new Error("Forks must start from a user message.");
 			}
 			restoredText = messagePlainText(selected.message);
-			entries = entries.slice(0, -1);
 		}
+		// Pi branch forks require an ancestor of the current tip. For another
+		// tree path, fork the tree and navigate only the new session.
+		const wholeTree = Boolean(targetId && !(await session.branchEntries()).some((entry) => entry.id === targetId));
 		const id = createChatId();
-		await this.#sessionStore.seed({
+		await this.#sessionStore.fork(session.id, {
 			id,
 			title: `${session.title} (${targetId ? "fork" : "clone"})`,
 			workspaceId: workspace.id,
 			workspaceName: workspace.name,
 			providerId: session.model?.provider ?? this.settings.value.providerId,
 			modelId: session.model?.id ?? this.settings.value.modelId,
-			entries,
-		});
+			updatedAt: Date.now(),
+		}, targetId, session.laneName, wholeTree);
 		await this.#sessionStore.copyTasks(session.id, id);
 		await this.#openChat(id, workspace);
+		if (wholeTree && targetId) await this.#activeSession()?.navigateTree(targetId);
 		return restoredText;
 	}
 
@@ -315,22 +318,22 @@ export class AgentController {
 		if (typeof browser !== "function") throw new Error("Acode's file picker is unavailable.");
 		let picked: SelectedFile;
 		try {
-			picked = await browser("file", "Choose a Pi JSON or JSONL session", true);
+			picked = await browser("file", "Choose a Pi JSONL session", true);
 		} catch (error) {
 			if (/cancel|abort/i.test(error instanceof Error ? error.message : String(error))) return;
 			throw error;
 		}
 		const text = await acode.fsOperation(picked.url).readFile("utf-8");
-		const imported = parseImportedSession(text);
+
 		const id = createChatId();
-		await this.#sessionStore.seed({
+		await this.#sessionStore.import(text, {
 			id,
-			title: imported.name || picked.name.replace(/\.(?:jsonl?|txt)$/i, "") || "Imported session",
+			title: picked.name.replace(/\.(?:jsonl?|txt)$/i, "") || "Imported session",
 			workspaceId: workspace.id,
 			workspaceName: workspace.name,
 			providerId: this.settings.value.providerId,
 			modelId: this.settings.value.modelId,
-			entries: imported.entries,
+			updatedAt: Date.now(),
 		});
 		await this.#openChat(id, workspace);
 	}
@@ -998,18 +1001,4 @@ function hotkeysPanel(): CommandPanelData {
 			{ label: "Close picker", value: "Escape" },
 		],
 	};
-}
-
-function parseImportedSession(text: string): { name?: string; entries: SessionTreeEntry[] } {
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(text);
-	} catch {
-		parsed = text.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line) as unknown);
-	}
-	const object = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
-	const candidates = Array.isArray(parsed) ? parsed : Array.isArray(object?.entries) ? object.entries : [];
-	const entries = candidates.filter((entry): entry is SessionTreeEntry => Boolean(entry && typeof entry === "object" && "id" in entry && "type" in entry));
-	if (!entries.length) throw new Error("That file does not contain a Pi session tree.");
-	return { name: typeof object?.name === "string" ? object.name : undefined, entries };
 }
