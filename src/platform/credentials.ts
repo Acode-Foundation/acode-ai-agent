@@ -1,4 +1,9 @@
-import type { Credential, CredentialInfo, CredentialStore } from "@earendil-works/pi-ai";
+import type {
+  AuthOperationOptions,
+  Credential,
+  CredentialInfo,
+  CredentialStore,
+} from "@earendil-works/pi-ai";
 
 const SECRET_PREFIX = "provider:";
 
@@ -65,21 +70,33 @@ export class PortableCredentialStore implements CredentialStore {
   modify(
     providerId: string,
     fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    options?: AuthOperationOptions,
   ): Promise<Credential | undefined> {
-    return this.#enqueue(providerId, async () => {
-      const current = await this.read(providerId);
-      const next = await fn(current);
-      if (next === undefined) return current;
-      await this.#write(providerId, next);
-      return next;
-    });
+    const signal = options?.signal;
+    return this.#enqueue(
+      providerId,
+      async () => {
+        const current = await this.read(providerId);
+        signal?.throwIfAborted();
+        // Once fn starts, finish persistence: a refresh may already have rotated tokens.
+        const next = await fn(current);
+        if (next === undefined) return current;
+        await this.#write(providerId, next);
+        return next;
+      },
+      signal,
+    );
   }
 
-  delete(providerId: string): Promise<void> {
-    return this.#enqueue(providerId, async () => {
-      this.#memory.delete(providerId);
-      if (this.#ctx) await this.#ctx.setSecret(`${SECRET_PREFIX}${providerId}`, "");
-    });
+  delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+    return this.#enqueue(
+      providerId,
+      async () => {
+        this.#memory.delete(providerId);
+        if (this.#ctx) await this.#ctx.setSecret(`${SECRET_PREFIX}${providerId}`, "");
+      },
+      options?.signal,
+    );
   }
 
   async setApiKey(providerId: string, key: string): Promise<void> {
@@ -98,9 +115,13 @@ export class PortableCredentialStore implements CredentialStore {
     }
   }
 
-  #enqueue<T>(providerId: string, task: () => Promise<T>): Promise<T> {
+  #enqueue<T>(providerId: string, task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const previous = this.#chains.get(providerId) ?? Promise.resolve();
-    const run = previous.then(task, task);
+    const start = () => {
+      signal?.throwIfAborted();
+      return task();
+    };
+    const run = previous.then(start, start);
     this.#chains.set(
       providerId,
       run.catch(() => undefined),
