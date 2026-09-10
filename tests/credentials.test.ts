@@ -166,33 +166,73 @@ test.each(["modify", "delete"] as const)("does not start a pre-aborted %s", asyn
   expect(values.get("provider:synthetic-provider")).toBe(JSON.stringify(retained));
 });
 
-test("a cancelled queued delete leaves the preceding credential intact", async () => {
-  const { store } = secretStore();
-  const retained = syntheticCredential("retained");
-  const entered = deferred<void>();
-  const release = deferred<void>();
-  const abort = new AbortController();
-  const active = store.modify("synthetic-provider", async () => {
-    entered.resolve();
-    await release.promise;
-    return retained;
-  });
-  onTestFinished(async () => {
+test.each([
+  { operation: "modify", preAborted: false },
+  { operation: "delete", preAborted: false },
+  { operation: "modify", preAborted: true },
+  { operation: "delete", preAborted: true },
+])(
+  "a cancelled queued $operation rejects before its predecessor settles (pre-aborted: $preAborted)",
+  async ({ operation, preAborted }) => {
+    const { store, values, getSecret, setSecret } = secretStore();
+    const retained = syntheticCredential("retained");
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    const abort = new AbortController();
+    const reason = new Error("Synthetic queued cancellation");
+    const active = store.modify("synthetic-provider", async () => {
+      entered.resolve();
+      await release.promise;
+      return retained;
+    });
+    onTestFinished(async () => {
+      release.resolve();
+      await active;
+      await store.modify("synthetic-provider", async () => undefined);
+    });
+    await entered.promise;
+    getSecret.mockClear();
+
+    if (preAborted) abort.abort(reason);
+    const update = vi.fn(async () => syntheticCredential("cancelled"));
+    const cancelled =
+      operation === "modify"
+        ? store.modify("synthetic-provider", update, { signal: abort.signal })
+        : store.delete("synthetic-provider", { signal: abort.signal });
+    let settled = false;
+    let rejection: unknown;
+    const outcome = cancelled.then(
+      () => {
+        settled = true;
+      },
+      (error: unknown) => {
+        settled = true;
+        rejection = error;
+      },
+    );
+    if (!preAborted) abort.abort(reason);
+    const observe = vi.fn(async () => undefined);
+    const following = store.modify("synthetic-provider", observe);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(settled).toBe(true);
+    expect(rejection).toBe(reason);
+    expect(update).not.toHaveBeenCalled();
+    expect(observe).not.toHaveBeenCalled();
+    expect(getSecret).not.toHaveBeenCalled();
+    expect(setSecret).not.toHaveBeenCalled();
+
     release.resolve();
     await active;
-    await store.modify("synthetic-provider", async () => undefined);
-  });
-  await entered.promise;
-
-  const cancelled = store.delete("synthetic-provider", { signal: abort.signal });
-  const result = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
-  abort.abort();
-  release.resolve();
-  await active;
-  await result;
-
-  expect(await store.read("synthetic-provider")).toEqual(retained);
-});
+    await outcome;
+    await following;
+    expect(update).not.toHaveBeenCalled();
+    expect(observe).toHaveBeenCalledWith(retained);
+    expect(getSecret).toHaveBeenCalledOnce();
+    expect(setSecret).toHaveBeenCalledOnce();
+    expect(values.get("provider:synthetic-provider")).toBe(JSON.stringify(retained));
+  },
+);
 
 test("cancellation during the initial secret read prevents the mutation callback", async () => {
   const { store, values, getSecret, setSecret } = secretStore();
@@ -263,9 +303,14 @@ test("cancellation after the mutation starts preserves its rotated credential an
   expect(await store.read("synthetic-provider")).toEqual(rotated);
 });
 
-test.each([false, true])(
-  "an active storage write retains the queue after cancellation (write fails: %s)",
-  async (fails) => {
+test.each([
+  { operation: "modify", fails: false },
+  { operation: "modify", fails: true },
+  { operation: "delete", fails: false },
+  { operation: "delete", fails: true },
+])(
+  "an active $operation retains the queue after cancellation (write fails: $fails)",
+  async ({ operation, fails }) => {
     const { store, values, setSecret } = secretStore();
     const retained = syntheticCredential("retained");
     const incoming = syntheticCredential("incoming");
@@ -283,9 +328,11 @@ test.each([false, true])(
       values.set(key, value);
     });
     const abort = new AbortController();
-    const active = store.modify("synthetic-provider", async () => incoming, {
-      signal: abort.signal,
-    });
+    const expected = operation === "modify" ? incoming : undefined;
+    const active =
+      operation === "modify"
+        ? store.modify("synthetic-provider", async () => incoming, { signal: abort.signal })
+        : store.delete("synthetic-provider", { signal: abort.signal });
     const outcome = active.then(
       (credential) => ({ status: "fulfilled", credential }),
       (reason: unknown) => ({ status: "rejected", reason }),
@@ -309,12 +356,12 @@ test.each([false, true])(
     expect(await outcome).toEqual(
       fails
         ? { status: "rejected", reason: storageError }
-        : { status: "fulfilled", credential: incoming },
+        : { status: "fulfilled", credential: expected },
     );
     await following;
-    expect(observe).toHaveBeenCalledWith(fails ? retained : incoming);
+    expect(observe).toHaveBeenCalledWith(fails ? retained : expected);
     expect(events).toEqual(["write started", "write settled", "following mutation"]);
-    expect(await store.read("synthetic-provider")).toEqual(fails ? retained : incoming);
+    expect(await store.read("synthetic-provider")).toEqual(fails ? retained : expected);
   },
 );
 

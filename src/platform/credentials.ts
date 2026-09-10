@@ -116,16 +116,25 @@ export class PortableCredentialStore implements CredentialStore {
   }
 
   #enqueue<T>(providerId: string, task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     const previous = this.#chains.get(providerId) ?? Promise.resolve();
+    let onAbort: (() => void) | undefined;
     const start = () => {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
       signal?.throwIfAborted();
       return task();
     };
     const run = previous.then(start, start);
+    // Caller cancellation must not release the serialized queue.
     this.#chains.set(
       providerId,
       run.catch(() => undefined),
     );
-    return run;
+    if (!signal) return run;
+    return new Promise<T>((resolve, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      void run.then(resolve, reject);
+    });
   }
 }
