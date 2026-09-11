@@ -1421,6 +1421,32 @@
   display: inline-flex;
   transform-origin: center;
 }
+.error-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0 25px;
+}
+.error-notice-action {
+  min-height: 30px;
+  padding: 5px 12px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.error-notice-action.secondary {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-weight: 550;
+}
+.error-notice-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
 .error-details {
   display: block;
   width: calc(100% - 25px);

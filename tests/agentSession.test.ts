@@ -1,6 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { createModels, Type } from "@earendil-works/pi-ai";
 import {
+  AgentHarness,
+  BACKGROUND_CONTEXT as context,
+  getOrThrow,
+} from "@earendil-works/pi-agent-core";
+import {
   fauxProvider,
   fauxAssistantMessage,
   fauxToolCall,
@@ -78,6 +83,92 @@ test("streams a real Pi lane into the UI and reopens persisted messages", async 
   });
   expect(reopened.record.title).toBe("Renamed chat");
   await store.release("integration");
+});
+
+test("offers and resumes a durable Pi operation left open by an interrupted app", async () => {
+  const fixture = await sessionFileSystemFixture();
+  cleanups.push(fixture.cleanup);
+  vi.stubGlobal("window", {});
+  vi.stubGlobal("acode", { require: () => undefined });
+  const faux = fauxProvider();
+  const models = createModels();
+  models.setProvider(faux.provider);
+  const store = new SessionStore(fixture.adapter);
+  const opened = await store.open({
+    id: "interrupted",
+    workspaceId: "workspace",
+    providerId: faux.provider.id,
+    modelId: faux.getModel().id,
+  });
+  const seeded = await AgentHarness.create(
+    { session: opened.session, models, model: faux.getModel() },
+    context,
+  );
+  const lane = await seeded.harness.lane("main", context);
+  getOrThrow(await lane.accept({ kind: "prompt", prompt: "finish the work" }, context));
+  await seeded.harness.close(context);
+  await store.release("interrupted");
+
+  const providers = { models, resolveModel: () => faux.getModel() } as unknown as ProviderRegistry;
+  const workspace = {
+    info: { id: "workspace", name: "Project", rootUri: "file:///workspace", remote: false },
+    sandbox: { normalize: (path: string) => path },
+    walk: async () => {},
+    list: async () => [],
+    readText: async () => "",
+    writeText: vi.fn(),
+  } as unknown as AcodeWorkspace;
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    providerId: faux.provider.id,
+    modelId: faux.getModel().id,
+    autoCompaction: false,
+    retryEnabled: false,
+  };
+  const session = new AgentSession({
+    id: "interrupted",
+    workspace,
+    providers,
+    extensions: new ExtensionRegistry(),
+    settings: () => settings,
+    store,
+    mutationGate: new MutationGate(),
+  });
+  cleanups.push(() => session.dispose());
+  faux.setResponses([fauxAssistantMessage("Recovered from the checkpoint")]);
+
+  await session.initialize();
+  expect(session.snapshot.recovery?.kind).toBe("interrupted");
+  expect(session.snapshot.isRunning).toBe(false);
+  await session.resume();
+  expect(session.snapshot.recovery).toBeUndefined();
+  expect(JSON.stringify(session.snapshot.messages.at(-1)?.content)).toContain(
+    "Recovered from the checkpoint",
+  );
+  expect(faux.state.callCount).toBe(1);
+});
+
+test("keeps the run controllable while Pi retries a transient provider failure", async () => {
+  const { session, faux, settings } = await setup();
+  settings.retryEnabled = true;
+  settings.retryMaxRetries = 1;
+  settings.retryBaseDelayMs = 0;
+  await session.applySettings(settings);
+  const retries: Array<{ running: boolean; attempt: number }> = [];
+  session.changes.subscribe((snapshot) => {
+    if (snapshot.retry)
+      retries.push({ running: snapshot.isRunning, attempt: snapshot.retry.attempt });
+  });
+  faux.setResponses([
+    fauxAssistantMessage("", { stopReason: "error", errorMessage: "Temporary network error" }),
+    fauxAssistantMessage("Connected again"),
+  ]);
+
+  await session.prompt("try the request");
+  expect(retries).toContainEqual({ running: true, attempt: 2 });
+  expect(faux.state.callCount).toBe(2);
+  expect(JSON.stringify(session.snapshot.messages.at(-1)?.content)).toContain("Connected again");
+  expect(session.snapshot.retry).toBeUndefined();
 });
 
 test("Pi before_tool blocks a denied edit without executing the tool", async () => {

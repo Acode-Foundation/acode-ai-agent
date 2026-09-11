@@ -71,6 +71,7 @@ export function App({ controller, onActiveChatChange }: Props) {
   const [tasksOpen, setTasksOpen] = useState(false);
   const [dismissedTray, setDismissedTray] = useState("");
   const [toast, setToast] = useState("");
+  const [resuming, setResuming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
   const bindingReady = useRef(false);
@@ -85,12 +86,16 @@ export function App({ controller, onActiveChatChange }: Props) {
   }, [state.activeChatId, onActiveChatChange]);
   const running = state.status === "running";
   const waitingOnAsk = Boolean(state.questionnaire);
-  const workingLabel = waitingOnAsk ? "Waiting for your answer" : taskStatusLine(state.tasks);
+  const workingLabel = state.retry
+    ? `Connection interrupted · retrying ${state.retry.attempt} of ${state.retry.maxAttempts}`
+    : waitingOnAsk
+      ? "Waiting for your answer"
+      : taskStatusLine(state.tasks);
   const trayKey = `${state.activeChatId ?? ""}:${state.tasks.map((task) => task.id).join(",")}`;
   useEffect(() => {
     setDismissedTray("");
   }, [state.activeChatId]);
-  const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}:${state.questionnaire?.id ?? ""}`;
+  const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}:${state.questionnaire?.id ?? ""}:${state.recovery?.kind ?? ""}:${state.retry?.attempt ?? ""}`;
   const { showLatest, jumpToLatest, pin, captureThread } = useChatScroll(scrollRef, followKey);
 
   const turns = useMemo(() => {
@@ -163,6 +168,17 @@ export function App({ controller, onActiveChatChange }: Props) {
         ),
       ),
     );
+  }, [controller]);
+
+  const resume = useCallback(async () => {
+    setResuming(true);
+    try {
+      await controller.resume();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setResuming(false);
+    }
   }, [controller]);
 
   return (
@@ -262,6 +278,22 @@ export function App({ controller, onActiveChatChange }: Props) {
         {state.error && !turns.some((turn) => turn.error === state.error) && (
           <ErrorNotice message={state.error} />
         )}
+        {state.recovery && (
+          <ErrorNotice
+            title={state.recovery.kind === "deferred" ? "Run still in progress" : "Run interrupted"}
+            message={state.recovery.message}
+            action={{
+              label: resuming ? "Resuming…" : "Resume",
+              disabled: resuming || running,
+              onClick: () => void resume(),
+            }}
+            secondaryAction={{
+              label: "Discard",
+              disabled: resuming || running,
+              onClick: () => void stop(),
+            }}
+          />
+        )}
         <JumpLatest visible={showLatest} onJump={jumpToLatest} />
       </main>
 
@@ -292,7 +324,7 @@ export function App({ controller, onActiveChatChange }: Props) {
           ref={composerRef}
           controller={controller}
           running={running}
-          disabled={!state.workspace}
+          disabled={!state.workspace || Boolean(state.recovery)}
           permissionMode={state.settings.permissionMode}
           effort={state.settings.thinkingLevel}
           effortLevels={thinkingLevelsFor(state.model)}
@@ -1023,6 +1055,22 @@ function PiSettingsSheet({
               hint="Automatically compact context when it gets too large"
               checked={settings.autoCompaction}
               onChange={(value) => update({ autoCompaction: value })}
+            />
+            <SettingsToggle
+              label="Retry interrupted requests"
+              hint="Retry transient provider and network failures automatically"
+              checked={settings.retryEnabled}
+              onChange={(value) => update({ retryEnabled: value })}
+            />
+            <SettingsSelect
+              label="Retry attempts"
+              hint="Maximum attempts for a temporarily failed model request"
+              value={String(settings.retryMaxRetries)}
+              options={[1, 2, 3, 5, 10].map((value) => ({
+                value: String(value),
+                label: String(value),
+              }))}
+              onChange={(value) => update({ retryMaxRetries: Number(value) })}
             />
             <SettingsToggle
               label="Auto-resize images"

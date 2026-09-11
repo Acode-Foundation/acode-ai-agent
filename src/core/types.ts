@@ -94,6 +94,18 @@ export type RestoredPrompt = {
   images: ImageContent[];
 };
 
+export type RunRecovery = {
+  kind: "interrupted" | "deferred";
+  operation: "run" | "compaction" | "navigation";
+  message: string;
+};
+
+export type RunRetry = {
+  attempt: number;
+  maxAttempts: number;
+  errorMessage: string;
+};
+
 export type SessionTreeItem = {
   id: string;
   parentId: string | null;
@@ -125,6 +137,8 @@ export type PublicAgentState = {
   chats: ChatSummary[];
   commands: SlashCommand[];
   tasks: Task[];
+  recovery?: RunRecovery;
+  retry?: RunRetry;
   activeChatId?: string;
   authFlow?: {
     providerId: ProviderId;

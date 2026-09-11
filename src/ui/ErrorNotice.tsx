@@ -5,9 +5,13 @@ import { Collapse, RotateIcon } from "./Collapse";
 export function ErrorNotice({
   message,
   title = "Request failed",
+  action,
+  secondaryAction,
 }: {
   message: string;
   title?: string;
+  action?: { label: string; onClick: () => void; disabled?: boolean };
+  secondaryAction?: { label: string; onClick: () => void; disabled?: boolean };
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const error = presentError(message);
@@ -37,6 +41,30 @@ export function ErrorNotice({
             <pre class="error-details">{error.details}</pre>
           </Collapse>
         </>
+      )}
+      {(action || secondaryAction) && (
+        <div class="error-notice-actions">
+          {secondaryAction && (
+            <button
+              type="button"
+              class="error-notice-action secondary"
+              disabled={secondaryAction.disabled}
+              onClick={secondaryAction.onClick}
+            >
+              {secondaryAction.label}
+            </button>
+          )}
+          {action && (
+            <button
+              type="button"
+              class="error-notice-action"
+              disabled={action.disabled}
+              onClick={action.onClick}
+            >
+              {action.label}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

@@ -413,6 +413,20 @@ export class AgentController {
     return (await this.#activeSession()?.abort()) ?? [];
   }
 
+  async resume(): Promise<void> {
+    const session = this.#activeSession();
+    if (!session) throw new Error("Open a session before resuming a run.");
+    await this.#requireProviderAuth();
+    try {
+      await session.resume();
+    } catch (error) {
+      this.#state.error = error instanceof Error ? error.message : String(error);
+      this.#state.status = "error";
+      this.#emit();
+      throw error;
+    }
+  }
+
   async newConversation(workspaceId?: string): Promise<void> {
     const workspace = workspaceId
       ? this.workspaces.find((item) => item.id === workspaceId)
@@ -1032,6 +1046,8 @@ export class AgentController {
       contextTokens: snapshot?.contextTokens ?? 0,
       commands: snapshot?.commands ?? BUILT_IN_SLASH_COMMANDS,
       tasks: snapshot?.tasks ?? [],
+      recovery: snapshot?.recovery,
+      retry: snapshot?.retry,
       model: session?.model ?? this.#state.model,
       workspace: session?.workspace.info ?? this.#state.workspace,
     };

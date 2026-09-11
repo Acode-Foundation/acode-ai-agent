@@ -26,7 +26,6 @@ class AcodeAiAgentPlugin {
   #controller: AgentController | null = null;
   #sidebarContainer: HTMLElement | null = null;
   #sidebarApps: Acode.SidebarApps | null = null;
-  #pauseHandler = () => this.#controller?.abort();
 
   async init(
     baseUrl: string,
@@ -40,7 +39,6 @@ class AcodeAiAgentPlugin {
     this.#registerCommands();
     this.#exposeExtensionApi(controller);
     this.#registerSidebar(controller);
-    document.addEventListener("pause", this.#pauseHandler);
 
     try {
       await controller.initialize();
@@ -53,7 +51,6 @@ class AcodeAiAgentPlugin {
   }
 
   async destroy(): Promise<void> {
-    document.removeEventListener("pause", this.#pauseHandler);
     this.#removeSidebar();
     await this.#closeTabs();
     await this.#controller?.dispose();

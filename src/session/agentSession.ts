@@ -22,6 +22,8 @@ import type {
   AgentSettings,
   QueuedPrompt,
   RestoredPrompt,
+  RunRecovery,
+  RunRetry,
   SessionTreeItem,
   ToolActivity,
 } from "../core/types";
@@ -66,6 +68,8 @@ export type AgentSessionSnapshot = {
   contextTokens: number;
   commands: SlashCommand[];
   tasks: Task[];
+  recovery?: RunRecovery;
+  retry?: RunRetry;
   error?: string;
 };
 
@@ -214,15 +218,21 @@ export class AgentSession {
           : undefined;
       }),
     );
-    // Never replay a previously interrupted mutation automatically on reopening.
-    if (created.open.some((operation) => operation.lane === laneName))
-      await this.#lane.abort(context);
+    const interrupted = created.open.find((operation) => operation.lane === laneName);
     this.#bindTaskRuntime();
     await this.#loadTasks();
     this.#snapshot = {
       ...this.#snapshot,
       commands: resourceSlashCommands(resources, settings),
       tasks: this.#tasks.list(),
+      recovery: interrupted
+        ? {
+            kind: "interrupted",
+            operation: interrupted.kind,
+            message:
+              "This operation stopped when the app or agent process went away. Resume it from Pi's last durable checkpoint.",
+          }
+        : undefined,
     };
     await this.#refreshContext();
     this.#publish();
@@ -458,6 +468,33 @@ export class AgentSession {
     }
   }
 
+  async resume(): Promise<void> {
+    if (this.#running || this.#compacting)
+      throw new Error("Wait for the current operation to finish before resuming.");
+    if (!this.#snapshot.recovery) throw new Error("There is no interrupted run to resume.");
+    const lane = this.#requireLane();
+    this.#runAbort = new AbortController();
+    this.#beginRun();
+    this.#publish();
+    try {
+      const result = getOrThrow(await lane.resume(context));
+      if (result.status === "suspended") {
+        this.#snapshot.recovery = {
+          kind: "deferred",
+          operation: "run",
+          message: "The provider is still processing this run. Resume to check it again.",
+        };
+      } else if (result.status === "failed") {
+        throw new Error(result.error?.message || "The interrupted operation could not resume.");
+      }
+    } finally {
+      this.#running = false;
+      this.#settleActivities();
+      this.#publish();
+      await this.#settleStore();
+    }
+  }
+
   async setModel(model: Model<any>): Promise<void> {
     if (!this.#harness) return;
     await this.#requireLane().setModel({ provider: model.provider, modelId: model.id }, context);
@@ -554,6 +591,32 @@ export class AgentSession {
       noteResolvedBoundary(this.#cadence, this.#tasks.list());
       if (shouldAutoClear(this.#cadence, this.#tasks.list())) this.#tasks.clearAll();
     }
+    if (event.type === "run_resume") {
+      this.#running = true;
+      this.#snapshot.recovery = undefined;
+    }
+    if (event.type === "run_suspend") {
+      this.#running = false;
+      this.#snapshot.recovery = {
+        kind: "deferred",
+        operation: "run",
+        message: "The provider is still processing this run. Resume to check it again.",
+      };
+    }
+    if (event.type === "retry_scheduled") {
+      this.#running = true;
+      this.#snapshot.retry = {
+        attempt: event.attempt,
+        maxAttempts: event.maxAttempts,
+        errorMessage: event.errorMessage,
+      };
+      this.#snapshot.error = undefined;
+    }
+    if (event.type === "retry_start") {
+      this.#running = true;
+      this.#snapshot.error = undefined;
+    }
+    if (event.type === "retry_end") this.#snapshot.retry = undefined;
     if (event.type === "turn_end") markStaleInProgress(this.#cadence, this.#tasks.list());
     if (event.type === "run_start") this.#beginRun();
     if (event.type === "compaction_start") this.#compacting = true;
@@ -568,6 +631,8 @@ export class AgentSession {
       this.#snapshot.error = event.error.message;
     if (event.type === "run_end" || event.type === "operation_abort") {
       this.#running = false;
+      this.#snapshot.recovery = undefined;
+      this.#snapshot.retry = undefined;
       this.#settleActivities();
       if (event.type === "operation_abort") this.#queued = [];
       this.#publish();
@@ -670,7 +735,7 @@ export class AgentSession {
     this.#running = true;
     this.#activities.clear();
     this.#streaming = undefined;
-    this.#snapshot = { ...this.#snapshot, error: undefined };
+    this.#snapshot = { ...this.#snapshot, recovery: undefined, retry: undefined, error: undefined };
   }
 
   #rememberMessage(message: AgentMessage): void {
@@ -708,6 +773,8 @@ export class AgentSession {
       contextTokens: this.#snapshot.contextTokens,
       commands: this.#snapshot.commands,
       tasks: this.#tasks.list(),
+      recovery: this.#snapshot.recovery,
+      retry: this.#snapshot.retry,
       error: overrides?.error ?? this.#snapshot.error,
     };
     this.changes.emit(this.snapshot);

@@ -198,7 +198,7 @@ Remote walks stay sequential and capped (default 200 files, lower on FTP/SFTP se
 - Provider secrets use `PluginContext.getSecret` / `setSecret`. A host without that API keeps credentials in memory only.
 - Writes are sequential and gated. Open files stay unsaved until you save them.
 - `fetch_content` refuses localhost, private networks, and URLs with embedded credentials.
-- Backgrounding the app aborts the current run.
+- Backgrounding the app keeps the current run alive. If the app process is interrupted, the chat offers to resume the durable Pi operation from its last safe checkpoint.
 
 Treat **Full access** as a real grant: the agent can write files and, on Terminal workspaces, run commands.
 
