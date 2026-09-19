@@ -38,6 +38,35 @@ test("blocks private and local fetch targets", () => {
   expect(isPrivateHost("8.8.8.8")).toBe(false);
 });
 
+test("blocks IPv4-mapped IPv6 private targets", () => {
+  for (const url of [
+    "https://[::ffff:192.168.1.1]/admin",
+    "https://[::ffff:127.0.0.1]/",
+    "https://[::ffff:7f00:1]/",
+    "https://[::ffff:10.0.0.5]/",
+    "https://[::10.0.0.5]/",
+  ]) {
+    expect(() => assertPublicHttpUrl(url)).toThrow();
+  }
+  expect(isPrivateHost("::ffff:192.168.1.1")).toBe(true);
+  expect(isPrivateHost("::ffff:8.8.8.8")).toBe(false);
+  expect(isPrivateHost("fe80::1")).toBe(true);
+  expect(isPrivateHost("febf::1")).toBe(true);
+  expect(isPrivateHost("fc00::1")).toBe(true);
+  expect(isPrivateHost("fd12:3456::1")).toBe(true);
+  expect(isPrivateHost("2001:db8::1")).toBe(false);
+});
+
+test("allows public hosts that merely start with fc/fd or digits", () => {
+  expect(assertPublicHttpUrl("https://fcm.googleapis.com/fcm/send").hostname).toBe(
+    "fcm.googleapis.com",
+  );
+  expect(assertPublicHttpUrl("https://fdroid.org/repo/").hostname).toBe("fdroid.org");
+  expect(isPrivateHost("fcm.googleapis.com")).toBe(false);
+  expect(isPrivateHost("fdroid.org")).toBe(false);
+  expect(isPrivateHost("10.example.com")).toBe(false);
+});
+
 test("rewrites GitHub blob URLs to raw file contents", () => {
   expect(rewriteGithubBlob(new URL("https://github.com/acode/app/blob/main/src/index.ts"))).toBe(
     "https://raw.githubusercontent.com/acode/app/main/src/index.ts",
