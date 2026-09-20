@@ -105,3 +105,14 @@ test.each([
     modifiedDate === "invalid" || modifiedDate === null ? 0 : 1700000000000,
   );
 });
+
+test("line reader rejects escaping paths before opening the native file", async () => {
+  const { host, uri } = await setup();
+  const open = vi.fn();
+  const adapter = new SessionFileSystem(uri, host, undefined, open);
+  expect(await adapter.openTextLineReader("../../secret", context)).toMatchObject({
+    ok: false,
+    error: { code: "permission_denied" },
+  });
+  expect(open).not.toHaveBeenCalled();
+});

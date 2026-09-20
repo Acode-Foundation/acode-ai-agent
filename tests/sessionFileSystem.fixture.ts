@@ -3,6 +3,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionFileSystem } from "../src/platform/sessionFileSystem";
+import { SessionLineReader } from "../src/platform/sessionLineReader";
 
 export async function sessionFileSystemFixture() {
   const root = await fs.mkdtemp(join(tmpdir(), "acode-session-"));
@@ -68,7 +69,25 @@ export async function sessionFileSystemFixture() {
     await fs.appendFile(native(uri), content);
   };
   return {
-    adapter: new SessionFileSystem(uri, host, append),
+    adapter: new SessionFileSystem(uri, host, append, async (uri, path) => {
+      const size = (await fs.stat(native(uri))).size;
+      return new SessionLineReader(
+        {
+          size,
+          read: async (start, end) => {
+            const handle = await fs.open(native(uri), "r");
+            try {
+              const bytes = new Uint8Array(end - start);
+              const { bytesRead } = await handle.read(bytes, 0, bytes.length, start);
+              return bytes.buffer.slice(0, bytesRead);
+            } finally {
+              await handle.close();
+            }
+          },
+        },
+        path,
+      );
+    }),
     host,
     uri,
     root,
