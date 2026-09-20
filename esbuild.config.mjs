@@ -81,6 +81,8 @@ const buildConfig = {
   },
   bundle: true,
   minify: true,
+  // WebView loads this as UTF-8; avoid expanding Unicode provider data into escapes.
+  charset: "utf8",
   platform: "browser",
   target: ["chrome90"],
   format: "iife",
@@ -121,7 +123,7 @@ const buildConfig = {
         `Portable bundle has external runtime imports: ${externalImports.map((entry) => entry.path).join(", ")}`,
       );
     }
-    // Pi 0.85.1 adds durable lane execution and updated provider SDKs (~2.28 MB).
+    // Keep the agent and provider SDKs within the mobile bundle budget.
     if ((output?.bytes ?? 0) > 2_400_000) {
       throw new Error(`AI bundle exceeds the 2.4 MB mobile budget: ${output.bytes} bytes`);
     }

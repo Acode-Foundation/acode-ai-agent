@@ -7,6 +7,7 @@ import {
   type FileSystem,
   type Result,
 } from "@earendil-works/pi-agent-core";
+import { openCordovaSessionReader } from "./sessionLineReader";
 
 /** A private virtual path namespace; workspace tools never receive this adapter. */
 export class SessionFileSystem implements FileSystem {
@@ -16,6 +17,7 @@ export class SessionFileSystem implements FileSystem {
     rootUri: string,
     private readonly fs: Acode.FS = acode.fsOperation,
     private readonly append = appendWithCordova,
+    private readonly openReader = openCordovaSessionReader,
   ) {
     if (!rootUri.startsWith("file:///"))
       throw new Error("Session storage requires a private local file directory.");
@@ -61,6 +63,9 @@ export class SessionFileSystem implements FileSystem {
   }
   readTextFile(path: string, _context: Context) {
     return this.#result(path, () => this.fs(this.#uri(path)).readFile("utf-8"));
+  }
+  openTextLineReader(path: string, context: Context) {
+    return this.#result(path, () => this.openReader(this.#uri(path), path, context));
   }
   readTextLines(path: string, options: { maxLines?: number } | undefined, _context: Context) {
     return this.#result(path, async () =>
