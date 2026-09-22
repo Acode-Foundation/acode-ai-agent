@@ -44,17 +44,38 @@ export function assertPublicHttpUrl(value: string): URL {
 }
 
 export function isPrivateHost(host: string): boolean {
-  if (
-    host === "::1" ||
-    host === "::" ||
-    host.startsWith("fe80:") ||
-    host.startsWith("fc") ||
-    host.startsWith("fd")
-  ) {
-    return true;
+  const lower = host.toLowerCase();
+  if (lower.includes(":")) {
+    // IPv6 literal.
+    if (lower === "::1" || lower === "::") return true;
+    // IPv4-mapped (::ffff:192.168.0.1) and IPv4-compatible (::192.168.0.1)
+    // forms hide an IPv4 address: judge the embedded address instead. The
+    // URL parser normalizes dotted tails to hex (::ffff:a00:5), so handle
+    // both spellings.
+    const dotted = lower.match(/^::(?:ffff:)?(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (dotted) return isPrivateHost(dotted[1]);
+    // ::ffff:0:0/96 (mapped) and ::/96 (compatible, deprecated but parseable):
+    // the last 32 bits are an IPv4 address.
+    const last32 =
+      lower.match(/^::ffff:(?:[0-9a-f]{1,4}:)*([0-9a-f]{1,4}):([0-9a-f]{1,4})$/) ??
+      lower.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (last32) {
+      const hi = parseInt(last32[1], 16);
+      const lo = parseInt(last32[2], 16);
+      return isPrivateHost(`${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`);
+    }
+    const first = lower.split(":", 1)[0];
+    if (!first) return false; // "::..." remainder is global unicast
+    if (/^(fc|fd)/.test(first)) return true; // unique local fc00::/7
+    if (/^fe[89ab]/.test(first)) return true; // link-local fe80::/10
+    return false;
   }
-  if (host.includes(":")) return false;
-  return PRIVATE_V4.some((pattern) => pattern.test(host));
+  // Only dotted quads are IPv4; anything else is a reg-name and cannot be a
+  // private address. This avoids blocking public hosts that merely start
+  // with "fc"/"fd" (fcm.googleapis.com, fdroid.org) or with digits
+  // ("10.example.com").
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) return false;
+  return PRIVATE_V4.some((pattern) => pattern.test(lower));
 }
 
 export function rewriteGithubBlob(url: URL): string {
