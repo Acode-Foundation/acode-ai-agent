@@ -285,6 +285,12 @@ test("parses list_dir output into basenames without host class names", () => {
     { kind: "file", name: "main.ts" },
   ]);
   expect(parseDirListing("Directory is empty.")).toHaveLength(0);
+  expect(
+    parseDirListing("src/ui/\nsrc/main.ts\n[Showing entries 1-2 of 9. Use offset=2 to continue.]"),
+  ).toEqual([
+    { kind: "dir", name: "ui" },
+    { kind: "file", name: "main.ts" },
+  ]);
 });
 
 test("parses grep and glob output into navigable file results", () => {
@@ -299,6 +305,9 @@ test("parses grep and glob output into navigable file results", () => {
     { path: "src/main.ts" },
   ]);
   expect(parseToolFileResults("glob", "No files matched **/*.vue in 12 files.")).toEqual([]);
+  expect(parseToolFileResults("glob", "a.ts\n[Showing matches 1-1; more files match.]")).toEqual([
+    { path: "a.ts" },
+  ]);
   expect(parseToolFileResults("grep", "Searched src/ui/App.tsx")).toBeUndefined();
 });
 

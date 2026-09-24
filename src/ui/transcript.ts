@@ -207,14 +207,22 @@ export type FileResult = { path: string; line?: number; preview?: string };
 export function parseDirListing(output?: string): DirEntry[] | undefined {
   if (!output) return undefined;
   if (output === "Directory is empty.") return [];
-  const entries = output.split("\n").flatMap((line) => {
-    const match = /^([df])\s+(\S.*)$/.exec(line.trim());
-    if (!match) return [];
-    const raw = match[2]!.trim();
+  const entries = output.split("\n").flatMap((line): DirEntry[] => {
+    const trimmed = line.trim();
+    if (!trimmed || isToolNotice(trimmed)) return [];
+    // Older sessions stored `d  path` / `f  path`; current output marks folders with a trailing slash.
+    const legacy = /^([df])\s{2,}(\S.*)$/.exec(trimmed);
+    const raw = legacy ? legacy[2]!.trim() : trimmed;
+    const kind = legacy ? (legacy[1] === "d" ? "dir" : "file") : raw.endsWith("/") ? "dir" : "file";
     const name = raw.split("/").filter(Boolean).pop() ?? raw;
-    return [{ kind: match[1] === "d" ? ("dir" as const) : ("file" as const), name }];
+    return [{ kind, name }];
   });
   return entries.length ? entries : undefined;
+}
+
+/** Bracketed truncation / continuation notices that tools append after their results. */
+function isToolNotice(line: string): boolean {
+  return line.startsWith("[") && line.endsWith("]");
 }
 
 export function parseToolFileResults(name: string, output?: string): FileResult[] | undefined {
@@ -223,7 +231,7 @@ export function parseToolFileResults(name: string, output?: string): FileResult[
     const matches = output
       .split("\n")
       .map((line) => line.trim())
-      .filter((line) => line && !/^No files matched\b/.test(line))
+      .filter((line) => line && !isToolNotice(line) && !/^No files matched\b/.test(line))
       .map((path) => ({ path }));
     return matches.length ? matches : [];
   }
