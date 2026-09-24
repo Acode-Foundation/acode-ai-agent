@@ -14,6 +14,7 @@ import type { AcodeWorkspace, FileEntry, WalkResult } from "../workspace/acodeWo
 import { isImagePath } from "../workspace/fileMentions";
 import { workspaceRelativeFromIndex } from "../workspace/pathSandbox";
 import { describeError, fileOperationError, isAbortError } from "./errors";
+import { createFileOperationTools } from "./fileOperations";
 import { globMatcher } from "./glob";
 import {
   DEFAULT_MAX_BYTES,
@@ -41,6 +42,8 @@ export function createWorkspaceTools(
     maxWalkFiles: () => number;
     autoResizeImages?: () => boolean;
     imageProcessor?: ReadImageProcessor;
+    /** Add move/rename/copy/delete/mkdir tools, for workspaces where `bash` is unavailable. */
+    fileOperations?: boolean;
   },
 ): AgentTool<any>[] {
   const readFile: AgentTool<any> = {
@@ -507,7 +510,15 @@ export function createWorkspaceTools(
     },
   };
 
-  return [readFile, listDir, grep, glob, writeFile, editFile].map(withReadableErrors);
+  return [
+    readFile,
+    listDir,
+    grep,
+    glob,
+    writeFile,
+    editFile,
+    ...(options.fileOperations ? createFileOperationTools(workspace) : []),
+  ].map(withReadableErrors);
 }
 
 const LIST_DEFAULT_LIMIT = 500;

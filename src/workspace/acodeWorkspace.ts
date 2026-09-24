@@ -46,6 +46,19 @@ export type WalkResult = {
 const FS_TIMEOUT_MS = 30_000;
 const REMOTE_FS_TIMEOUT_MS = 90_000;
 
+export type PathKind = "file" | "folder";
+
+/** What a move, copy or delete touched, so tools can tell the agent about open editor tabs. */
+export type PathChange = {
+  kind: PathKind;
+  /** Files copied, for a folder copy. */
+  files?: number;
+  /** Editor tabs under the path that were re-pointed (move) or detached (delete). */
+  openFiles: number;
+  /** Of those, tabs with unsaved buffer changes the disk copy does not have. */
+  unsavedFiles: number;
+};
+
 export class NotDirectoryError extends Error {
   readonly path: string;
 
@@ -118,6 +131,222 @@ export class AcodeWorkspace {
       }
       return "disk";
     });
+  }
+
+  /**
+   * Move or rename a file or folder to the full path `to`. Missing parent folders are created,
+   * an existing destination is never overwritten, and open editor tabs follow the move.
+   */
+  async move(from: string, to: string, signal?: AbortSignal): Promise<PathChange> {
+    const source = this.sandbox.resolve(from);
+    const target = this.sandbox.resolve(to);
+    if (!source.relativePath) throw new Error("Cannot move the workspace root.");
+    if (!target.relativePath) throw new Error("A destination path is required.");
+    if (source.relativePath === target.relativePath)
+      throw new Error(`${source.relativePath} is already at that path.`);
+    if (inScope(target.relativePath, source.relativePath))
+      throw new Error(`Cannot move ${source.relativePath} into itself.`);
+    return this.#serialize(source.uri, async () => {
+      const kind = await this.#kind(source.relativePath, signal);
+      // A case-only rename finds the source itself on case-insensitive storage.
+      const caseOnly = source.relativePath.toLowerCase() === target.relativePath.toLowerCase();
+      if (!caseOnly) await this.#assertMissing(target);
+      const [fromParent, fromName] = splitPath(source.relativePath);
+      const [toParent, toName] = splitPath(target.relativePath);
+      throwIfAborted(signal);
+      const created = await this.#ensureDirectory(toParent);
+
+      if (fromParent === toParent) {
+        await this.#rename(source.uri, fromName, toName);
+      } else {
+        // moveTo keeps the name, so step aside first when the new folder already has one.
+        const clash =
+          toName !== fromName &&
+          (await exists(this.sandbox.resolve(joinPath(toParent, fromName)).uri));
+        const staged = clash ? temporaryName(fromName) : fromName;
+        const aside = await this.#rename(source.uri, fromName, staged);
+        const moved = await acode.fsOperation(aside).moveTo(this.sandbox.resolve(toParent).uri);
+        await this.#rename(moved, staged, toName);
+      }
+      if (!(await exists(target.uri)))
+        throw new Error(
+          `Acode reported ${source.relativePath} as moved, but ${target.relativePath} was not found afterwards. Check both paths with list_dir.`,
+        );
+
+      const open = this.#retargetOpenFiles(source.relativePath, target.relativePath);
+      notifyRemoved(source.uri);
+      notifyAdded(
+        this.sandbox.resolve(created ?? target.relativePath).uri,
+        created ? "folder" : kind,
+      );
+      return { kind, ...open };
+    });
+  }
+
+  /**
+   * Copy a file or folder to the full path `to`. Files open in the editor are copied from
+   * their buffer, so unsaved agent edits come along. Never overwrites.
+   */
+  async copy(from: string, to: string, signal?: AbortSignal): Promise<PathChange> {
+    const source = this.sandbox.resolve(from);
+    const target = this.sandbox.resolve(to);
+    if (!target.relativePath) throw new Error("A destination path is required.");
+    if (source.relativePath === target.relativePath)
+      throw new Error(`${target.relativePath} is the source path.`);
+    if (inScope(target.relativePath, source.relativePath))
+      throw new Error(`Cannot copy ${source.relativePath || "the workspace"} into itself.`);
+    const kind = source.relativePath ? await this.#kind(source.relativePath, signal) : "folder";
+    await this.#assertMissing(target);
+    const created = await this.#ensureDirectory(splitPath(target.relativePath)[0]);
+    let files = 0;
+    const copyEntry = async (fromPath: string, toPath: string, isFolder: boolean) => {
+      throwIfAborted(signal);
+      const [parent, name] = splitPath(toPath);
+      const parentUri = this.sandbox.resolve(parent).uri;
+      if (!isFolder) {
+        const content = await this.#snapshot(fromPath);
+        const url = await acode.fsOperation(parentUri).createFile(name, "");
+        await acode.fsOperation(url).writeFile(content);
+        files += 1;
+        return;
+      }
+      await acode.fsOperation(parentUri).createDirectory(name);
+      for (const child of sortEntries(
+        await this.#listViaFs(this.sandbox.resolve(fromPath), signal),
+      ))
+        await copyEntry(child.path, joinPath(toPath, child.name), child.isDirectory);
+    };
+    await copyEntry(source.relativePath, target.relativePath, kind === "folder");
+    notifyAdded(
+      this.sandbox.resolve(created ?? target.relativePath).uri,
+      created ? "folder" : kind,
+    );
+    return { kind, files: kind === "folder" ? files : undefined, openFiles: 0, unsavedFiles: 0 };
+  }
+
+  /**
+   * Delete a file or folder. A folder with entries needs `recursive`. Editor tabs for deleted
+   * files stay open as unsaved buffers, as when deleting from Acode's file browser.
+   */
+  async remove(
+    path: string,
+    options: { recursive?: boolean; signal?: AbortSignal } = {},
+  ): Promise<PathChange & { entries?: number }> {
+    const { relativePath, uri } = this.sandbox.resolve(path);
+    if (!relativePath) throw new Error("Cannot delete the workspace root.");
+    return this.#serialize(uri, async () => {
+      const kind = await this.#kind(relativePath, options.signal);
+      let entries: number | undefined;
+      if (kind === "folder") {
+        entries = (await this.#listViaFs({ relativePath, uri }, options.signal)).length;
+        if (entries && !options.recursive)
+          throw new Error(
+            `${relativePath} is a folder with ${entries} entr${entries === 1 ? "y" : "ies"}. ` +
+              "Pass recursive: true to delete it and everything inside.",
+          );
+      }
+      throwIfAborted(options.signal);
+      try {
+        await acode.fsOperation(uri).delete();
+      } catch (error) {
+        // Some providers (Terminal SAF) only delete empty folders.
+        if (kind !== "folder" || !(await exists(uri))) throw error;
+        await this.#deleteTree({ relativePath, uri }, options.signal);
+      }
+      if (await exists(uri))
+        throw new Error(`Acode reported ${relativePath} as deleted, but it still exists.`);
+      const open = this.#retargetOpenFiles(relativePath, undefined);
+      notifyRemoved(uri);
+      return { kind, entries, ...open };
+    });
+  }
+
+  /** Create a folder and any missing parents. Returns false when it already existed. */
+  async createDirectory(path: string): Promise<boolean> {
+    const { relativePath, uri } = this.sandbox.resolve(path);
+    if (!relativePath) return false;
+    if (await exists(uri)) {
+      if ((await this.#kind(relativePath)) === "file")
+        throw new Error(`${relativePath} already exists as a file.`);
+      return false;
+    }
+    const created = await this.#ensureDirectory(relativePath);
+    if (created) notifyAdded(this.sandbox.resolve(created).uri, "folder");
+    return true;
+  }
+
+  async #kind(path: string, signal?: AbortSignal): Promise<PathKind> {
+    const stat = await this.stat(path, signal);
+    return stat?.isFile === true || stat?.isDirectory === false ? "file" : "folder";
+  }
+
+  async #assertMissing(target: { relativePath: string; uri: string }): Promise<void> {
+    if (await exists(target.uri))
+      throw new Error(
+        `${target.relativePath} already exists. Delete it first or choose another destination.`,
+      );
+  }
+
+  /** Rename in place; a case-only rename goes through a temporary name. */
+  async #rename(url: string, from: string, to: string): Promise<string> {
+    if (from === to) return url;
+    if (from.toLowerCase() === to.toLowerCase())
+      url = await acode.fsOperation(url).renameTo(temporaryName(from));
+    return acode.fsOperation(url).renameTo(to);
+  }
+
+  /** Current contents for a copy: the editor buffer when the file is open, else disk bytes. */
+  async #snapshot(path: string): Promise<string | ArrayBuffer> {
+    const { uri } = this.sandbox.resolve(path);
+    const openFile = editorManager.getFile(uri, "uri");
+    if (openFile?.loaded) return openFile.session.getValue();
+    return acode.fsOperation(uri).readFile();
+  }
+
+  async #deleteTree(
+    folder: { relativePath: string; uri: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    for (const child of await this.#listViaFs(folder, signal)) {
+      throwIfAborted(signal);
+      const resolved = this.sandbox.resolve(child.path);
+      if (child.isDirectory) await this.#deleteTree(resolved, signal);
+      else await acode.fsOperation(resolved.uri).delete();
+    }
+    await acode.fsOperation(folder.uri).delete();
+  }
+
+  /**
+   * Point editor tabs at or under `from` to their new path, or detach them (`to` undefined).
+   * Acode's `openFolder.renameItem` rewrites file tabs to `<new>/<filename>`, so do it here.
+   */
+  #retargetOpenFiles(
+    from: string,
+    to: string | undefined,
+  ): { openFiles: number; unsavedFiles: number } {
+    let openFiles = 0;
+    let unsavedFiles = 0;
+    try {
+      for (const file of editorManager.files ?? []) {
+        const relative = this.sandbox.relative(file?.uri);
+        if (relative === undefined || !inScope(relative, from)) continue;
+        openFiles += 1;
+        if (file.isUnsaved) unsavedFiles += 1;
+        if (to === undefined) {
+          (file as { uri: string | null }).uri = null;
+          continue;
+        }
+        file.uri = this.sandbox.resolve(to + relative.slice(from.length)).uri;
+        if (relative === from) file.filename = splitPath(to)[1];
+      }
+      if (openFiles && to === undefined) {
+        editorManager.onupdate?.("delete-file");
+        editorManager.emit?.("update", "delete-file");
+      }
+    } catch {
+      // Editor manager is optional in tests and non-Acode hosts.
+    }
+    return { openFiles, unsavedFiles };
   }
 
   /**
@@ -334,15 +563,68 @@ export class AcodeWorkspace {
     return current;
   }
 
-  async #ensureDirectory(relativePath: string): Promise<void> {
-    if (!relativePath) return;
+  /** Create `relativePath` and missing parents; returns the topmost folder it created. */
+  async #ensureDirectory(relativePath: string): Promise<string | undefined> {
+    if (!relativePath) return undefined;
     let current = "";
+    let created: string | undefined;
     for (const segment of this.sandbox.normalize(relativePath).split("/")) {
       const parentUri = this.sandbox.resolve(current).uri;
       current = [current, segment].filter(Boolean).join("/");
       const directory = acode.fsOperation(this.sandbox.resolve(current).uri);
-      if (!(await directory.exists())) await acode.fsOperation(parentUri).createDirectory(segment);
+      if (await directory.exists()) continue;
+      await acode.fsOperation(parentUri).createDirectory(segment);
+      created ??= current;
     }
+    return created;
+  }
+}
+
+async function exists(uri: string): Promise<boolean> {
+  try {
+    return await acode.fsOperation(uri).exists();
+  } catch {
+    return false;
+  }
+}
+
+function splitPath(path: string): [parent: string, name: string] {
+  const slash = path.lastIndexOf("/");
+  return slash >= 0 ? [path.slice(0, slash), path.slice(slash + 1)] : ["", path];
+}
+
+function joinPath(parent: string, name: string): string {
+  return parent ? `${parent}/${name}` : name;
+}
+
+function temporaryName(name: string): string {
+  return `.${name}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}.tmp`;
+}
+
+/** Keep Acode's file tree and native index in step with a tool's change. Best effort. */
+function notifyAdded(uri: string, kind: PathKind): void {
+  try {
+    const result: unknown = openFolderApi()?.add(uri, kind);
+    if (result instanceof Promise) result.catch(() => undefined);
+  } catch {
+    // The sidebar refreshes on its own the next time the folder is opened.
+  }
+}
+
+function notifyRemoved(uri: string): void {
+  try {
+    openFolderApi()?.removeItem(uri);
+  } catch {
+    // Same as above.
+  }
+}
+
+function openFolderApi(): Acode.OpenFolder | undefined {
+  try {
+    const api = acode.require("openfolder") as Acode.OpenFolder | undefined;
+    return typeof api?.add === "function" ? api : undefined;
+  } catch {
+    return undefined;
   }
 }
 

@@ -787,6 +787,7 @@ export class AgentSession {
       ...createWorkspaceTools(this.workspace, {
         maxWalkFiles: () => this.#settings().maxWalkFiles,
         autoResizeImages: () => this.#settings().imageAutoResize,
+        fileOperations: !bash,
       }),
       ...(bash ? [bash] : []),
       ...createTaskTools(this.#tasks),

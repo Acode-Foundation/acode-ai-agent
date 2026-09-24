@@ -1993,7 +1993,13 @@ function ApprovalPanel({
   return (
     <section ref={ref} class="approval" role="alertdialog" aria-label="Approve agent action">
       <header>
-        <span>{approval.toolName === "bash" ? "Terminal" : "Edit"}</span>
+        <span>
+          {approval.toolName === "bash"
+            ? "Terminal"
+            : approval.toolName === "delete_path"
+              ? "Delete"
+              : "Edit"}
+        </span>
         <strong>{approval.title}</strong>
       </header>
       <pre>{approval.preview}</pre>

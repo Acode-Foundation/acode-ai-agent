@@ -123,6 +123,18 @@ In **Ask** mode the approval prompt previews each `−` / `+` replacement, or th
 - `bash` — streaming command with timeout and cancel, cwd already set to the terminal project
 - Not registered for ordinary SAF, local-storage, FTP, or SFTP folders, because Alpine cannot address those Acode paths
 
+**File operations** (workspaces without `bash`)
+
+Without a terminal the agent still needs to move, copy, and delete files to finish a refactor. These tools go through `fsOperation`, so they work on SAF, local storage, FTP, and SFTP:
+
+- `move_path` — move or rename a file or folder to a full new path; missing parent folders are created
+- `rename_path` — rename in place (`new_name` is a name, not a path); case-only renames work
+- `copy_path` — copy a file or folder recursively; binary files are copied byte-for-byte, open files from their editor buffer
+- `delete_path` — delete a file, or a folder with `recursive: true`
+- `create_directory` — create a folder and its parents
+
+None of them overwrite an existing path. Editor tabs follow a move or rename. A deleted file's tab stays open as an unsaved buffer, like deleting from Acode's file browser. The sidebar tree and Acode's file index are updated too.
+
 **Session extras**
 
 - `todo_write` — compact checklist for multi-step work
@@ -133,13 +145,13 @@ In **Ask** mode the approval prompt previews each `−` / `+` replacement, or th
 
 Three modes, from the composer:
 
-| Mode            | Behavior                                            |
-| --------------- | --------------------------------------------------- |
-| **Ask**         | Approve each edit and each terminal command         |
-| **Allow edits** | Workspace writes this session; still ask for `bash` |
-| **Full access** | Skip those prompts                                  |
+| Mode            | Behavior                                                                   |
+| --------------- | -------------------------------------------------------------------------- |
+| **Ask**         | Approve each edit, delete, and terminal command                            |
+| **Allow edits** | Writes, moves, and copies without asking; still ask for deletes and `bash` |
+| **Full access** | Skip those prompts                                                         |
 
-Approvals can also be granted for the rest of the session from the prompt itself (`Allow for session`). Session grants reset on a new/forked/cloned session.
+Approvals can also be granted for the rest of the session from the prompt itself (`Allow for session`). Edits, deletes, and terminal commands are granted separately, and grants reset on a new/forked/cloned session.
 
 ## Composer
 
@@ -210,8 +222,8 @@ The agent talks in workspace-relative POSIX paths. Device URIs, absolute paths, 
 | Folder type               | Files              | `bash`                      |
 | ------------------------- | ------------------ | --------------------------- |
 | Local / Acode Terminal FS | yes                | yes, if Executor is present |
-| SAF `content://`          | yes                | no                          |
-| FTP / SFTP                | yes, bounded walks | no                          |
+| SAF `content://`          | yes                | no (file-operation tools)   |
+| FTP / SFTP                | yes, bounded walks | no (file-operation tools)   |
 
 Remote walks stay sequential and capped (default 200 files, lower on FTP/SFTP search).
 
@@ -224,7 +236,7 @@ Remote walks stay sequential and capped (default 200 files, lower on FTP/SFTP se
 - `fetch_content` refuses localhost, private networks, and URLs with embedded credentials.
 - Backgrounding the app keeps the current run alive. If the app process is interrupted, the chat offers to resume the durable Pi operation from its last safe checkpoint.
 
-Treat **Full access** as a real grant: the agent can write files and, on Terminal workspaces, run commands.
+Treat **Full access** as a real grant: the agent can write and delete files and, on Terminal workspaces, run commands.
 
 ## Extension API
 

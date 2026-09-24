@@ -180,6 +180,23 @@ export function presentTool(
       return { kind: "change", label: "Wrote file", detail: path };
     case "edit_file":
       return { kind: "change", label: "Changed files", detail: path };
+    case "move_path":
+    case "copy_path":
+      return {
+        kind: "change",
+        label: name === "move_path" ? "Moved" : "Copied",
+        detail: arrowDetail(firstString(args, ["source"]), firstString(args, ["destination"])),
+      };
+    case "rename_path":
+      return {
+        kind: "change",
+        label: "Renamed",
+        detail: arrowDetail(path, firstString(args, ["new_name"])),
+      };
+    case "delete_path":
+      return { kind: "change", label: "Deleted", detail: path };
+    case "create_directory":
+      return { kind: "change", label: "Created folder", detail: path };
     case "bash":
       return {
         kind: "terminal",
@@ -558,6 +575,10 @@ function fetchTitle(output?: string): string | undefined {
     return trimmed && !/^https?:\/\//i.test(trimmed) && !trimmed.startsWith("Error:");
   });
   return first?.trim().slice(0, 80);
+}
+
+function arrowDetail(from?: string, to?: string): string | undefined {
+  return from && to ? `${from} → ${to}` : (from ?? to);
 }
 
 function firstString(args: Record<string, unknown>, keys: string[]): string | undefined {

@@ -6,6 +6,7 @@ import {
   File,
   Folder,
   FolderOpen,
+  FolderPlus,
   Globe,
   ListPlus,
   LoaderCircle,
@@ -13,6 +14,7 @@ import {
   Search,
   Sparkles,
   SquareTerminal,
+  Trash2,
   Wrench,
 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
@@ -589,6 +591,8 @@ function kindIcon(kind: ToolKind, name?: string) {
   const props = { size: 13, strokeWidth: 2 } as const;
   if (name === "todo_write") return <ListPlus {...props} />;
   if (name === "ask_user_question") return <AskIcon />;
+  if (name === "delete_path") return <Trash2 {...props} />;
+  if (name === "create_directory") return <FolderPlus {...props} />;
   switch (kind) {
     case "read":
       return <Eye {...props} />;
