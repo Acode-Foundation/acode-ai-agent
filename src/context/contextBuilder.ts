@@ -20,7 +20,8 @@ export async function buildSystemPrompt(
     "For 3+ step work, keep a live checklist with todo_write. Do not paste it into chat.",
     "When a decision is underspecified, ask with ask_user_question instead of guessing.",
   ];
-  for (const instructionsFile of ["AGENTS.md", ".agents.md"]) {
+  // AGENTS.md wins; CLAUDE.md covers projects set up for Claude Code.
+  for (const instructionsFile of ["AGENTS.md", ".agents.md", "CLAUDE.md"]) {
     try {
       const instructions = await workspace.readText(instructionsFile);
       context.push(

@@ -1,4 +1,11 @@
-import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-core";
+import {
+  BACKGROUND_CONTEXT,
+  createEditTool,
+  FileError,
+  withAbortSignal,
+  type EditToolDetails,
+  type EditToolInput,
+} from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool, AgentToolResult, ReadImageProcessor } from "@earendil-works/pi-agent-core";
 import { browserReadImageProcessor } from "../platform/readImageProcessor";
@@ -15,9 +22,10 @@ import {
   selectReadOutput,
   truncateHead,
 } from "./truncate";
-import { applyExactEdit } from "./textEdits";
+import { legacyEditArguments } from "./textEdits";
+import { WorkspaceExecutionEnv } from "./workspaceEnv";
 
-type ToolDetails = {
+type ToolDetails = Partial<EditToolDetails> & {
   path?: string;
   operation: string;
   target?: "buffer" | "disk";
@@ -447,45 +455,53 @@ export function createWorkspaceTools(
     },
   };
 
+  // Pi's edit tool, run against the workspace: multi-edit, CRLF/BOM preservation, tolerant
+  // matching for whitespace and typographic quotes, and a diff for the change card.
+  const piEdit = createEditTool();
+  const editEnv = new WorkspaceExecutionEnv(workspace, assertTextFile);
   const editFile: AgentTool<any> = {
     name: "edit_file",
     label: "Edit file",
-    description:
-      "Replace an exact string in a UTF-8 text file. By default the match must be unique.",
-    parameters: Type.Object({
-      path: Type.String(),
-      old_string: Type.String(),
-      new_string: Type.String(),
-      replace_all: Type.Optional(Type.Boolean({ default: false })),
-    }),
+    description: `${piEdit.description} Changes to files open in the editor stay in their unsaved buffer.`,
+    parameters: piEdit.parameters,
+    prepareArguments: (args: unknown) =>
+      piEdit.prepareArguments ? piEdit.prepareArguments(legacyEditArguments(args)) : args,
     executionMode: "sequential",
-    execute: async (_id, params, signal) => {
-      const input = params as {
-        path: string;
-        old_string: string;
-        new_string: string;
-        replace_all?: boolean;
-      };
+    execute: async (id, params, signal) => {
       throwIfAborted(signal);
+      const input = params as EditToolInput;
       const path = workspace.sandbox.normalize(input.path);
-      const current = await workspace.readText(path);
-      assertTextFile(path, current);
-      let edit;
+      const context = signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
+      let output: AgentToolResult<EditToolDetails | undefined>;
       try {
-        edit = applyExactEdit(current, input.old_string, input.new_string, input.replace_all);
+        output = await piEdit.execute(
+          id,
+          { ...input, path },
+          () => undefined,
+          { env: editEnv },
+          undefined as never,
+          context,
+        );
       } catch (error) {
-        throw new Error(`${describeError(error)} File: ${path}`);
+        // Pi reports environment failures as "Error code: not_found"; keep the readable cause.
+        const cause = (error as { cause?: unknown } | null)?.cause;
+        if (cause instanceof FileError && cause.code !== "aborted")
+          throw new Error(`Could not edit ${path}: ${describeError(cause)}`);
+        throw error;
       }
-      const next = edit.text;
-      assertWritable(path, next);
-      const target = await workspace.writeText(path, next);
+      const target = editEnv.takeWriteTarget(path);
+      const summary =
+        output.content.find((part) => part.type === "text")?.text ?? `Edited ${path}.`;
       return result(
-        `Replaced ${edit.replacements} match${edit.replacements === 1 ? "" : "es"} in ${path}${target === "buffer" ? " (open buffer, not auto-saved)" : ""}.`,
+        target === "buffer"
+          ? `${summary} The file is open in the editor, so the change is in its unsaved buffer.`
+          : summary,
         {
+          ...output.details,
           operation: "edit",
           path,
           target,
-          count: edit.replacements,
+          count: Array.isArray(input.edits) ? input.edits.length : undefined,
         },
       );
     },

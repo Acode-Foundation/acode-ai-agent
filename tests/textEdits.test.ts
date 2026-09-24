@@ -1,18 +1,24 @@
 import { expect, test } from "vitest";
 import { globMatcher } from "../src/tools/glob.ts";
-import { applyExactEdit } from "../src/tools/textEdits.ts";
+import { editPairs, legacyEditArguments } from "../src/tools/textEdits.ts";
 
-test("applies one unique exact edit", () => {
-  expect(applyExactEdit("alpha beta", "beta", "gamma")).toEqual({
-    text: "alpha gamma",
-    replacements: 1,
-  });
+test("reads edit pairs from Pi, single, and legacy edit_file arguments", () => {
+  expect(editPairs({ edits: [{ oldText: "a", newText: "b" }] })).toEqual([
+    { oldText: "a", newText: "b" },
+  ]);
+  expect(editPairs({ edits: '[{"oldText":"a","newText":"b"}]' })).toEqual([
+    { oldText: "a", newText: "b" },
+  ]);
+  expect(editPairs({ old_string: "x", new_string: "y" })).toEqual([{ oldText: "x", newText: "y" }]);
+  expect(editPairs({ path: "a.ts" })).toEqual([]);
 });
 
-test("rejects missing, empty, and ambiguous matches", () => {
-  expect(() => applyExactEdit("alpha", "", "x")).toThrow(/cannot be empty/);
-  expect(() => applyExactEdit("alpha", "beta", "x")).toThrow(/No exact match/);
-  expect(() => applyExactEdit("x x", "x", "y")).toThrow(/found 2/);
+test("maps old_string/new_string onto Pi's edits shape", () => {
+  expect(
+    legacyEditArguments({ path: "a.ts", old_string: "x", new_string: "y", replace_all: true }),
+  ).toEqual({ path: "a.ts", edits: [{ oldText: "x", newText: "y" }] });
+  const untouched = { path: "a.ts", edits: [] };
+  expect(legacyEditArguments(untouched)).toBe(untouched);
 });
 
 test("glob patterns match nested files even without **/", () => {
@@ -31,11 +37,4 @@ test("glob braces match any listed extension", () => {
   expect(matcher.test("src/main.js")).toBe(true);
   expect(matcher.test("AndroidManifest.xml")).toBe(true);
   expect(matcher.test("src/main.ts")).toBe(false);
-});
-
-test("replace_all deliberately replaces every non-overlapping match", () => {
-  expect(applyExactEdit("x x x", "x", "", true)).toEqual({
-    text: "  ",
-    replacements: 3,
-  });
 });

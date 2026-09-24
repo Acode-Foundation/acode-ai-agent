@@ -254,6 +254,100 @@ test("tools never surface [object Object] for non-Error rejections", async () =>
   );
 });
 
+test("edit_file keeps $ patterns in the replacement text literally", async () => {
+  const files = { "a.js": "const out = input;\n" };
+  const edit = tool(memoryWorkspace(files), "edit_file", 10);
+
+  await edit.execute("e", {
+    path: "a.js",
+    edits: [{ oldText: "input;", newText: 'input.replace(/x/, "$&!$1");' }],
+  });
+
+  expect(files["a.js"]).toBe('const out = input.replace(/x/, "$&!$1");\n');
+});
+
+test("edit_file matches LF edits against CRLF files and keeps CRLF", async () => {
+  const files = { "win.txt": "one\r\ntwo\r\nthree\r\n" };
+  const edit = tool(memoryWorkspace(files), "edit_file", 10);
+
+  const output = await edit.execute("e", {
+    path: "win.txt",
+    edits: [{ oldText: "one\ntwo", newText: "one\n2" }],
+  });
+
+  expect(files["win.txt"]).toBe("one\r\n2\r\nthree\r\n");
+  expect(output.details).toMatchObject({ operation: "edit", path: "win.txt", target: "disk" });
+  expect((output.details as { diff?: string }).diff).toBeTruthy();
+});
+
+test("edit_file applies several edits in one call", async () => {
+  const files = { "a.ts": "let a = 1;\nlet b = 2;\nlet c = 3;\n" };
+  const edit = tool(memoryWorkspace(files), "edit_file", 10);
+
+  const output = await edit.execute("e", {
+    path: "a.ts",
+    edits: [
+      { oldText: "let a = 1;", newText: "const a = 1;" },
+      { oldText: "let c = 3;", newText: "const c = 3;" },
+    ],
+  });
+
+  expect(files["a.ts"]).toBe("const a = 1;\nlet b = 2;\nconst c = 3;\n");
+  expect(text(output)).toBe("Successfully replaced 2 block(s) in a.ts.");
+  expect(output.details).toMatchObject({ count: 2 });
+});
+
+test("edit_file accepts old_string/new_string arguments", () => {
+  const edit = tool(memoryWorkspace({}), "edit_file", 10);
+
+  expect(edit.prepareArguments?.({ path: "a.ts", old_string: "x", new_string: "y" })).toEqual({
+    path: "a.ts",
+    edits: [{ oldText: "x", newText: "y" }],
+  });
+});
+
+test("edit_file explains a missing file and an unmatched edit", async () => {
+  const edit = tool(memoryWorkspace({ "a.ts": "hello" }), "edit_file", 10);
+
+  await expect(
+    edit.execute("e1", { path: "nope.ts", edits: [{ oldText: "a", newText: "b" }] }),
+  ).rejects.toThrow("Could not edit nope.ts: Path not found");
+  await expect(
+    edit.execute("e2", { path: "a.ts", edits: [{ oldText: "absent", newText: "b" }] }),
+  ).rejects.toThrow(/a\.ts/);
+});
+
+test("edit_file writes into an open editor buffer without saving", async () => {
+  const buffer = { value: "draft text" };
+  const openFile = {
+    loaded: true,
+    id: "f1",
+    readOnly: false,
+    session: {
+      getValue: () => buffer.value,
+      setValue: (value: string) => {
+        buffer.value = value;
+      },
+    },
+  };
+  const edit = tool(memoryWorkspace({ "notes.md": "on disk" }), "edit_file", 10);
+  vi.stubGlobal("editorManager", {
+    getFile: (uri: string) => (uri.endsWith("/notes.md") ? openFile : undefined),
+    activeFile: undefined,
+    emit: () => undefined,
+    files: [],
+  });
+
+  const output = await edit.execute("e", {
+    path: "notes.md",
+    edits: [{ oldText: "draft", newText: "final" }],
+  });
+
+  expect(buffer.value).toBe("final text");
+  expect(output.details).toMatchObject({ target: "buffer" });
+  expect(text(output)).toContain("unsaved buffer");
+});
+
 test("describeError handles Cordova and DOM error shapes", () => {
   expect(describeError({ code: 1 })).toBe("Path not found");
   expect(describeError({ code: 5, message: "File encoding error" })).toBe("File encoding error");
@@ -307,6 +401,10 @@ function memoryWorkspace(files: Record<string, string>): AcodeWorkspace {
           });
         },
         readFile: async () => (path in files ? files[path] : notFound()),
+        exists: async () => path in files || directories.has(path),
+        writeFile: async (content: string) => {
+          files[path] = content;
+        },
         stat: async () => {
           if (path in files) return { isFile: true, isDirectory: false, size: files[path]!.length };
           if (directories.has(path)) return { isFile: false, isDirectory: true, size: 0 };

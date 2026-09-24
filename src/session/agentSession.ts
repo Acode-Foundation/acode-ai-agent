@@ -35,6 +35,7 @@ import type { ProviderRegistry } from "../providers/providerRegistry";
 import type { SessionStore } from "../platform/sessionStore";
 import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
 import { createWorkspaceTools } from "../tools/createTools";
+import { editPairs } from "../tools/textEdits";
 import { createTerminalBashTool } from "../tools/bash";
 import { createAskTool } from "../ask/createAskTool";
 import { QuestionGate } from "../ask/questionGate";
@@ -936,6 +937,16 @@ function sanitizeArgs(args: unknown): Record<string, unknown> {
   if ("content" in value) value.content = `[${String(value.content).length} characters]`;
   if ("new_string" in value) value.new_string = `[${String(value.new_string).length} characters]`;
   if ("old_string" in value) value.old_string = `[${String(value.old_string).length} characters]`;
+  if (Array.isArray(value.edits))
+    value.edits = value.edits.map((edit) => {
+      const pair = editPairs({ edits: [edit] })[0];
+      return pair
+        ? {
+            oldText: `[${pair.oldText.length} characters]`,
+            newText: `[${pair.newText.length} characters]`,
+          }
+        : {};
+    });
   if (Array.isArray(value.todos)) value.todos = value.todos.map(summarizeTodoArg);
   if (Array.isArray(value.questions)) value.questions = value.questions.map(summarizeQuestionArg);
   return value;

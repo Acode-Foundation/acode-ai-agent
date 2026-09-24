@@ -1,6 +1,7 @@
 import type { PermissionMode } from "../core/schema";
 import type { MutationDecision, MutationRequest } from "../core/types";
 import { Signal } from "../core/events";
+import { editPairs } from "../tools/textEdits";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 
 export class MutationGate {
@@ -103,7 +104,11 @@ export class MutationGate {
   ): Promise<string> {
     if (toolName === "bash") return truncate(String(args.command ?? ""), 2_800);
     if (toolName === "edit_file") {
-      return `− ${truncate(String(args.old_string ?? ""), 1400)}\n+ ${truncate(String(args.new_string ?? ""), 1400)}`;
+      const pairs = editPairs(args);
+      const budget = Math.max(200, Math.floor(1400 / Math.max(1, pairs.length)));
+      return pairs
+        .map((pair) => `− ${truncate(pair.oldText, budget)}\n+ ${truncate(pair.newText, budget)}`)
+        .join("\n\n");
     }
     const next = String(args.content ?? "");
     try {

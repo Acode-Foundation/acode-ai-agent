@@ -24,6 +24,7 @@ import type { WorkspaceInfo } from "../core/types";
 import { openCustomTab } from "../platform/authTab";
 import { openWorkspaceFile } from "../platform/editorNavigation";
 import { loadDiffViewRuntime } from "../platform/pluginAssets";
+import { editPairs } from "../tools/textEdits";
 import { parseWebSearchOutput } from "../tools/web/format";
 import {
   formatWorkDuration,
@@ -536,10 +537,13 @@ function changeInput(
   const path = toolPath(entry);
   if (!path) return undefined;
   if (entry.name === "edit_file") {
-    const oldContents = stringArg(entry.args, "old_string");
-    const newContents = stringArg(entry.args, "new_string");
-    if (oldContents === undefined || newContents === undefined) return undefined;
-    return { path, oldContents, newContents };
+    const pairs = editPairs(entry.args);
+    if (!pairs.length) return undefined;
+    return {
+      path,
+      oldContents: pairs.map((pair) => pair.oldText).join("\n\n"),
+      newContents: pairs.map((pair) => pair.newText).join("\n\n"),
+    };
   }
   if (entry.name === "write_file") {
     const newContents = stringArg(entry.args, "content");
