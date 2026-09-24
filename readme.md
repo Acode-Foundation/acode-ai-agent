@@ -73,10 +73,11 @@ OpenRouter, OpenAI, Anthropic, Google Gemini, xAI, Groq, DeepSeek, Cerebras, Fir
 | -------------- | --------------------- |
 | OpenRouter     | OpenRouter account    |
 | Codex          | ChatGPT Plus / Pro    |
-| Anthropic      | Claude Pro / Max      |
 | GitHub Copilot | Copilot subscription  |
 | xAI            | Grok / X subscription |
 | Kimi Coding    | Kimi Code             |
+
+Anthropic is API-key only. Claude Pro / Max sign-in was removed because Anthropic's policy does not allow third-party apps to use Claude subscription OAuth; use an Anthropic Console API key instead. If you connected Claude Pro / Max in an earlier version, add an API key to keep using Anthropic models.
 
 Codex offers browser sign-in and device-code sign-in. Device-code sign-in connects automatically after approval; first enable device-code authorization in ChatGPT Settings → Security. For browser sign-in, complete ChatGPT sign-in in the browser, then copy the full `http://localhost:1455/auth/callback?...` address and paste it into Acode. The localhost page may show a connection error because Acode does not run a callback server; copying its address completes the sign-in. This browser OAuth flow does not require enabling device-code authorization in ChatGPT settings.
 

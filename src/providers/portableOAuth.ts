@@ -4,12 +4,16 @@ import { sanitizeModelId } from "./customModels";
 const OAUTH_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
+// Claude Pro / Max sign-in is disabled: Anthropic's policy does not allow third-party
+// apps to use Claude subscription OAuth. Anthropic is API-key only.
+/*
 const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const ANTHROPIC_REDIRECT_URI = "http://localhost:53692/callback";
 const ANTHROPIC_SCOPES =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+*/
 
 const GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98";
 const GITHUB_HEADERS = {
@@ -46,6 +50,8 @@ const CODEX_ACCOUNT_CLAIM = "https://api.openai.com/auth";
 
 type Json = Record<string, unknown>;
 
+// Disabled: see the note on the ANTHROPIC_* constants above.
+/*
 export const portableAnthropicOAuth: OAuthAuth = {
   name: "Anthropic (Claude Pro/Max)",
   loginLabel: "Sign in with Claude Pro or Max",
@@ -107,6 +113,7 @@ export const portableAnthropicOAuth: OAuthAuth = {
     return { apiKey: credential.access };
   },
 };
+*/
 
 export const portableGitHubCopilotOAuth: OAuthAuth = {
   name: "GitHub Copilot",

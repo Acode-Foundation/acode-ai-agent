@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import {
-  portableAnthropicOAuth,
+  // portableAnthropicOAuth,
   portableCodexOAuth,
   portableGitHubCopilotOAuth,
   portableKimiOAuth,
@@ -76,6 +76,8 @@ test("Codex refresh keeps a non-rotated refresh token", async () => {
   }
 });
 
+// Claude Pro / Max sign-in disabled per Anthropic policy.
+/*
 test("Anthropic portable login uses the manual callback code flow", async () => {
   const events: unknown[] = [];
   const restore = stubFetch({
@@ -107,6 +109,7 @@ test("Anthropic portable login uses the manual callback code flow", async () => 
     restore();
   }
 });
+*/
 
 test("Kimi subscription refresh derives a bearer header", async () => {
   const restore = stubFetch({
@@ -197,12 +200,12 @@ test("advertises every portable subscription sign-in", () => {
     ]),
   );
   expect(labels).toMatchObject({
-    anthropic: "Connect Claude Pro / Max",
     "github-copilot": "Connect GitHub Copilot",
     "kimi-coding": "Connect Kimi Code",
     "openai-codex": "Sign in with ChatGPT",
     xai: "Connect Grok / X subscription",
   });
+  expect(labels).not.toHaveProperty("anthropic");
 });
 
 test("filters pi's complete Copilot catalog to models available for the signed-in account", async () => {

@@ -36,7 +36,7 @@ import {
 } from "./customEndpoints";
 import { createCustomModel, mergeCustomModels, sanitizeModelId } from "./customModels";
 import {
-  portableAnthropicOAuth,
+  // portableAnthropicOAuth,
   portableCodexOAuth,
   portableGitHubCopilotOAuth,
   portableKimiOAuth,
@@ -84,11 +84,12 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
   {
     id: "anthropic",
     name: "Anthropic",
-    hint: "API key or Claude Pro / Max",
+    hint: "Direct API key",
     keyPlaceholder: "sk-ant-…",
     keyUrl: "https://console.anthropic.com/settings/keys",
     apiKey: true,
-    subscriptionLabel: "Connect Claude Pro / Max",
+    // Claude Pro / Max sign-in disabled per Anthropic policy.
+    // subscriptionLabel: "Connect Claude Pro / Max",
   },
   {
     id: "github-copilot",
@@ -443,7 +444,9 @@ function portableProviders(): Provider[] {
     { ...openrouter, auth: { ...openrouter.auth, oauth: portableOpenRouterOAuth } },
     openaiProvider(),
     { ...codex, auth: { ...codex.auth, oauth: portableCodexOAuth } },
-    { ...anthropic, auth: { ...anthropic.auth, oauth: portableAnthropicOAuth } },
+    // Drop pi's built-in Claude Pro / Max OAuth too; Anthropic policy disallows it here.
+    // { ...anthropic, auth: { ...anthropic.auth, oauth: portableAnthropicOAuth } },
+    { ...anthropic, auth: { ...anthropic.auth, oauth: undefined } },
     { ...githubCopilot, auth: { ...githubCopilot.auth, oauth: portableGitHubCopilotOAuth } },
     googleProvider(),
     { ...xai, auth: { ...xai.auth, oauth: portableXaiOAuth } },
