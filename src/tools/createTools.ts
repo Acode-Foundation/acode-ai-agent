@@ -2,11 +2,19 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-co
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool, AgentToolResult, ReadImageProcessor } from "@earendil-works/pi-agent-core";
 import { browserReadImageProcessor } from "../platform/readImageProcessor";
+import { NotDirectoryError } from "../workspace/acodeWorkspace";
 import type { AcodeWorkspace, FileEntry } from "../workspace/acodeWorkspace";
 import { isImagePath } from "../workspace/fileMentions";
 import { workspaceRelativeFromIndex } from "../workspace/pathSandbox";
+import { describeError, fileOperationError, isAbortError } from "./errors";
 import { globMatcher } from "./glob";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, selectReadOutput } from "./truncate";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+  formatSize,
+  selectReadOutput,
+  truncateHead,
+} from "./truncate";
 import { applyExactEdit } from "./textEdits";
 
 type ToolDetails = {
@@ -47,7 +55,9 @@ export function createWorkspaceTools(
       throwIfAborted(signal);
       const path = workspace.sandbox.normalize(input.path);
       if (isImagePath(path)) {
-        const bytes = await workspace.readBinary(path);
+        const bytes = await workspace
+          .readBinary(path)
+          .catch((error: unknown) => Promise.reject(fileOperationError("read", path, error)));
         throwIfAborted(signal);
         const mimeType = detectSupportedImageMimeType(bytes);
         if (mimeType) {
@@ -76,7 +86,9 @@ export function createWorkspaceTools(
           };
         }
       }
-      const text = await workspace.readText(path);
+      const text = await workspace
+        .readText(path)
+        .catch((error: unknown) => Promise.reject(fileOperationError("read", path, error)));
       assertTextFile(path, text);
       const output = selectReadOutput(text, input.offset, input.limit);
       return result(output.text, { operation: "read", path, truncated: output.truncated });
@@ -86,28 +98,61 @@ export function createWorkspaceTools(
   const listDir: AgentTool<any> = {
     name: "list_dir",
     label: "List directory",
-    description: "List files and folders in a workspace directory.",
+    description:
+      "List the direct children of a workspace directory, including hidden files. " +
+      "Folders are listed first and end with '/'. Paths are workspace-relative, ready for other tools. " +
+      `Shows up to ${LIST_DEFAULT_LIMIT} entries; use offset/limit to page through larger folders.`,
     parameters: Type.Object({
       path: Type.Optional(
         Type.String({ description: "Workspace-relative directory, empty for root" }),
       ),
+      offset: Type.Optional(
+        Type.Number({ description: "Number of entries to skip (to continue a truncated listing)" }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          description: `Maximum entries to return (default ${LIST_DEFAULT_LIMIT}, max ${LIST_MAX_LIMIT})`,
+        }),
+      ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
     execute: async (_id, params, signal) => {
-      const input = params as { path?: string };
+      const input = params as { path?: string; offset?: number; limit?: number };
       throwIfAborted(signal);
       const path = workspace.sandbox.normalize(input.path ?? "");
-      const entries = await workspace.list(path);
-      const text = entries
-        .sort(
-          (a, b) => Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name),
-        )
-        .map((entry) => `${entry.isDirectory ? "d" : "f"}  ${entry.path}`)
-        .join("\n");
-      return result(text || "Directory is empty.", {
+      const label = path || "the workspace root";
+      let entries: FileEntry[];
+      try {
+        entries = await workspace.list(path, signal);
+      } catch (error) {
+        if (isAbortError(error) || error instanceof NotDirectoryError) throw error;
+        throw fileOperationError("list", label, error);
+      }
+      throwIfAborted(signal);
+
+      const sorted = [...entries].sort(
+        (a, b) =>
+          Number(b.isDirectory) - Number(a.isDirectory) ||
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+          a.name.localeCompare(b.name),
+      );
+      const offset = clampInteger(input.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      const limit = clampInteger(input.limit, LIST_DEFAULT_LIMIT, 1, LIST_MAX_LIMIT);
+      if (sorted.length && offset >= sorted.length)
+        throw new Error(`Offset ${offset} is beyond the ${sorted.length} entries in ${label}.`);
+      const page = sorted.slice(offset, offset + limit);
+      const lines = page.map((entry) => (entry.isDirectory ? `${entry.path}/` : entry.path));
+      const next = offset + page.length;
+      if (next < sorted.length) {
+        lines.push(
+          `[Showing entries ${offset + 1}-${next} of ${sorted.length}. Use offset=${next} to continue.]`,
+        );
+      }
+      return result(lines.join("\n") || "Directory is empty.", {
         operation: "list",
         path,
         count: entries.length,
+        truncated: next < sorted.length,
       });
     },
   };
@@ -116,13 +161,34 @@ export function createWorkspaceTools(
     name: "grep",
     label: "Search workspace",
     description:
-      "Search text files for a string or regular expression. Returns workspace-relative paths and line numbers.",
+      "Search file contents for a string or regular expression. Returns `path:line: text` matches. " +
+      `Returns up to ${GREP_DEFAULT_LIMIT} matches by default. ` +
+      "A result that says the search was incomplete has NOT covered every file: continue with the offset it gives " +
+      "(keeping query/path/glob the same) or narrow the search with path/glob before concluding a match does not exist.",
     parameters: Type.Object({
       query: Type.String({ description: "Text or regular expression to find" }),
-      path: Type.Optional(Type.String({ description: "Directory to search" })),
+      path: Type.Optional(
+        Type.String({ description: "Workspace-relative directory or file to search" }),
+      ),
+      glob: Type.Optional(
+        Type.String({
+          description: "Only search files matching this glob, e.g. *.ts or src/**/*.css",
+        }),
+      ),
       case_sensitive: Type.Optional(Type.Boolean({ default: false })),
       regex: Type.Optional(
         Type.Boolean({ default: false, description: "Interpret query as a regular expression" }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          description: `Maximum matches to return (default ${GREP_DEFAULT_LIMIT}, max ${GREP_MAX_LIMIT})`,
+        }),
+      ),
+      offset: Type.Optional(
+        Type.Number({
+          description:
+            "Number of files to skip before searching. Only use the value a previous incomplete result tells you to.",
+        }),
       ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
@@ -130,94 +196,220 @@ export function createWorkspaceTools(
       const input = params as {
         query: string;
         path?: string;
+        glob?: string;
         case_sensitive?: boolean;
         regex?: boolean;
+        limit?: number;
+        offset?: number;
       };
-      const query = String(input.query);
+      const query = String(input.query ?? "");
       if (!query) throw new Error("Search query cannot be empty.");
       const caseSensitive = Boolean(input.case_sensitive);
       const regex = Boolean(input.regex);
       const expression = regex ? compileSearchRegex(query, caseSensitive) : undefined;
       const path = workspace.sandbox.normalize(input.path ?? "");
-      const indexed = await grepViaFileIndex(workspace, query, path, caseSensitive, regex, signal);
-      if (indexed && (indexed.hits.length > 0 || indexed.files > 0)) {
-        return result(
-          indexed.hits.join("\n") || `No matches found in ${indexed.files} indexed files.`,
-          {
-            operation: "grep",
-            count: indexed.hits.length,
-            truncated: indexed.hits.length >= 200,
-          },
-        );
+      const fileFilter = input.glob?.trim() ? globMatcher(input.glob) : undefined;
+      const limit = clampInteger(input.limit, GREP_DEFAULT_LIMIT, 1, GREP_MAX_LIMIT);
+      const offset = clampInteger(input.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      const scope = describeScope(path, input.glob);
+      const details = (count: number, truncated: boolean): ToolDetails => ({
+        operation: "grep",
+        path: path || undefined,
+        count,
+        truncated,
+      });
+
+      // Offsets are only handed out by the file walk below, so a resumed search stays on it.
+      if (offset === 0) {
+        const indexed = await grepViaFileIndex(workspace, {
+          query,
+          path,
+          caseSensitive,
+          regex,
+          limit,
+          fileFilter,
+          signal,
+        });
+        if (indexed && indexed.hits.length) {
+          const lines = [...indexed.hits];
+          if (indexed.limited)
+            lines.push(
+              `[Match limit of ${limit} reached; more matches exist. Raise limit (max ${GREP_MAX_LIMIT}) or narrow the query/path/glob.]`,
+            );
+          return result(capOutput(lines), details(indexed.hits.length, indexed.limited));
+        }
+        if (indexed) {
+          const searched = await workspace.indexedFileCount(path);
+          if (searched)
+            return result(
+              `No matches found in ${searched} indexed file${searched === 1 ? "" : "s"} in ${scope} (complete search).`,
+              details(0, false),
+            );
+        }
       }
+
+      const maxFiles = workspace.info.remote
+        ? Math.min(REMOTE_GREP_FILES, options.maxWalkFiles())
+        : options.maxWalkFiles();
       const needle = caseSensitive ? query : query.toLowerCase();
       const hits: string[] = [];
+      let completedFiles = 0;
+      let cutFile: string | undefined;
       const walk = await workspace.walk({
         path,
-        maxFiles: workspace.info.remote
-          ? Math.min(80, options.maxWalkFiles())
-          : options.maxWalkFiles(),
+        maxFiles,
+        skip: offset,
+        filter: fileFilter ? (entry) => fileFilter.test(entry.path) : undefined,
         signal,
         onEntry: async (entry) => {
-          if (isBinaryPath(entry.path)) return;
-          try {
-            const text = await workspace.readText(entry.path);
-            assertTextFile(entry.path, text);
-            if (expression) {
-              for (const match of matchingRegexLines(text, expression, 200 - hits.length)) {
-                hits.push(`${entry.path}:${match.line}: ${truncate(match.text.trim(), 240)}`);
-              }
-            } else {
-              for (const [index, line] of text.split(/\r?\n/).entries()) {
-                const haystack = caseSensitive ? line : line.toLowerCase();
-                if (haystack.includes(needle))
-                  hits.push(`${entry.path}:${index + 1}: ${truncate(line.trim(), 240)}`);
-                if (hits.length >= 200) return true;
-              }
-            }
-            if (hits.length >= 200) return true;
-          } catch {
-            // Unreadable/binary files are skipped during bounded search.
+          if (isBinaryPath(entry.path)) {
+            completedFiles += 1;
+            return;
           }
+          let text: string;
+          try {
+            text = await workspace.readText(entry.path);
+            assertTextFile(entry.path, text);
+          } catch (error) {
+            if (isAbortError(error)) throw error;
+            // Unreadable/binary files are skipped during bounded search.
+            completedFiles += 1;
+            return;
+          }
+          // Ask for one extra match to learn whether this file still has more.
+          const room = limit - hits.length;
+          const found = expression
+            ? matchingRegexLines(text, expression, room + 1)
+            : matchingLiteralLines(text, needle, caseSensitive, room + 1);
+          for (const match of found.slice(0, room))
+            hits.push(`${entry.path}:${match.line}: ${truncate(match.text.trim(), 240)}`);
+          if (found.length > room) {
+            cutFile = entry.path;
+            return true;
+          }
+          completedFiles += 1;
           onUpdate?.(result(`Searched ${entry.path}`, { operation: "grep", count: hits.length }));
+          return hits.length >= limit;
         },
       });
-      return result(hits.join("\n") || `No matches found in ${walk.visited} files.`, {
-        operation: "grep",
-        count: hits.length,
-        truncated: walk.truncated || hits.length >= 200,
-      });
+
+      const first = offset + 1;
+      const last = offset + walk.visited;
+      const range = walk.visited ? `files ${first}-${last}` : "no files";
+      const next = offset + completedFiles;
+      const matchLimited =
+        cutFile !== undefined || (walk.stop === "callback" && hits.length >= limit);
+      const filesRemain = walk.stop === "file-limit" || walk.stop === "scan-limit";
+      if (!hits.length) {
+        if (filesRemain)
+          return result(
+            `No matches found in ${range} of ${scope}, but the search is INCOMPLETE: it stopped at the ` +
+              `${maxFiles}-file limit and more files remain. Continue with offset=${next} ` +
+              "(same query/path/glob), or narrow the search with path/glob.",
+            details(0, true),
+          );
+        const searched = offset ? `${range} of ${scope}` : `${walk.visited} files in ${scope}`;
+        const skippedAll =
+          offset && !walk.visited ? ` (offset ${offset} is past the last file)` : "";
+        return result(`No matches found in ${searched}${skippedAll}.`, details(0, false));
+      }
+
+      const lines = [...hits];
+      if (matchLimited) {
+        const resume = cutFile ? `; it re-searches ${cutFile}, so its first matches repeat` : "";
+        lines.push(
+          `[Match limit of ${limit} reached in ${range} of ${scope}. More matches may exist. ` +
+            `Continue with offset=${next} (same query/path/glob)${resume}, raise limit (max ${GREP_MAX_LIMIT}), or narrow the search.]`,
+        );
+      } else if (filesRemain) {
+        lines.push(
+          `[Search INCOMPLETE: searched ${range} of ${scope} and stopped at the ${maxFiles}-file limit; more files remain. ` +
+            `Continue with offset=${next} (same query/path/glob), or narrow the search with path/glob.]`,
+        );
+      }
+      return result(capOutput(lines), details(hits.length, matchLimited || filesRemain));
     },
   };
 
   const glob: AgentTool<any> = {
     name: "glob",
     label: "Find files",
-    description: "Find files by a glob pattern such as **/*.ts, src/**, or **/*.{md,json,js}.",
-    parameters: Type.Object({ pattern: Type.String(), path: Type.Optional(Type.String()) }),
+    description:
+      "Find files by a glob pattern such as **/*.ts, src/**, or **/*.{md,json,js}. Returns workspace-relative paths. " +
+      `Returns up to ${GLOB_DEFAULT_LIMIT} files by default; a truncated result says which offset continues it.`,
+    parameters: Type.Object({
+      pattern: Type.String({
+        description: "Glob pattern, matched against workspace-relative paths",
+      }),
+      path: Type.Optional(
+        Type.String({ description: "Workspace-relative directory to search in" }),
+      ),
+      limit: Type.Optional(
+        Type.Number({
+          description: `Maximum files to return (default ${GLOB_DEFAULT_LIMIT}, max ${GLOB_MAX_LIMIT})`,
+        }),
+      ),
+      offset: Type.Optional(
+        Type.Number({
+          description: "Number of matching files to skip (to continue a truncated result)",
+        }),
+      ),
+    }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
     execute: async (_id, params, signal) => {
-      const input = params as { pattern: string; path?: string };
-      const matcher = globMatcher(input.pattern);
+      const input = params as { pattern: string; path?: string; limit?: number; offset?: number };
+      const pattern = String(input.pattern ?? "");
+      if (!pattern.trim()) throw new Error("Glob pattern cannot be empty.");
+      const matcher = globMatcher(pattern);
+      const path = workspace.sandbox.normalize(input.path ?? "");
+      const limit = clampInteger(input.limit, GLOB_DEFAULT_LIMIT, 1, GLOB_MAX_LIMIT);
+      const offset = clampInteger(input.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      const maxScanned = workspace.info.remote ? REMOTE_GLOB_SCAN_FILES : GLOB_SCAN_FILES;
+      const scope = describeScope(path);
       const matches: FileEntry[] = [];
       const walk = await workspace.walk({
-        path: workspace.sandbox.normalize(input.path ?? ""),
-        maxFiles: options.maxWalkFiles(),
+        path,
+        maxFiles: limit,
+        maxScanned,
+        skip: offset,
+        filter: (entry) => matcher.test(entry.path),
         signal,
         onEntry: (entry) => {
-          if (matcher.test(entry.path)) matches.push(entry);
-          return matches.length >= 200;
+          matches.push(entry);
         },
       });
-      return result(
-        matches.map((entry) => entry.path).join("\n") ||
-          `No files matched ${input.pattern} in ${walk.visited} files.`,
-        {
-          operation: "glob",
-          count: matches.length,
-          truncated: walk.truncated || matches.length >= 200,
-        },
-      );
+      const next = offset + matches.length;
+      const details: ToolDetails = {
+        operation: "glob",
+        path: path || undefined,
+        count: matches.length,
+        truncated: walk.truncated,
+      };
+      if (!matches.length) {
+        if (walk.stop === "scan-limit")
+          return result(
+            `No files matched ${pattern} in the first ${walk.scanned} files of ${scope}, but the scan is INCOMPLETE: ` +
+              `it stopped at the ${maxScanned}-file scan limit. Narrow the search with path.`,
+            details,
+          );
+        const skippedAll = offset ? ` after skipping ${walk.skipped} matching files` : "";
+        return result(
+          `No files matched ${pattern} in ${walk.scanned} files in ${scope}${skippedAll}.`,
+          details,
+        );
+      }
+      const lines = matches.map((entry) => entry.path).sort();
+      if (walk.stop === "file-limit") {
+        lines.push(
+          `[Showing matches ${offset + 1}-${next}; more files match. Use offset=${next} to continue, or narrow the pattern/path.]`,
+        );
+      } else if (walk.stop === "scan-limit") {
+        lines.push(
+          `[Scan INCOMPLETE: stopped at the ${maxScanned}-file scan limit, so more files may match. ` +
+            "Narrow the search with path or a more specific pattern.]",
+        );
+      }
+      return result(lines.join("\n"), details);
     },
   };
 
@@ -272,7 +464,7 @@ export function createWorkspaceTools(
       try {
         edit = applyExactEdit(current, input.old_string, input.new_string, input.replace_all);
       } catch (error) {
-        throw new Error(`${error instanceof Error ? error.message : String(error)} File: ${path}`);
+        throw new Error(`${describeError(error)} File: ${path}`);
       }
       const next = edit.text;
       assertWritable(path, next);
@@ -289,7 +481,55 @@ export function createWorkspaceTools(
     },
   };
 
-  return [readFile, listDir, grep, glob, writeFile, editFile];
+  return [readFile, listDir, grep, glob, writeFile, editFile].map(withReadableErrors);
+}
+
+const LIST_DEFAULT_LIMIT = 500;
+const LIST_MAX_LIMIT = 2000;
+const GREP_DEFAULT_LIMIT = 100;
+const GREP_MAX_LIMIT = 1000;
+const REMOTE_GREP_FILES = 80;
+const GLOB_DEFAULT_LIMIT = 200;
+const GLOB_MAX_LIMIT = 1000;
+const GLOB_SCAN_FILES = 20_000;
+const REMOTE_GLOB_SCAN_FILES = 2_000;
+
+/**
+ * Pi turns a thrown value into tool output with `error.message`, so a rejected Cordova
+ * `FileError` or plain object would reach the model as "[object Object]".
+ */
+function withReadableErrors(tool: AgentTool<any>): AgentTool<any> {
+  const execute = tool.execute;
+  return {
+    ...tool,
+    execute: async (...args: Parameters<typeof execute>) => {
+      try {
+        return await execute(...args);
+      } catch (error) {
+        if (error instanceof Error && error.message) throw error;
+        throw new Error(describeError(error), { cause: error });
+      }
+    },
+  };
+}
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  const number = typeof value === "string" ? Number(value) : value;
+  if (typeof number !== "number" || !Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(number)));
+}
+
+function describeScope(path: string, glob?: string): string {
+  const where = path ? path : "the workspace";
+  return glob?.trim() ? `${where} (glob ${glob.trim()})` : where;
+}
+
+/** Keep huge match lists inside Pi's tool-output budget, keeping any trailing notice. */
+function capOutput(lines: string[]): string {
+  const text = lines.join("\n");
+  const truncation = truncateHead(text, { maxLines: Number.MAX_SAFE_INTEGER });
+  if (!truncation.truncated) return text;
+  return `${truncation.content}\n[Output truncated at ${formatSize(DEFAULT_MAX_BYTES)} after ${truncation.outputLines} of ${lines.length} lines. Lower limit or narrow the search.]`;
 }
 
 export { globMatcher } from "./glob";
@@ -404,14 +644,39 @@ function matchingRegexLines(
   return hits;
 }
 
+function matchingLiteralLines(
+  text: string,
+  needle: string,
+  caseSensitive: boolean,
+  limit: number,
+): Array<{ line: number; text: string }> {
+  const hits: Array<{ line: number; text: string }> = [];
+  if (limit <= 0) return hits;
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!(caseSensitive ? line : line.toLowerCase()).includes(needle)) continue;
+    hits.push({ line: index + 1, text: line });
+    if (hits.length >= limit) break;
+  }
+  return hits;
+}
+
+/**
+ * Search with Acode's native index, which reads every indexed file without the JavaScript
+ * walk's file cap. Returns `undefined` when the index is unavailable or the search failed.
+ */
 async function grepViaFileIndex(
   workspace: AcodeWorkspace,
-  query: string,
-  path: string,
-  caseSensitive: boolean,
-  regex: boolean,
-  signal?: AbortSignal,
-): Promise<{ hits: string[]; files: number } | undefined> {
+  search: {
+    query: string;
+    path: string;
+    caseSensitive: boolean;
+    regex: boolean;
+    limit: number;
+    fileFilter?: { test: (path: string) => boolean };
+    signal?: AbortSignal;
+  },
+): Promise<{ hits: string[]; limited: boolean } | undefined> {
+  const { path, limit, signal } = search;
   try {
     const index = acode.require("fileIndex") as Acode.FileIndex | undefined;
     if (!index || typeof index.search !== "function" || !index.supports(workspace.info.rootUri))
@@ -419,19 +684,26 @@ async function grepViaFileIndex(
     throwIfAborted(signal);
     const hits: string[] = [];
     const seen = new Set<string>();
+    let limited = false;
+    let stop!: () => void;
+    const stopped = new Promise<"stopped">((resolve) => {
+      stop = () => resolve("stopped");
+    });
     const handle = index.search(
       {
         roots: [workspace.info.rootUri],
-        search: query,
+        search: search.query,
         options: {
-          caseSensitive,
-          regExp: regex,
-          include: path ? `${path}/**,${path}/*` : undefined,
+          caseSensitive: search.caseSensitive,
+          regExp: search.regex,
+          // Index paths start with the workspace title, so anchor the folder anywhere below it.
+          include: path ? `**/${path},**/${path}/**` : undefined,
         },
         overlays: dirtyEditorOverlays(),
         useIndex: false,
       },
       (event) => {
+        if (limited) return;
         const batches =
           event.type === "search-results"
             ? event.data
@@ -441,27 +713,37 @@ async function grepViaFileIndex(
         for (const item of batches) {
           const filePath = filePathFromSearch(item.file, workspace);
           if (path && filePath !== path && !filePath.startsWith(`${path}/`)) continue;
+          if (search.fileFilter && !search.fileFilter.test(filePath)) continue;
           for (const match of item.matches ?? []) {
             const line = Number(match.position?.start?.line ?? 0) + 1;
             const text = `${filePath}:${line}: ${truncate((match.line || match.renderText || match.match || "").trim(), 240)}`;
             if (seen.has(text)) continue;
+            if (hits.length >= limit) {
+              limited = true;
+              stop();
+              return;
+            }
             seen.add(text);
             hits.push(text);
-            if (hits.length >= 200) return;
           }
         }
       },
     );
-    const finished = await handle.result;
-    if (signal?.aborted) {
-      void handle.cancel().catch(() => undefined);
-      throw new DOMException("Operation aborted", "AbortError");
+    // A cancelled native search never reports completion, so race it against our own stop.
+    handle.result.catch(() => undefined);
+    signal?.addEventListener("abort", stop, { once: true });
+    let finished: Awaited<typeof handle.result> | "stopped";
+    try {
+      finished = await Promise.race([handle.result, stopped]);
+    } finally {
+      signal?.removeEventListener("abort", stop);
     }
-    if (finished.type === "error") return undefined;
-    const files = "files" in finished ? Number(finished.files ?? 0) : 0;
-    return { hits, files: files || hits.length };
+    if (finished === "stopped") void handle.cancel().catch(() => undefined);
+    throwIfAborted(signal);
+    if (finished !== "stopped" && finished.type === "error") return undefined;
+    return { hits, limited };
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    if (isAbortError(error)) throw error;
     return undefined;
   }
 }

@@ -85,6 +85,69 @@ test("grep forwards regular-expression mode to Acode's native file index", async
   expect(searchOptions?.options).toMatchObject({ regExp: true, caseSensitive: true });
 });
 
+test("grep stops the native search at the match limit and says more matches exist", async () => {
+  const cancel = vi.fn(() => Promise.resolve());
+  const fileIndex = {
+    supports: () => true,
+    search: (_options: unknown, onEvent: (event: unknown) => void) => {
+      onEvent({
+        type: "search-results",
+        data: [
+          {
+            file: { path: "project/src/a.ts", name: "a.ts" },
+            matches: [1, 2, 3].map((line) => ({
+              line: `hit ${line}`,
+              position: { start: { line: line - 1 } },
+            })),
+          },
+        ],
+      });
+      // A cancelled native search never resolves.
+      return { id: "s", result: new Promise(() => undefined), cancel };
+    },
+  };
+  vi.stubGlobal("acode", {
+    require: (name: string) => (name === "fileIndex" ? fileIndex : undefined),
+  });
+  const grep = createWorkspaceTools(fakeWorkspace({}, false), { maxWalkFiles: () => 100 }).find(
+    (tool) => tool.name === "grep",
+  )!;
+
+  const output = await grep.execute("grep-6", { query: "hit", limit: 2 });
+
+  expect(output.content[0]).toEqual({
+    type: "text",
+    text: "src/a.ts:1: hit 1\nsrc/a.ts:2: hit 2\n[Match limit of 2 reached; more matches exist. Raise limit (max 1000) or narrow the query/path/glob.]",
+  });
+  expect(cancel).toHaveBeenCalled();
+});
+
+test("grep trusts an empty native search when the index covers the path", async () => {
+  const fileIndex = {
+    supports: () => true,
+    search: () => ({
+      id: "s",
+      result: Promise.resolve({ type: "done-searching" }),
+      cancel: () => Promise.resolve(),
+    }),
+  };
+  vi.stubGlobal("acode", {
+    require: (name: string) => (name === "fileIndex" ? fileIndex : undefined),
+  });
+  const workspace = fakeWorkspace({ "a.ts": "needle" }, false);
+  workspace.indexedFileCount = async () => 4321;
+  const grep = createWorkspaceTools(workspace, { maxWalkFiles: () => 1 }).find(
+    (tool) => tool.name === "grep",
+  )!;
+
+  const output = await grep.execute("grep-7", { query: "missing" });
+
+  expect(output.content[0]).toEqual({
+    type: "text",
+    text: "No matches found in 4321 indexed files in the workspace (complete search).",
+  });
+});
+
 test("read_file returns PNG content through Pi's image processor contract", async () => {
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
   const workspace = fakeWorkspace({ "shots/home.png": "not used" }, true, {
@@ -159,6 +222,7 @@ function fakeWorkspace(
       remote,
     },
     sandbox: { normalize: (path: string) => path },
+    indexedFileCount: async () => undefined,
     readText: async (path: string) => files[path],
     readBinary: async (path: string) =>
       binaryFiles[path] ?? new TextEncoder().encode(files[path] ?? ""),
