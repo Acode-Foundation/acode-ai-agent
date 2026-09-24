@@ -11,7 +11,7 @@ If you already use Pi on a desktop, the same ideas apply here:
 - Providers, models, thinking levels, and device-code / API-key login
 - Session trees, compaction, steer / follow-up queues, fork, clone, `/tree`
 - Skills and prompt templates (`.pi/skills`, `.agents/skills`, `/skill:name`, `load_skill`)
-- Project instructions from `AGENTS.md`
+- Project instructions from `AGENTS.md` (or `CLAUDE.md`)
 - Import / export of Pi JSONL sessions
 
 What Pi’s desktop CLI does with a real terminal, cwd, and Node is adapted for Acode: files go through `fsOperation` (local, SAF, FTP, SFTP), `bash` exists only on Terminal-backed folders, and OAuth uses device codes or a pasted browser callback instead of running a localhost server. Pi packages, tmux, and the Pi TUI are not part of this plugin.
@@ -79,19 +79,43 @@ OpenRouter, OpenAI, Anthropic, Google Gemini, xAI, Groq, DeepSeek, Cerebras, Fir
 
 Anthropic is API-key only. Claude Pro / Max sign-in was removed because Anthropic's policy does not allow third-party apps to use Claude subscription OAuth; use an Anthropic Console API key instead. If you connected Claude Pro / Max in an earlier version, add an API key to keep using Anthropic models.
 
+**Custom models and local endpoints**
+
+- In the model picker, paste any model id the provider accepts (for example `anthropic/claude-sonnet-4.6` on OpenRouter) to use a model that is not in the built-in catalog.
+- **Provider access → Local endpoint** adds an OpenAI-compatible server, such as llama.cpp, vLLM, LM Studio or Ollama on your LAN. Set a base URL (e.g. `http://192.168.1.10:8080/v1`), list model ids or fetch them from `/models`, and mark whether the models accept images or reasoning. Up to 20 endpoints.
+- `/scoped-models` opens the same picker to choose which models this agent uses.
+
 Codex offers browser sign-in and device-code sign-in. Device-code sign-in connects automatically after approval; first enable device-code authorization in ChatGPT Settings → Security. For browser sign-in, complete ChatGPT sign-in in the browser, then copy the full `http://localhost:1455/auth/callback?...` address and paste it into Acode. The localhost page may show a connection error because Acode does not run a callback server; copying its address completes the sign-in. This browser OAuth flow does not require enabling device-code authorization in ChatGPT settings.
 
 ## What it can do
 
 **Workspace tools** (always available in an open folder)
 
-- `read_file` — text or images (`jpg`, `png`, `gif`, `webp`, `bmp`); dirty editor buffers are the source of truth
-- `list_dir`, `grep`, `glob`
-- `write_file` and exact `edit_file`
+- `read_file` — text or images (`jpg`, `png`, `gif`, `webp`, `bmp`); dirty editor buffers are the source of truth. Long text is paged with `offset` / `limit`.
+- `list_dir` — up to 500 entries per call (max 2000), paged with `offset`
+- `grep` — plain text or regex, optional file glob; 100 matches by default (max 1000), paged with `offset`
+- `glob` — workspace-relative patterns; 200 files by default (max 1000), paged with `offset`
+- `write_file` — create a file or replace it entirely
+- `edit_file` — targeted replacements (see below)
+
+Truncated results always say so and tell the agent how to continue. `grep` and `glob` also list any folders they skipped, so the agent knows the search was incomplete rather than assuming there were no matches.
+
+**Editing files**
+
+`edit_file` runs Pi's edit tool against the workspace:
+
+- One call can carry several `edits[]`, each an exact `oldText` → `newText` replacement. Each `oldText` must match exactly one place in the original file, and edits must not overlap.
+- Matching tolerates small whitespace and typographic-quote differences. Replacement text is inserted literally (`$&`, `$1` are not expanded).
+- Line endings (CRLF / LF) and a UTF-8 BOM are preserved.
+- Older `old_string` / `new_string` calls still work; they are mapped onto `edits[]`.
+
+If the file is open in Acode, `edit_file` and `write_file` change the editor buffer and leave it unsaved. You keep editor undo and choose when to save. Otherwise the file is written to the workspace.
+
+In **Ask** mode the approval prompt previews each `−` / `+` replacement, or the new file content for `write_file`. After the tool finishes, the work log shows a CodeMirror diff card for that change. The diff card covers one tool call; there is no session-wide review tray.
 
 **Web**
 
-- `web_search` — live search (provider search when available, otherwise the device browser)
+- `web_search` — live search. Uses the provider's native search on OpenAI, Codex, Google Gemini, xAI and Anthropic (API key); other providers, or a failed native search, fall back to the device browser
 - `fetch_content` — public `http(s)` pages as markdown; GitHub blob URLs are rewritten to raw files; local/private hosts are blocked
 
 **On Acode Terminal workspaces only**
@@ -104,8 +128,6 @@ Codex offers browser sign-in and device-code sign-in. Device-code sign-in connec
 - `todo_write` — compact checklist for multi-step work
 - `ask_user_question` — structured choices instead of guessing
 - `load_skill` — load a discovered skill into context
-
-Completed `edit_file` / `write_file` calls show a CodeMirror diff card in the work log. That is a per-tool preview, not a session-wide review tray.
 
 ## Permissions
 
@@ -132,7 +154,7 @@ The agent also sees the active file and, if enabled, the current selection.
 
 ## Skills, prompts, and project instructions
 
-**Project instructions** — if the folder contains `AGENTS.md` or `.agents.md`, that file is added to the system prompt (first 32 KB).
+**Project instructions** — the first of `AGENTS.md`, `.agents.md` or `CLAUDE.md` found in the folder root is added to the system prompt (first 32,000 characters). `AGENTS.md` wins when several exist; `CLAUDE.md` covers projects already set up for Claude Code.
 
 **Skills** are folders with a `SKILL.md` front matter of `name` (lowercase letters, digits, hyphens) and `description`. Discovered automatically from:
 
@@ -161,6 +183,7 @@ Focus on bugs, missing tests, and API breakage. Do not rewrite style-only issues
 | Command            | Action                                 |
 | ------------------ | -------------------------------------- |
 | `/model`           | Choose the model for this session      |
+| `/scoped-models`   | Choose models available to this agent  |
 | `/settings`        | Open Pi settings                       |
 | `/login` `/logout` | Provider credentials                   |
 | `/resume`          | Session list                           |
@@ -240,7 +263,7 @@ npm test
 npm run build
 ```
 
-`npm run build` typechecks, bundles a Chrome 90 / WebView IIFE, rejects Node runtime imports, enforces a 1.92 MB `dist/main.js` budget, and writes `plugin.zip`.
+`npm run build` typechecks, bundles a Chrome 90 / WebView IIFE, rejects Node runtime imports, enforces a 2.5 MB `dist/main.js` budget, and writes `plugin.zip`.
 
 ```sh
 npm run dev

@@ -238,8 +238,24 @@ test("filters Codex models to the signed-in ChatGPT account catalog", async () =
     availableModelIds: ["gpt-5.6-terra"],
   }));
   const registry = new ProviderRegistry(credentials);
-  const models = await registry.refreshModelAvailability("openai-codex");
-  expect(models.map((model) => model.id)).toEqual(["gpt-5.6-terra"]);
+  const requests: string[] = [];
+  // No availableModelsFetchedAt, so the cache is stale and the registry refetches.
+  const restore = stubFetch(
+    {
+      models: [
+        { slug: "gpt-5.6-terra", visibility: "list" },
+        { slug: "gpt-5.6-hidden", visibility: "hide" },
+      ],
+    },
+    requests,
+  );
+  try {
+    const models = await registry.refreshModelAvailability("openai-codex");
+    expect(models.map((model) => model.id)).toEqual(["gpt-5.6-terra"]);
+    expect(requests).toEqual([expect.stringContaining("chatgpt.com/backend-api/codex/models")]);
+  } finally {
+    restore();
+  }
 });
 
 function stubFetch(
