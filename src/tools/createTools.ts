@@ -2,8 +2,8 @@ import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/pi-agent-co
 import { Type } from "@earendil-works/pi-ai";
 import type { AgentTool, AgentToolResult, ReadImageProcessor } from "@earendil-works/pi-agent-core";
 import { browserReadImageProcessor } from "../platform/readImageProcessor";
-import { NotDirectoryError } from "../workspace/acodeWorkspace";
-import type { AcodeWorkspace, FileEntry } from "../workspace/acodeWorkspace";
+import { indexOmissions, NotDirectoryError } from "../workspace/acodeWorkspace";
+import type { AcodeWorkspace, FileEntry, WalkResult } from "../workspace/acodeWorkspace";
 import { isImagePath } from "../workspace/fileMentions";
 import { workspaceRelativeFromIndex } from "../workspace/pathSandbox";
 import { describeError, fileOperationError, isAbortError } from "./errors";
@@ -230,19 +230,26 @@ export function createWorkspaceTools(
           fileFilter,
           signal,
         });
+        const omitted = omissionNotice({ source: "index", skippedFolders: [] });
         if (indexed && indexed.hits.length) {
           const lines = [...indexed.hits];
           if (indexed.limited)
             lines.push(
               `[Match limit of ${limit} reached; more matches exist. Raise limit (max ${GREP_MAX_LIMIT}) or narrow the query/path/glob.]`,
             );
+          if (omitted) lines.push(omitted);
           return result(capOutput(lines), details(indexed.hits.length, indexed.limited));
         }
         if (indexed) {
           const searched = await workspace.indexedFileCount(path);
           if (searched)
             return result(
-              `No matches found in ${searched} indexed file${searched === 1 ? "" : "s"} in ${scope} (complete search).`,
+              [
+                `No matches found in ${searched} indexed file${searched === 1 ? "" : "s"} in ${scope}.`,
+                omitted,
+              ]
+                .filter(Boolean)
+                .join("\n"),
               details(0, false),
             );
         }
@@ -300,18 +307,21 @@ export function createWorkspaceTools(
       const matchLimited =
         cutFile !== undefined || (walk.stop === "callback" && hits.length >= limit);
       const filesRemain = walk.stop === "file-limit" || walk.stop === "scan-limit";
+      const omitted = omissionNotice(walk);
       if (!hits.length) {
-        if (filesRemain)
-          return result(
+        let message: string;
+        if (filesRemain) {
+          message =
             `No matches found in ${range} of ${scope}, but the search is INCOMPLETE: it stopped at the ` +
-              `${maxFiles}-file limit and more files remain. Continue with offset=${next} ` +
-              "(same query/path/glob), or narrow the search with path/glob.",
-            details(0, true),
-          );
-        const searched = offset ? `${range} of ${scope}` : `${walk.visited} files in ${scope}`;
-        const skippedAll =
-          offset && !walk.visited ? ` (offset ${offset} is past the last file)` : "";
-        return result(`No matches found in ${searched}${skippedAll}.`, details(0, false));
+            `${maxFiles}-file limit and more files remain. Continue with offset=${next} ` +
+            "(same query/path/glob), or narrow the search with path/glob.";
+        } else {
+          const searched = offset ? `${range} of ${scope}` : `${walk.visited} files in ${scope}`;
+          const skippedAll =
+            offset && !walk.visited ? ` (offset ${offset} is past the last file)` : "";
+          message = `No matches found in ${searched}${skippedAll}.`;
+        }
+        return result([message, omitted].filter(Boolean).join("\n"), details(0, filesRemain));
       }
 
       const lines = [...hits];
@@ -327,6 +337,7 @@ export function createWorkspaceTools(
             `Continue with offset=${next} (same query/path/glob), or narrow the search with path/glob.]`,
         );
       }
+      if (omitted) lines.push(omitted);
       return result(capOutput(lines), details(hits.length, matchLimited || filesRemain));
     },
   };
@@ -336,7 +347,8 @@ export function createWorkspaceTools(
     label: "Find files",
     description:
       "Find files by a glob pattern such as **/*.ts, src/**, or **/*.{md,json,js}. Returns workspace-relative paths. " +
-      `Returns up to ${GLOB_DEFAULT_LIMIT} files by default; a truncated result says which offset continues it.`,
+      `Returns up to ${GLOB_DEFAULT_LIMIT} files by default; a truncated result says which offset continues it, ` +
+      "and any folders that were not searched are listed in a trailing note.",
     parameters: Type.Object({
       pattern: Type.String({
         description: "Glob pattern, matched against workspace-relative paths",
@@ -385,18 +397,15 @@ export function createWorkspaceTools(
         count: matches.length,
         truncated: walk.truncated,
       };
+      const omitted = omissionNotice(walk);
       if (!matches.length) {
-        if (walk.stop === "scan-limit")
-          return result(
-            `No files matched ${pattern} in the first ${walk.scanned} files of ${scope}, but the scan is INCOMPLETE: ` +
-              `it stopped at the ${maxScanned}-file scan limit. Narrow the search with path.`,
-            details,
-          );
-        const skippedAll = offset ? ` after skipping ${walk.skipped} matching files` : "";
-        return result(
-          `No files matched ${pattern} in ${walk.scanned} files in ${scope}${skippedAll}.`,
-          details,
-        );
+        const message =
+          walk.stop === "scan-limit"
+            ? `No files matched ${pattern} in the first ${walk.scanned} files of ${scope}, but the scan is INCOMPLETE: ` +
+              `it stopped at the ${maxScanned}-file scan limit. Narrow the search with path.`
+            : `No files matched ${pattern} in ${walk.scanned} files in ${scope}` +
+              `${offset ? ` after skipping ${walk.skipped} matching files` : ""}.`;
+        return result([message, omitted].filter(Boolean).join("\n"), details);
       }
       const lines = matches.map((entry) => entry.path).sort();
       if (walk.stop === "file-limit") {
@@ -409,6 +418,7 @@ export function createWorkspaceTools(
             "Narrow the search with path or a more specific pattern.]",
         );
       }
+      if (omitted) lines.push(omitted);
       return result(lines.join("\n"), details);
     },
   };
@@ -517,6 +527,38 @@ function clampInteger(value: unknown, fallback: number, min: number, max: number
   const number = typeof value === "string" ? Number(value) : value;
   if (typeof number !== "number" || !Number.isFinite(number)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(number)));
+}
+
+/** A trailing note naming what the walk did not search, so "no match" is never misread. */
+function omissionNotice(walk: Pick<WalkResult, "source" | "skippedFolders">): string | undefined {
+  if (walk.source === "index") {
+    const omissions = indexOmissions();
+    const folders = [
+      ...new Set(
+        omissions.excludeFolders
+          .map((pattern) => pattern.replace(/^(\*\*\/)+/, "").replace(/(\/\*\*)+$/, ""))
+          .filter((name) => name && !/[*?[\]{}]/.test(name)),
+      ),
+    ];
+    const parts: string[] = [];
+    if (omissions.hidden) parts.push("hidden (dot) files and folders");
+    if (folders.length)
+      parts.push(
+        `excluded folders (${folders.slice(0, 6).join(", ")}${folders.length > 6 ? ", …" : ""})`,
+      );
+    if (!parts.length) return undefined;
+    return (
+      `[Not searched: ${parts.join(" and ")}, which Acode's file index leaves out. ` +
+      "Use list_dir, or pass one as path, to look inside it.]"
+    );
+  }
+  if (!walk.skippedFolders.length) return undefined;
+  const shown = walk.skippedFolders.slice(0, 6);
+  const more = walk.skippedFolders.length - shown.length;
+  return (
+    `[Skipped folders: ${shown.join(", ")}${more > 0 ? ` (+${more} more)` : ""}. ` +
+    "Pass one as path to search inside it.]"
+  );
 }
 
 function describeScope(path: string, glob?: string): string {

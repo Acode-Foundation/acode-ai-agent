@@ -117,7 +117,7 @@ test("grep stops the native search at the match limit and says more matches exis
 
   expect(output.content[0]).toEqual({
     type: "text",
-    text: "src/a.ts:1: hit 1\nsrc/a.ts:2: hit 2\n[Match limit of 2 reached; more matches exist. Raise limit (max 1000) or narrow the query/path/glob.]",
+    text: "src/a.ts:1: hit 1\nsrc/a.ts:2: hit 2\n[Match limit of 2 reached; more matches exist. Raise limit (max 1000) or narrow the query/path/glob.]\n[Not searched: hidden (dot) files and folders, which Acode's file index leaves out. Use list_dir, or pass one as path, to look inside it.]",
   });
   expect(cancel).toHaveBeenCalled();
 });
@@ -144,7 +144,7 @@ test("grep trusts an empty native search when the index covers the path", async 
 
   expect(output.content[0]).toEqual({
     type: "text",
-    text: "No matches found in 4321 indexed files in the workspace (complete search).",
+    text: "No matches found in 4321 indexed files in the workspace.\n[Not searched: hidden (dot) files and folders, which Acode's file index leaves out. Use list_dir, or pass one as path, to look inside it.]",
   });
 });
 
@@ -238,9 +238,15 @@ function fakeWorkspace(
           isFile: true,
           isDirectory: false,
         });
-        if (stop) return { visited, truncated: visited < Object.keys(files).length };
+        if (stop)
+          return {
+            visited,
+            truncated: visited < Object.keys(files).length,
+            source: "filesystem",
+            skippedFolders: [],
+          };
       }
-      return { visited, truncated: false };
+      return { visited, truncated: false, source: "filesystem", skippedFolders: [] };
     },
   } as unknown as AcodeWorkspace;
 }

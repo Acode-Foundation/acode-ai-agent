@@ -4,7 +4,8 @@ export function globMatcher(pattern: string): { test: (path: string) => boolean 
   const normalized = normalizeGlob(pattern);
   const match = picomatch(normalized, {
     nocase: true,
-    dot: false,
+    // Dotfiles (.env, .github/…) are ordinary workspace files for an agent.
+    dot: true,
     posix: true,
     matchBase: !normalized.includes("/"),
   });

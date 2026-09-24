@@ -37,6 +37,10 @@ export type WalkResult = {
   truncated: boolean;
   /** Why the walk ended early: `onEntry` asked to stop, or one of the limits was hit. */
   stop?: "callback" | "file-limit" | "scan-limit";
+  /** Where files came from. The index omits hidden paths and Acode's excluded folders. */
+  source: "index" | "filesystem";
+  /** Workspace-relative folders the disk walk skipped as noise (node_modules, dist, …). */
+  skippedFolders: string[];
 };
 
 const FS_TIMEOUT_MS = 30_000;
@@ -186,6 +190,7 @@ export class AcodeWorkspace {
     const visitor = new WalkVisitor(options);
     const indexed = await this.#walkIndexed(base, visitor, options.signal);
     if (indexed) return indexed;
+    const skippedFolders: string[] = [];
 
     const maxDepth = options.maxDepth ?? 16;
     if (base && !(await this.#statDirectory(base, options.signal))) {
@@ -195,7 +200,7 @@ export class AcodeWorkspace {
         isFile: true,
         isDirectory: false,
       });
-      return visitor.result(false);
+      return visitor.result(false, "filesystem");
     }
     const entries = await this.#listViaFs(this.sandbox.resolve(base), options.signal);
 
@@ -215,15 +220,18 @@ export class AcodeWorkspace {
         }
       }
       for (const entry of sortEntries(children)) {
-        if (isIgnored(entry.path, base)) continue;
+        if (isIgnored(entry.path, base)) {
+          if (entry.isDirectory) skippedFolders.push(entry.path);
+          continue;
+        }
         if (entry.isDirectory && current.depth < maxDepth) {
           queue.push({ path: entry.path, depth: current.depth + 1 });
         }
         if (!entry.isFile) continue;
-        if (await visitor.visit(entry)) return visitor.result(true);
+        if (await visitor.visit(entry)) return visitor.result(true, "filesystem", skippedFolders);
       }
     }
-    return visitor.result(false);
+    return visitor.result(false, "filesystem", skippedFolders);
   }
 
   /** Number of indexed files under `path`, or `undefined` when the native index is unavailable. */
@@ -299,11 +307,11 @@ export class AcodeWorkspace {
       const entry = this.#fromIndex(item);
       if (!entry.isFile || !inScope(entry.path, base) || isIgnored(entry.path, base)) continue;
       matched += 1;
-      if (await visitor.visit(entry)) return visitor.result(true);
+      if (await visitor.visit(entry)) return visitor.result(true, "index");
     }
     // Hidden and excluded folders are not indexed; let the filesystem walk them.
     if (!matched) return undefined;
-    return visitor.result(!files.complete);
+    return visitor.result(!files.complete, "index");
   }
 
   #fromIndex(entry: Acode.FileIndexEntry): FileEntry {
@@ -384,6 +392,25 @@ function isIgnored(path: string, base = ""): boolean {
   return relative.split("/").some((part) => IGNORED_FOLDERS.has(part));
 }
 
+/**
+ * What Acode's native index leaves out, from its settings: hidden paths unless
+ * "show hidden files" is on, and every `excludeFolders` glob.
+ */
+export function indexOmissions(): { hidden: boolean; excludeFolders: string[] } {
+  try {
+    const settings = acode.require("settings") as
+      | { value?: { excludeFolders?: string[]; fileBrowser?: { showHiddenFiles?: boolean } } }
+      | undefined;
+    const value = settings?.value;
+    return {
+      hidden: value?.fileBrowser?.showHiddenFiles !== true,
+      excludeFolders: Array.isArray(value?.excludeFolders) ? value.excludeFolders : [],
+    };
+  } catch {
+    return { hidden: true, excludeFolders: [] };
+  }
+}
+
 function inScope(path: string, base: string): boolean {
   return !base || path === base || path.startsWith(`${base}/`);
 }
@@ -432,7 +459,11 @@ class WalkVisitor {
     return false;
   }
 
-  result(stoppedEarly: boolean): WalkResult {
+  result(
+    stoppedEarly: boolean,
+    source: WalkResult["source"],
+    skippedFolders: string[] = [],
+  ): WalkResult {
     const stop = stoppedEarly ? (this.#stop ?? "scan-limit") : undefined;
     return {
       visited: this.#visited,
@@ -440,6 +471,8 @@ class WalkVisitor {
       scanned: this.#scanned,
       truncated: stop !== undefined,
       stop,
+      source,
+      skippedFolders,
     };
   }
 }

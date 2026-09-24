@@ -101,6 +101,57 @@ test("glob is not limited by the grep file cap", async () => {
   expect(text(output)).toBe("zz.vue");
 });
 
+test("glob matches dotfiles and names the noise folders it skipped on disk", async () => {
+  const glob = tool(
+    memoryWorkspace({
+      ".github/workflows/ci.yml": "",
+      "config.yml": "",
+      "node_modules/pkg/x.yml": "",
+    }),
+    "glob",
+    10,
+  );
+
+  const output = await glob.execute("g", { pattern: "**/*.yml" });
+
+  expect(text(output)).toBe(
+    ".github/workflows/ci.yml\nconfig.yml\n[Skipped folders: node_modules. Pass one as path to search inside it.]",
+  );
+});
+
+test("glob says what Acode's index leaves out", async () => {
+  const fileIndex = {
+    supports: () => true,
+    whenReady: async () => undefined,
+    scan: async () => undefined,
+    query: async () => ({
+      entries: [{ path: "project/src/a.ts", name: "a.ts", isFile: true, isDirectory: false }],
+      hasMore: false,
+      cursor: null,
+    }),
+  };
+  const settings = {
+    value: {
+      fileBrowser: { showHiddenFiles: false },
+      excludeFolders: ["**/node_modules/**", "**/vendor/**", "**/*.egg-info/**"],
+    },
+  };
+  vi.stubGlobal("acode", {
+    joinUrl: (root: string, path: string) => `${root}/${path}`,
+    require: (name: string) =>
+      name === "fileIndex" ? fileIndex : name === "settings" ? settings : undefined,
+  });
+  const glob = tool(new AcodeWorkspace(ROOT, "project"), "glob", 10);
+
+  const output = await glob.execute("g", { pattern: "**/*.yml" });
+
+  expect(text(output)).toBe(
+    "No files matched **/*.yml in 1 files in the workspace.\n" +
+      "[Not searched: hidden (dot) files and folders and excluded folders (node_modules, vendor), " +
+      "which Acode's file index leaves out. Use list_dir, or pass one as path, to look inside it.]",
+  );
+});
+
 test("list_dir shows folders first with trailing slashes and hidden files", async () => {
   const list = tool(
     memoryWorkspace({ "src/a.ts": "", ".env": "", "README.md": "", "lib/b.ts": "" }),
