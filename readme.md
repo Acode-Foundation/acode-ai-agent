@@ -4,7 +4,7 @@ A coding agent that runs inside [Acode](https://acode.app) as an editor tab. It 
 
 ## Built on Pi
 
-This is not a from-scratch agent. The model loop, providers, sessions, skills, compaction, and tool calling come from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` 0.86.1). This plugin is the Acode/Android host: editor UI, workspace sandbox, approvals, and anything that has to work in a WebView without Node.
+This is not a from-scratch agent. The model loop, providers, sessions, skills, compaction, and tool calling come from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` 0.87.1). This plugin is the Acode/Android host: editor UI, workspace sandbox, approvals, and anything that has to work in a WebView without Node.
 
 If you already use Pi on a desktop, the same ideas apply here:
 
