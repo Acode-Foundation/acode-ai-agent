@@ -13,7 +13,8 @@ export function fileIconClass(name: string): string {
 
 export function createFileGlyph(path: string): HTMLSpanElement {
   const glyph = document.createElement("span");
-  glyph.className = `file-glyph ${fileIconClass(fileName(path))}`;
+  // Selection attachments are named `path:12-20`; the line suffix is not part of the extension.
+  glyph.className = `file-glyph ${fileIconClass(fileName(path).replace(/:\d+(?:-\d+)?$/, ""))}`;
   glyph.setAttribute("aria-hidden", "true");
   return glyph;
 }

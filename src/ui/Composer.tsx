@@ -44,6 +44,8 @@ import { filterSlashCommands, slashCommandQuery, type SlashCommand } from "../co
 export type ComposerHandle = {
   setText: (text: string) => void;
   restore: (draft: ComposerDraft) => void;
+  /** Add text, `@path` mentions, and attachments at the caret, keeping the current draft. */
+  insert: (draft: ComposerDraft) => void;
   focus: () => void;
 };
 
@@ -154,6 +156,21 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
       restore(draft: ComposerDraft) {
         paintDraft(editor.current, draft, attachments.current, chipHandlers());
         refresh();
+      },
+      insert(draft: ComposerDraft) {
+        const root = editor.current;
+        if (!root) return;
+        for (const part of splitUserText(draft.text)) {
+          if (part.type === "text") insertText(root, part.text);
+          else if (part.type === "file")
+            insertChip(root, createFileChip(part.path, chipHandlers()));
+        }
+        for (const file of draft.files) {
+          attachments.current.set(file.id, file);
+          insertChip(root, createDraftFileChip(file, chipHandlers()));
+        }
+        refresh();
+        root.focus();
       },
       focus() {
         editor.current?.focus();

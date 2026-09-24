@@ -16,3 +16,22 @@ export class Signal<T> {
     this.#listeners.clear();
   }
 }
+
+/** Holds posted values until a receiver attaches, then delivers them in order. */
+export class Mailbox<T> {
+  #pending: T[] = [];
+  #receiver?: (value: T) => void;
+
+  post(value: T): void {
+    if (this.#receiver) this.#receiver(value);
+    else this.#pending.push(value);
+  }
+
+  receive(receiver: (value: T) => void): Unsubscribe {
+    this.#receiver = receiver;
+    for (const value of this.#pending.splice(0)) receiver(value);
+    return () => {
+      if (this.#receiver === receiver) this.#receiver = undefined;
+    };
+  }
+}

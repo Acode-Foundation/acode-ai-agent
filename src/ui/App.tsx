@@ -12,6 +12,8 @@ import {
 } from "lucide-preact";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController, CommandPanelData } from "../app/agentController";
+import type { ComposerRequest } from "../app/agentActions";
+import type { Mailbox } from "../core/events";
 import { PERMISSION_MODES } from "../core/schema";
 import type {
   ChatSummary,
@@ -53,9 +55,11 @@ import { parseSlashCommand } from "../core/slashCommands";
 type Props = {
   controller: AgentController;
   onActiveChatChange?: (chatId: string) => void;
+  /** Requests from the editor and terminal menus. */
+  inbox?: Mailbox<ComposerRequest>;
 };
 
-export function App({ controller, onActiveChatChange }: Props) {
+export function App({ controller, onActiveChatChange, inbox }: Props) {
   const [state, setState] = useState<PublicAgentState>(controller.state);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [piSettingsOpen, setPiSettingsOpen] = useState(false);
@@ -147,6 +151,16 @@ export function App({ controller, onActiveChatChange }: Props) {
       }
     },
     [controller, pin],
+  );
+
+  useEffect(
+    () =>
+      inbox?.receive(({ draft, submit }) => {
+        // Queue behind a running turn instead of steering it; send() already toasts failures.
+        if (submit) void send(draft, "followUp").catch(() => undefined);
+        else composerRef.current?.insert(draft);
+      }),
+    [inbox, send],
   );
 
   const stop = useCallback(async () => {

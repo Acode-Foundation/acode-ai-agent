@@ -1,6 +1,14 @@
 import plugin from "../plugin.json";
+import { buildComposerRequest, type ActionSubject, type ComposerRequest } from "./app/agentActions";
 import { AgentController } from "./app/agentController";
+import { Mailbox } from "./core/events";
 import { getCodeHighlight } from "./platform/codeHighlight";
+import {
+  captureEditor,
+  pickEditorAction,
+  registerHostMenus,
+  type HostActionRequest,
+} from "./platform/hostMenus";
 import { createHomeProject } from "./platform/randomProject";
 import { installNativeFetch, uninstallNativeFetch } from "./platform/nativeHttp";
 import { setPluginBaseUrl } from "./platform/pluginAssets";
@@ -8,10 +16,20 @@ import { PROVIDERS } from "./providers/providerRegistry";
 import { mountApp, unmountApp } from "./ui/mount";
 import { mountSidebar, unmountSidebar } from "./ui/sidebar/mountSidebar";
 import styles from "./ui/styles.css";
+import { PathSandbox } from "./workspace/pathSandbox";
 
 const OPEN_COMMAND = `${plugin.id}:open`;
 const NEW_COMMAND = `${plugin.id}:new-chat`;
 const RANDOM_PROJECT_COMMAND = `${plugin.id}:random-project`;
+const EDITOR_ACTIONS_COMMAND = `${plugin.id}:editor-actions`;
+const ADD_SELECTION_COMMAND = `${plugin.id}:add-selection`;
+const COMMANDS = [
+  OPEN_COMMAND,
+  NEW_COMMAND,
+  RANDOM_PROJECT_COMMAND,
+  EDITOR_ACTIONS_COMMAND,
+  ADD_SELECTION_COMMAND,
+];
 const TAB_ID = `${plugin.id}:tab`;
 const SIDEBAR_ID = `${plugin.id}:sidebar`;
 
@@ -19,6 +37,7 @@ type AgentTab = {
   file: Acode.EditorFile;
   root: HTMLElement;
   binding: { chatId?: string };
+  inbox: Mailbox<ComposerRequest>;
 };
 
 class AcodeAiAgentPlugin {
@@ -26,6 +45,7 @@ class AcodeAiAgentPlugin {
   #controller: AgentController | null = null;
   #sidebarContainer: HTMLElement | null = null;
   #sidebarApps: Acode.SidebarApps | null = null;
+  #disposeHostMenus: (() => void) | null = null;
 
   async init(
     baseUrl: string,
@@ -39,6 +59,9 @@ class AcodeAiAgentPlugin {
     this.#registerCommands();
     this.#exposeExtensionApi(controller);
     this.#registerSidebar(controller);
+    this.#disposeHostMenus = registerHostMenus(plugin.id, (request) =>
+      this.#runHostActionSafely(request),
+    );
 
     try {
       await controller.initialize();
@@ -51,14 +74,14 @@ class AcodeAiAgentPlugin {
   }
 
   async destroy(): Promise<void> {
+    this.#disposeHostMenus?.();
+    this.#disposeHostMenus = null;
     this.#removeSidebar();
     await this.#closeTabs();
     await this.#controller?.dispose();
     this.#controller = null;
     uninstallNativeFetch();
-    acode.removeCommand(OPEN_COMMAND);
-    acode.removeCommand(NEW_COMMAND);
-    acode.removeCommand(RANDOM_PROJECT_COMMAND);
+    for (const command of COMMANDS) acode.removeCommand(command);
   }
 
   open(chatId?: string): void {
@@ -104,7 +127,7 @@ class AcodeAiAgentPlugin {
       Object.assign(fileOptions, { highlightStyles: true });
     }
     const file = new EditorFile(plugin.name, fileOptions);
-    const record: AgentTab = { file, root, binding: { chatId } };
+    const record: AgentTab = { file, root, binding: { chatId }, inbox: new Mailbox() };
     this.#tabs.set(tabId, record);
     this.#setTabTitle(record);
     file.onfocus = () => {
@@ -122,11 +145,63 @@ class AcodeAiAgentPlugin {
       unmountApp(root);
       this.#tabs.delete(tabId);
     };
-    mountApp(root, controller, (activeChatId) => {
-      if (editorManager.activeFile !== file) return;
-      record.binding.chatId = activeChatId;
-      this.#setTabTitle(record);
+    mountApp(
+      root,
+      controller,
+      (activeChatId) => {
+        if (editorManager.activeFile !== file) return;
+        record.binding.chatId = activeChatId;
+        this.#setTabTitle(record);
+      },
+      record.inbox,
+    );
+  }
+
+  #runHostActionSafely(request: HostActionRequest): void {
+    void this.#runHostAction(request).catch((error) => {
+      acode.pushNotification(plugin.name, error instanceof Error ? error.message : String(error), {
+        type: "error",
+      });
     });
+  }
+
+  async #runHostAction({ action, source }: HostActionRequest): Promise<void> {
+    const controller = this.#controller;
+    if (!controller) throw new Error("The AI Agent is still starting.");
+    const subject: ActionSubject =
+      source.kind === "terminal"
+        ? source
+        : { ...source, path: await this.#enterWorkspaceOf(controller, source.uri) };
+    if (!controller.state.workspace) throw new Error("Open a project folder to use the AI Agent.");
+    const request = buildComposerRequest(action, subject);
+    // Prefer a tab already showing the active chat so the request lands where the user expects.
+    const chatId = controller.state.activeChatId;
+    const tabId =
+      [...this.#tabs.entries()].find(([, record]) => record.binding.chatId === chatId)?.[0] ??
+      TAB_ID;
+    this.#openTab(tabId, chatId);
+    const record = this.#tabs.get(tabId);
+    if (!record) throw new Error("The AI Agent tab could not be opened.");
+    record.inbox.post(request);
+  }
+
+  /** Switch to the workspace holding `uri`, preferring the active one; returns its relative path. */
+  async #enterWorkspaceOf(
+    controller: AgentController,
+    uri: string | undefined,
+  ): Promise<string | undefined> {
+    if (!uri) return undefined;
+    const active = controller.state.workspace;
+    const candidates = active
+      ? [active, ...controller.workspaces.filter((workspace) => workspace.id !== active.id)]
+      : controller.workspaces;
+    for (const workspace of candidates) {
+      const path = new PathSandbox(workspace.rootUri, acode.joinUrl).relative(uri);
+      if (!path) continue;
+      if (workspace.id !== active?.id) await controller.selectWorkspace(workspace.id);
+      return path;
+    }
+    return undefined;
   }
 
   async selectProvider(providerId: string): Promise<void> {
@@ -168,6 +243,23 @@ class AcodeAiAgentPlugin {
       exec: () => {
         this.open();
         void this.#controller?.newConversation();
+        return true;
+      },
+    });
+    acode.addCommand({
+      name: EDITOR_ACTIONS_COMMAND,
+      description: "AI Agent: Ask about selection or file",
+      exec: () => {
+        void pickEditorAction((request) => this.#runHostActionSafely(request));
+        return true;
+      },
+    });
+    acode.addCommand({
+      name: ADD_SELECTION_COMMAND,
+      description: "AI Agent: Add selection to chat",
+      exec: () => {
+        const source = captureEditor();
+        if (source) this.#runHostActionSafely({ action: "add", source });
         return true;
       },
     });
