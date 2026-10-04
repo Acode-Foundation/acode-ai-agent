@@ -24,7 +24,7 @@
     "@earendil-works/pi-agent-core": "0.87.1",
     "@earendil-works/pi-ai": "0.87.1",
     "acode-plugin-types": "^1.12.9",
-    "dompurify": "^3.4.13",
+    "dompurify": "^3.4.16",
     "lucide-preact": "^1.32.0",
     "marked": "^18.0.10",
     "motion": "^13.1.0",
