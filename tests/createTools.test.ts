@@ -1,5 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { createWorkspaceTools } from "../src/tools/createTools.ts";
+import { WorkspaceExecutionEnv } from "../src/tools/workspaceEnv.ts";
+import { legacyTool } from "./toolHarness.ts";
 import type { AcodeWorkspace, FileEntry } from "../src/workspace/acodeWorkspace.ts";
 
 afterEach(() => {
@@ -10,7 +12,7 @@ test("grep treats the query as a case-insensitive regular expression when reques
   const workspace = fakeWorkspace({
     "src/main.ts": "const alpha = 1;\nLET beta = 2;\nconsole.log(alpha);",
   });
-  const grep = createWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
+  const grep = legacyWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
     (tool) => tool.name === "grep",
   )!;
 
@@ -24,7 +26,7 @@ test("grep treats the query as a case-insensitive regular expression when reques
 
 test("grep applies case sensitivity to regular expressions", async () => {
   const workspace = fakeWorkspace({ "main.ts": "const lower = 1;\nCONST upper = 2;" });
-  const grep = createWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
+  const grep = legacyWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
     (tool) => tool.name === "grep",
   )!;
 
@@ -39,7 +41,7 @@ test("grep applies case sensitivity to regular expressions", async () => {
 
 test("grep keeps regular-expression characters literal by default", async () => {
   const workspace = fakeWorkspace({ "values.txt": "a.b\naxb" });
-  const grep = createWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
+  const grep = legacyWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
     (tool) => tool.name === "grep",
   )!;
 
@@ -50,7 +52,7 @@ test("grep keeps regular-expression characters literal by default", async () => 
 
 test("grep reports invalid regular expressions before searching", async () => {
   const workspace = fakeWorkspace({ "main.ts": "anything" });
-  const grep = createWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
+  const grep = legacyWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
     (tool) => tool.name === "grep",
   )!;
 
@@ -76,7 +78,7 @@ test("grep forwards regular-expression mode to Acode's native file index", async
     require: (name: string) => (name === "fileIndex" ? fileIndex : undefined),
   });
   const workspace = fakeWorkspace({}, false);
-  const grep = createWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
+  const grep = legacyWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
     (tool) => tool.name === "grep",
   )!;
 
@@ -109,7 +111,7 @@ test("grep stops the native search at the match limit and says more matches exis
   vi.stubGlobal("acode", {
     require: (name: string) => (name === "fileIndex" ? fileIndex : undefined),
   });
-  const grep = createWorkspaceTools(fakeWorkspace({}, false), { maxWalkFiles: () => 100 }).find(
+  const grep = legacyWorkspaceTools(fakeWorkspace({}, false), { maxWalkFiles: () => 100 }).find(
     (tool) => tool.name === "grep",
   )!;
 
@@ -136,7 +138,7 @@ test("grep trusts an empty native search when the index covers the path", async 
   });
   const workspace = fakeWorkspace({ "a.ts": "needle" }, false);
   workspace.indexedFileCount = async () => 4321;
-  const grep = createWorkspaceTools(workspace, { maxWalkFiles: () => 1 }).find(
+  const grep = legacyWorkspaceTools(workspace, { maxWalkFiles: () => 1 }).find(
     (tool) => tool.name === "grep",
   )!;
 
@@ -159,20 +161,15 @@ test("read_file returns PNG content through Pi's image processor contract", asyn
     mimeType: "image/png",
     hints: ["[Image resized for inline display.]"],
   }));
-  const read = createWorkspaceTools(workspace, {
+  const read = legacyWorkspaceTools(workspace, {
     maxWalkFiles: () => 100,
     autoResizeImages: () => false,
     imageProcessor,
-  }).find((tool) => tool.name === "read_file")!;
+  }).find((tool) => tool.name === "read")!;
 
   const output = await read.execute("read-1", { path: "shots/home.png" });
 
-  expect(imageProcessor).toHaveBeenCalledWith(
-    png,
-    "image/png",
-    { autoResizeImages: false },
-    expect.objectContaining({ abortSignal: undefined }),
-  );
+  expect(imageProcessor).toHaveBeenCalledWith(png, "image/png", { autoResizeImages: false });
   expect(output.content).toEqual([
     { type: "text", text: "Read image file [image/png]\n[Image resized for inline display.]" },
     { type: "image", data: "processed-png", mimeType: "image/png" },
@@ -184,8 +181,8 @@ test("read_file falls back to text when a .png file has no image signature", asy
   const workspace = fakeWorkspace({ "notes.png": "plain text despite its suffix" }, true, {
     "notes.png": new TextEncoder().encode("plain text despite its suffix"),
   });
-  const read = createWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
-    (tool) => tool.name === "read_file",
+  const read = legacyWorkspaceTools(workspace, { maxWalkFiles: () => 100 }).find(
+    (tool) => tool.name === "read",
   )!;
 
   const output = await read.execute("read-2", { path: "notes.png" });
@@ -196,10 +193,10 @@ test("read_file falls back to text when a .png file has no image signature", asy
 test("read_file reports an image processor omission without returning invalid image content", async () => {
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const workspace = fakeWorkspace({}, true, { "broken.png": png });
-  const read = createWorkspaceTools(workspace, {
+  const read = legacyWorkspaceTools(workspace, {
     maxWalkFiles: () => 100,
     imageProcessor: async () => ({ ok: false, message: "[Image omitted: decode failed.]" }),
-  }).find((tool) => tool.name === "read_file")!;
+  }).find((tool) => tool.name === "read")!;
 
   const output = await read.execute("read-3", { path: "broken.png" });
 
@@ -249,4 +246,13 @@ function fakeWorkspace(
       return { visited, truncated: false, source: "filesystem", skippedFolders: [] };
     },
   } as unknown as AcodeWorkspace;
+}
+
+/** Workspace tools with the old `execute(id, args, signal)` shape, run against the workspace. */
+function legacyWorkspaceTools(
+  workspace: AcodeWorkspace,
+  options: Parameters<typeof createWorkspaceTools>[1],
+) {
+  const env = new WorkspaceExecutionEnv(workspace, null);
+  return createWorkspaceTools(workspace, options).map((tool) => legacyTool(tool, env));
 }

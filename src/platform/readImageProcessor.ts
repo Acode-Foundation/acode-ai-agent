@@ -1,5 +1,15 @@
-import type { ReadImageProcessor } from "@earendil-works/pi-agent-core";
 import { bytesToBase64, normalizeImageMime } from "./promptImages";
+
+export type ReadImageResult =
+  | { ok: true; data: string; mimeType: string; hints: string[] }
+  | { ok: false; message: string };
+
+/** Turns image bytes into a model attachment, resizing large images first. */
+export type ReadImageProcessor = (
+  bytes: Uint8Array,
+  mimeType: string,
+  options: { autoResizeImages: boolean },
+) => Promise<ReadImageResult>;
 
 const TARGET_EDGE = 2000;
 
@@ -10,7 +20,7 @@ type DecodedImage = {
   close?: () => void;
 };
 
-/** Acode's browser-backed implementation of Pi's public ReadImageProcessor API. */
+/** Browser-backed image processing for the `read` tool. */
 export const browserReadImageProcessor: ReadImageProcessor = async (
   bytes,
   suppliedMimeType,

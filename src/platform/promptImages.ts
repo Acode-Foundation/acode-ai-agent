@@ -83,7 +83,7 @@ export async function collectPromptImages(
       seen.add(image.data.slice(0, 48));
       images.push(image);
     } catch {
-      // Mentioned files stay in the prompt text; the model can still read_file.
+      // Mentioned files stay in the prompt text; the model can still read them.
     }
   }
   return images;

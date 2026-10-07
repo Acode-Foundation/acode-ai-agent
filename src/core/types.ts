@@ -1,5 +1,13 @@
-import type { AgentMessage, QueueMode, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model, Transport } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  ImageContent,
+  Model,
+  ModelThinkingLevel,
+  ToolResultMessage,
+  Transport,
+  UserMessage,
+} from "@earendil-works/pi-ai";
+import type { QueueMode } from "@earendil-works/pi-durable";
 import type { QuestionnairePrompt } from "../ask/types";
 import type { PermissionMode } from "./schema";
 import type { SlashCommand } from "./slashCommands";
@@ -14,7 +22,7 @@ export type { PermissionMode };
 export type AgentSettings = {
   providerId: ProviderId;
   modelId: string;
-  thinkingLevel: ThinkingLevel;
+  thinkingLevel: ModelThinkingLevel;
   permissionMode: PermissionMode;
   includeSelection: boolean;
   hideThinkingBlock: boolean;
@@ -43,6 +51,20 @@ export type AgentSettings = {
   customModels: Record<string, string[]>;
   customEndpoints: CustomEndpoint[];
 };
+
+/** A compaction summary in the transcript; Pi stores it as a `pi.compaction` entry. */
+export type CompactionNotice = {
+  role: "compactionSummary";
+  summary: string;
+  timestamp: number;
+};
+
+/** What the chat UI renders: model messages from the active transcript, plus notices. */
+export type TranscriptMessage =
+  | UserMessage
+  | AssistantMessage
+  | ToolResultMessage
+  | CompactionNotice;
 
 export type ChatSummary = {
   id: string;
@@ -94,9 +116,10 @@ export type RestoredPrompt = {
   images: ImageContent[];
 };
 
+/** Durable work the last app session left unfinished; it continues only when the user resumes it. */
 export type RunRecovery = {
-  kind: "interrupted" | "deferred";
-  operation: "run" | "compaction" | "navigation";
+  kind: "interrupted";
+  operation: "run" | "compaction";
   message: string;
 };
 
@@ -120,8 +143,8 @@ export type SessionTreeItem = {
 
 export type PublicAgentState = {
   status: "booting" | "ready" | "running" | "error";
-  messages: AgentMessage[];
-  streamingMessage?: AgentMessage;
+  messages: TranscriptMessage[];
+  streamingMessage?: AssistantMessage;
   activities: ToolActivity[];
   queued: QueuedPrompt[];
   compacting: boolean;

@@ -1,5 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { QuestionGate } from "./questionGate";
 import { buildQuestionnaireResponse, textResult } from "./response";
 import { ASK_TOOL_NAME, MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS } from "./types";
@@ -11,10 +11,9 @@ const DESCRIPTION = [
   "Use multiSelect when several answers can apply. Optional preview (mockup or code) on single-select options. Group every clarifying question into one call.",
 ].join("\n");
 
-export function createAskTool(gate: QuestionGate): AgentTool<any> {
-  return {
+export function createAskTool(gate: QuestionGate): ToolRegistration {
+  return defineTool({
     name: ASK_TOOL_NAME,
-    label: "Ask user",
     description: DESCRIPTION,
     parameters: Type.Object({
       questions: Type.Array(
@@ -35,7 +34,8 @@ export function createAskTool(gate: QuestionGate): AgentTool<any> {
       ),
     }),
     executionMode: "sequential",
-    execute: async (_id, params, signal) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const parsed = parseQuestions((params as { questions?: unknown }).questions);
       const validation = validateQuestionnaire(parsed);
       if (!validation.ok)
@@ -50,5 +50,5 @@ export function createAskTool(gate: QuestionGate): AgentTool<any> {
       }
       return buildQuestionnaireResponse(result);
     },
-  };
+  });
 }

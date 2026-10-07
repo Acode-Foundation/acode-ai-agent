@@ -1,14 +1,14 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 import type { AgentFeature } from "./types";
 
 export type ContextContribution = () => string | Promise<string>;
 
 export class ExtensionRegistry {
-  #tools = new Map<string, AgentTool>();
+  #tools = new Map<string, ToolRegistration>();
   #context = new Map<string, ContextContribution>();
   #features = new Map<string, AgentFeature>();
 
-  registerTool(tool: AgentTool): () => void {
+  registerTool(tool: ToolRegistration): () => void {
     if (this.#tools.has(tool.name)) throw new Error(`Tool already registered: ${tool.name}`);
     this.#tools.set(tool.name, tool);
     return () => this.#tools.delete(tool.name);
@@ -27,7 +27,7 @@ export class ExtensionRegistry {
     return () => this.#features.delete(feature.id);
   }
 
-  get tools(): AgentTool[] {
+  get tools(): ToolRegistration[] {
     return [...this.#tools.values()];
   }
 

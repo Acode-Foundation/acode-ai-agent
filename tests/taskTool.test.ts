@@ -2,10 +2,11 @@ import { expect, test } from "vitest";
 import { createTaskTools } from "../src/tasks/createTaskTools.ts";
 import { TaskList } from "../src/tasks/taskList.ts";
 import { TASK_TOOL_NAME } from "../src/tasks/types.ts";
+import { legacyTool } from "./toolHarness.ts";
 
 test("todo_write replaces the list and returns a compact confirmation", async () => {
   const list = new TaskList();
-  const tool = createTaskTools(list).find((item) => item.name === TASK_TOOL_NAME)!;
+  const tool = legacyTool(createTaskTools(list).find((item) => item.name === TASK_TOOL_NAME)!);
   const created = await tool.execute("t1", {
     todos: [
       { content: "Read the schema", status: "completed" },

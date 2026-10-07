@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { TranscriptMessage as AgentMessage } from "../src/core/types.ts";
 import {
   buildTurns,
   formatWorkDuration,
@@ -46,14 +46,14 @@ test("projects a tool turn into a work log plus the trailing answer", () => {
       [
         { type: "thinking", thinking: "I should read the file first." },
         { type: "text", text: "Looking at App.tsx" },
-        { type: "toolCall", id: "t1", name: "read_file", arguments: { path: "src/ui/App.tsx" } },
+        { type: "toolCall", id: "t1", name: "read", arguments: { path: "src/ui/App.tsx" } },
       ],
       2,
     ),
     {
       role: "toolResult",
       toolCallId: "t1",
-      toolName: "read_file",
+      toolName: "read",
       content: [{ type: "text", text: "export function App() {}" }],
       isError: false,
       timestamp: 3,
@@ -76,14 +76,11 @@ test("projects a tool turn into a work log plus the trailing answer", () => {
 test("shows the read window on the work row after the tool result arrives", () => {
   const turns = buildTurns([
     user("read it"),
-    assistant(
-      [{ type: "toolCall", id: "t1", name: "read_file", arguments: { path: "src/a.ts" } }],
-      2,
-    ),
+    assistant([{ type: "toolCall", id: "t1", name: "read", arguments: { path: "src/a.ts" } }], 2),
     {
       role: "toolResult",
       toolCallId: "t1",
-      toolName: "read_file",
+      toolName: "read",
       content: [
         {
           type: "text",
@@ -142,7 +139,7 @@ test("labels common tools", () => {
     label: "Searched files",
     detail: "TODO",
   });
-  expect(presentTool("edit_file", { path: "a.ts" })).toEqual({
+  expect(presentTool("edit", { path: "a.ts" })).toEqual({
     kind: "change",
     label: "Changed files",
     detail: "a.ts",
@@ -157,14 +154,14 @@ test("labels common tools", () => {
     label: "Ran command",
     detail: "npm test npm run build",
   });
-  expect(presentTool("read_file", { path: "src/a.ts", offset: 10, limit: 31 })).toEqual({
+  expect(presentTool("read", { path: "src/a.ts", offset: 10, limit: 31 })).toEqual({
     kind: "read",
     label: "Read file",
     detail: "src/a.ts:10-40",
   });
   expect(
     presentTool(
-      "read_file",
+      "read",
       { path: "src/a.ts" },
       "[Showing lines 1-2000 of 8432. Use offset=2001 to continue.]\n\nalpha",
     ),
@@ -179,7 +176,7 @@ test("splits the read truncation notice out of the file body", () => {
 
 test("groups consecutive tools into one burst", () => {
   const groups = groupWorkEntries([
-    { id: "t1", type: "tool", kind: "read", name: "read_file", label: "Read file", status: "done" },
+    { id: "t1", type: "tool", kind: "read", name: "read", label: "Read file", status: "done" },
     {
       id: "t2",
       type: "tool",
@@ -204,7 +201,7 @@ test("groups consecutive tools into one burst", () => {
 });
 
 function tool(id: string, status: WorkEntry["status"] = "done"): WorkEntry {
-  return { id, type: "tool", kind: "read", name: "read_file", label: "Read file", status };
+  return { id, type: "tool", kind: "read", name: "read", label: "Read file", status };
 }
 
 test("while live, groups finished tools and keeps the running tool featured", () => {
@@ -252,15 +249,15 @@ test("formats short work durations", () => {
 test("keeps the turn id stable as the assistant turn grows", () => {
   const first = buildTurns([
     user("fix it", 10),
-    assistant([{ type: "toolCall", id: "t1", name: "read_file", arguments: { path: "a.ts" } }], 11),
+    assistant([{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } }], 11),
   ]);
   const second = buildTurns(
     [
       user("fix it", 10),
       assistant(
         [
-          { type: "toolCall", id: "t1", name: "read_file", arguments: { path: "a.ts" } },
-          { type: "toolCall", id: "t2", name: "edit_file", arguments: { path: "a.ts" } },
+          { type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } },
+          { type: "toolCall", id: "t2", name: "edit", arguments: { path: "a.ts" } },
         ],
         12,
       ),
@@ -327,13 +324,10 @@ test("keeps in-flight tools running only while the turn is live", () => {
   const live = buildTurns(
     [
       user("read it", 1),
-      assistant(
-        [{ type: "toolCall", id: "t1", name: "read_file", arguments: { path: "a.ts" } }],
-        2,
-      ),
+      assistant([{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } }], 2),
     ],
     undefined,
-    [{ id: "t1", name: "read_file", args: { path: "a.ts" }, status: "running", startedAt: 2 }],
+    [{ id: "t1", name: "read", args: { path: "a.ts" }, status: "running", startedAt: 2 }],
     true,
   );
   expect(live[0]?.streaming).toBe(true);
@@ -343,7 +337,7 @@ test("keeps in-flight tools running only while the turn is live", () => {
 test("settles tools that never got a result after the agent stops", () => {
   const turns = buildTurns([
     user("read it", 1),
-    assistant([{ type: "toolCall", id: "t1", name: "read_file", arguments: { path: "a.ts" } }], 2),
+    assistant([{ type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } }], 2),
   ]);
   expect(turns[0]?.streaming).toBeFalsy();
   expect(turns[0]?.work[0]?.status).toBe("done");
@@ -428,7 +422,7 @@ test("merges new tool activity into the current user turn only", () => {
       { id: "t1", name: "list_dir", args: { path: "." }, status: "done", startedAt: 2 },
       {
         id: "t2",
-        name: "read_file",
+        name: "read",
         args: { path: "src/ui/App.tsx" },
         status: "running",
         startedAt: 6,

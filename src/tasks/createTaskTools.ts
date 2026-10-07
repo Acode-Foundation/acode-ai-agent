@@ -1,5 +1,9 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import {
+  defineTool,
+  type ToolExecutionResult,
+  type ToolRegistration,
+} from "@earendil-works/pi-durable";
 import { formatTaskList, summarizeTasks, TaskList } from "./taskList";
 import { MAX_TASKS, TASK_TOOL_NAME, type TaskDraft } from "./types";
 
@@ -10,10 +14,9 @@ const DESCRIPTION = [
   "blockedBy is ids that must complete or skip first. Do not paste the list into chat; the user already sees it.",
 ].join("\n");
 
-export function createTaskTools(list: TaskList): AgentTool<any>[] {
-  const todoWrite: AgentTool<any> = {
+export function createTaskTools(list: TaskList): ToolRegistration[] {
+  const todoWrite = defineTool({
     name: TASK_TOOL_NAME,
-    label: "Update tasks",
     description: DESCRIPTION,
     parameters: Type.Object({
       todos: Type.Array(
@@ -42,13 +45,13 @@ export function createTaskTools(list: TaskList): AgentTool<any>[] {
       ),
     }),
     executionMode: "sequential",
-    execute: async (_id, params) => {
+    execute: async (params) => {
       const raw = (params as { todos?: unknown }).todos;
       const todos = Array.isArray(raw) ? raw.filter(isTaskDraft) : [];
       const result = list.replace(todos);
       return formatWriteResult(result.tasks, result.warnings, todos.length === 0);
     },
-  };
+  });
   return [todoWrite];
 }
 
@@ -56,7 +59,7 @@ export function formatWriteResult(
   tasks: ReturnType<TaskList["list"]>,
   warnings: string[],
   cleared: boolean,
-): AgentToolResult<{ operation: string; count: number }> {
+): ToolExecutionResult<{ operation: string; count: number }> {
   if (cleared || tasks.length === 0) {
     const warning = warnings.length
       ? `\n${warnings.map((item) => `warning: ${item}`).join("\n")}`
@@ -71,7 +74,7 @@ export function formatWriteResult(
 function textResult(
   content: string,
   count = 0,
-): AgentToolResult<{ operation: string; count: number }> {
+): ToolExecutionResult<{ operation: string; count: number }> {
   return { content: [{ type: "text", text: content }], details: { operation: "todos", count } };
 }
 

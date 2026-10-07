@@ -1,5 +1,9 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import {
+  defineTool,
+  type ToolExecutionResult,
+  type ToolRegistration,
+} from "@earendil-works/pi-durable";
 import type { AcodeWorkspace, PathChange } from "../workspace/acodeWorkspace";
 import { fileOperationError } from "./errors";
 
@@ -15,10 +19,9 @@ type FileOperationDetails = {
  * Move, rename, copy, delete and create folders through `acode.fsOperation`, for workspaces
  * without `bash` (SAF, local storage, FTP, SFTP), so the agent can finish a refactor.
  */
-export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<any>[] {
-  const movePath: AgentTool<any> = {
+export function createFileOperationTools(workspace: AcodeWorkspace): ToolRegistration[] {
+  const movePath = defineTool({
     name: "move_path",
-    label: "Move path",
     description:
       "Move or rename a file or folder. `destination` is the full new workspace-relative path, " +
       "not the folder to move into (src/a.ts → lib/a.ts). Missing parent folders are created. " +
@@ -28,7 +31,8 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
       destination: Type.String({ description: "Full workspace-relative path after the move" }),
     }),
     executionMode: "sequential",
-    execute: async (_id, params, signal) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const input = params as { source: string; destination: string };
       const source = workspace.sandbox.normalize(input.source);
       const destination = workspace.sandbox.normalize(input.destination);
@@ -42,11 +46,10 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
         kind: change.kind,
       });
     },
-  };
+  });
 
-  const renamePath: AgentTool<any> = {
+  const renamePath = defineTool({
     name: "rename_path",
-    label: "Rename path",
     description:
       "Rename a file or folder in place. `new_name` is a name, not a path; use move_path to change folders. " +
       "Fails if the name is taken. Editor tabs follow the rename.",
@@ -55,7 +58,8 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
       new_name: Type.String({ description: "New file or folder name, e.g. index.ts" }),
     }),
     executionMode: "sequential",
-    execute: async (_id, params, signal) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const input = params as { path: string; new_name: string };
       const path = workspace.sandbox.normalize(input.path);
       const name = String(input.new_name ?? "").trim();
@@ -75,11 +79,10 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
         kind: change.kind,
       });
     },
-  };
+  });
 
-  const copyPath: AgentTool<any> = {
+  const copyPath = defineTool({
     name: "copy_path",
-    label: "Copy path",
     description:
       "Copy a file or folder (recursively) to a new path. `destination` is the full workspace-relative path of the copy. " +
       "Binary files are copied as-is; files open in the editor are copied from their buffer. Fails if the destination exists.",
@@ -88,7 +91,8 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
       destination: Type.String({ description: "Full workspace-relative path of the copy" }),
     }),
     executionMode: "sequential",
-    execute: async (_id, params, signal) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const input = params as { source: string; destination: string };
       const source = workspace.sandbox.normalize(input.source);
       const destination = workspace.sandbox.normalize(input.destination);
@@ -105,11 +109,10 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
         count: change.files,
       });
     },
-  };
+  });
 
-  const deletePath: AgentTool<any> = {
+  const deletePath = defineTool({
     name: "delete_path",
-    label: "Delete path",
     description:
       "Permanently delete a file or folder; there is no trash or undo. A folder that is not empty needs recursive: true. " +
       "Asks the user for approval even in Allow edits mode.",
@@ -123,7 +126,8 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
       ),
     }),
     executionMode: "sequential",
-    execute: async (_id, params, signal) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const input = params as { path: string; recursive?: boolean };
       const path = workspace.sandbox.normalize(input.path);
       const change = await workspace
@@ -139,18 +143,17 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
         count: change.entries,
       });
     },
-  };
+  });
 
-  const createDirectory: AgentTool<any> = {
+  const createDirectory = defineTool({
     name: "create_directory",
-    label: "Create folder",
     description:
-      "Create a folder and any missing parents. Only needed for empty folders; write_file creates parent folders itself.",
+      "Create a folder and any missing parents. Only needed for empty folders; write creates parent folders itself.",
     parameters: Type.Object({
       path: Type.String({ description: "Workspace-relative folder to create" }),
     }),
     executionMode: "sequential",
-    execute: async (_id, params) => {
+    execute: async (params) => {
       const input = params as { path: string };
       const path = workspace.sandbox.normalize(input.path);
       if (!path) throw new Error("A folder path is required.");
@@ -163,7 +166,7 @@ export function createFileOperationTools(workspace: AcodeWorkspace): AgentTool<a
         kind: "folder",
       });
     },
-  };
+  });
 
   return [movePath, renamePath, copyPath, deletePath, createDirectory];
 }
@@ -190,6 +193,6 @@ function plural(count: number, one: string, many = `${one}s`): string {
 function result(
   text: string,
   details: FileOperationDetails,
-): AgentToolResult<FileOperationDetails> {
+): ToolExecutionResult<FileOperationDetails> {
   return { content: [{ type: "text", text }], details };
 }

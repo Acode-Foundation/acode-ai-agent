@@ -1,5 +1,5 @@
-import type { AgentHarnessResources, PromptTemplate, Skill } from "@earendil-works/pi-agent-core";
 import type { AcodeWorkspace, FileEntry } from "../workspace/acodeWorkspace";
+import type { PromptTemplate, Skill, WorkspaceResources } from "./promptTemplates";
 
 type ResourceEntry = Pick<FileEntry, "path" | "name" | "isFile" | "isDirectory">;
 type ResourceReader = {
@@ -7,9 +7,7 @@ type ResourceReader = {
   readText(path: string): Promise<string>;
 };
 
-export type LoadedWorkspaceResources = AgentHarnessResources & {
-  skillRoots: string[];
-};
+export type LoadedWorkspaceResources = WorkspaceResources;
 
 /** Pi-compatible project and global skill discovery over Acode's virtual filesystems. */
 export async function loadWorkspaceResources(

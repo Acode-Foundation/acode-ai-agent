@@ -1,23 +1,41 @@
+import type { AttachedReplicatedState, JsonValue } from "@earendil-works/chord";
+import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import {
-  AgentHarness,
-  BACKGROUND_CONTEXT as context,
-  getOrThrow,
-  createCompactionSummaryMessage,
-  createBranchSummaryMessage,
-  type AgentLane,
-  DEFAULT_COMPACTION_SETTINGS,
-  estimateContextTokens,
-  parseCommandArgs,
-  type HarnessEvent,
-  type AgentHarnessTool,
-  type AgentMessage,
-  type AgentTool,
-  type Session,
-  type Entry,
-} from "@earendil-works/pi-agent-core";
-import { Type, type ImageContent, type Model, type RetryPolicy } from "@earendil-works/pi-ai";
+  Type,
+  type AssistantMessage,
+  type ImageContent,
+  type Message,
+} from "@earendil-works/pi-ai";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import {
+  createRegistry,
+  defineDoc,
+  defineExtension,
+  defineTool,
+  GenerationTask,
+  Harness,
+  hook,
+  ToolTask,
+  UserEntry,
+  type Conversation,
+  type ConversationId,
+  type ConversationView,
+  type EntryDraft,
+  type EntryId,
+  type HarnessSettings,
+  type InboxState,
+  type LiveState,
+  type Registry,
+  type Submission,
+  type ToolRegistration,
+  type UsageState,
+} from "@earendil-works/pi-durable";
+import { createAskTool } from "../ask/createAskTool";
+import { QuestionGate } from "../ask/questionGate";
+import { systemPromptSections } from "../context/contextBuilder";
 import { Signal } from "../core/events";
 import type { ExtensionRegistry } from "../core/extensionRegistry";
+import { resourceSlashCommands, type SlashCommand } from "../core/slashCommands";
 import type {
   AgentSettings,
   QueuedPrompt,
@@ -26,19 +44,11 @@ import type {
   RunRetry,
   SessionTreeItem,
   ToolActivity,
+  TranscriptMessage,
 } from "../core/types";
-import { resourceSlashCommands, type SlashCommand } from "../core/slashCommands";
+import type { MutationGate } from "../permissions/mutationGate";
 import { toPiImages } from "../platform/promptImages";
-import { buildSystemPrompt } from "../context/contextBuilder";
-import { MutationGate } from "../permissions/mutationGate";
 import type { ProviderRegistry } from "../providers/providerRegistry";
-import type { SessionStore } from "../platform/sessionStore";
-import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
-import { createWorkspaceTools } from "../tools/createTools";
-import { editPairs } from "../tools/textEdits";
-import { createTerminalBashTool } from "../tools/bash";
-import { createAskTool } from "../ask/createAskTool";
-import { QuestionGate } from "../ask/questionGate";
 import { createTaskTools } from "../tasks/createTaskTools";
 import {
   buildTaskReminder,
@@ -53,14 +63,33 @@ import {
 } from "../tasks/reminder";
 import { parseTaskStore, TaskList } from "../tasks/taskList";
 import type { Task, TaskStatus } from "../tasks/types";
+import { createWorkspaceTools, withReadableErrors } from "../tools/createTools";
+import { editPairs } from "../tools/textEdits";
 import { createWebSearchContext } from "../tools/web/context";
 import { createWebTools } from "../tools/web/createWebTools";
+import { WorkspaceExecutionEnv } from "../tools/workspaceEnv";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
-import { loadWorkspaceResources, type LoadedWorkspaceResources } from "./workspaceResources";
+import type { ChatMeta, ChatStore } from "./chatStore";
+import {
+  appendHistory,
+  buildTreeItems,
+  historyEntries,
+  latestAssistantText,
+  toPiSessionJsonl,
+  transcriptFromEntries,
+} from "./history";
+import {
+  expandPromptTemplate,
+  parseCommandArgs,
+  skillInvocation,
+  type WorkspaceResources,
+} from "./promptTemplates";
+import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
+import { loadWorkspaceResources } from "./workspaceResources";
 
 export type AgentSessionSnapshot = {
-  messages: AgentMessage[];
-  streamingMessage?: AgentMessage;
+  messages: TranscriptMessage[];
+  streamingMessage?: AssistantMessage;
   activities: ToolActivity[];
   queued: QueuedPrompt[];
   isRunning: boolean;
@@ -74,39 +103,47 @@ export type AgentSessionSnapshot = {
   error?: string;
 };
 
+/** The session task list, stored with the conversation so it follows forks and restarts. */
+const TasksDoc = defineDoc<{ store: JsonValue }>({
+  kind: "acode.tasks",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "current",
+  initial: () => ({ store: null }),
+});
+
+/**
+ * One chat: a Pi durable Harness over the chat's own storage. Pi owns the transcript,
+ * runs, tool calls, queues, retries, and compaction, and commits each step before it is
+ * shown. This class wires Acode's tools, prompts, and approvals into it and projects the
+ * active conversation's view for the UI.
+ */
 export class AgentSession {
   readonly id: string;
-  title: string;
   readonly changes = new Signal<AgentSessionSnapshot>();
   readonly mutationGate: MutationGate;
   readonly questionGate = new QuestionGate();
   readonly workspace: AcodeWorkspace;
+  #meta: ChatMeta;
   #providers: ProviderRegistry;
   #extensions: ExtensionRegistry;
   #settings: () => AgentSettings;
-  #store: SessionStore;
-  #pi?: Session;
-  #harness?: AgentHarness<undefined>;
-  #lane?: AgentLane;
-  #model?: Model<any>;
-  #resources: LoadedWorkspaceResources = { skills: [], promptTemplates: [], skillRoots: [] };
-  #unsubscribe?: () => void;
-  #persistMeta?: (
-    patch: { title?: string; providerId?: string; modelId?: string },
-    activity?: boolean,
-  ) => void;
-  #flushPersist?: () => Promise<void>;
-  #activities = new Map<string, ToolActivity>();
-  #messages: AgentMessage[] = [];
-  #streaming?: AgentMessage;
-  #queued: QueuedPrompt[] = [];
-  #runAbort = new AbortController();
-  #running = false;
-  #compacting = false;
-  #storeWork?: Promise<void>;
+  #store: ChatStore;
+  #env: WorkspaceExecutionEnv;
+  #registry: Registry = createRegistry();
+  #harness?: Harness;
+  #conversation?: Conversation;
+  #view?: AttachedReplicatedState<ConversationView>;
+  #unsubscribeView?: () => void;
+  #resources: WorkspaceResources = { skills: [], promptTemplates: [], skillRoots: [] };
   #tasks = new TaskList();
   #cadence = createCadenceState();
-  #taskUnsubs: Array<() => void> = [];
+  #unsubscribers: Array<() => void> = [];
+  #toolStarts = new Map<string, number>();
+  #recovery?: RunRecovery;
+  #runError?: string;
+  #persistTasks: Promise<void> = Promise.resolve();
   #snapshot: AgentSessionSnapshot = {
     messages: [],
     activities: [],
@@ -120,23 +157,31 @@ export class AgentSession {
   };
 
   constructor(options: {
-    id: string;
-    title?: string;
+    meta: ChatMeta;
     workspace: AcodeWorkspace;
     providers: ProviderRegistry;
     extensions: ExtensionRegistry;
     settings: () => AgentSettings;
-    store: SessionStore;
+    store: ChatStore;
     mutationGate: MutationGate;
   }) {
-    this.id = options.id;
-    this.title = options.title ?? "New chat";
+    this.id = options.meta.id;
+    this.#meta = { ...options.meta };
     this.workspace = options.workspace;
     this.#providers = options.providers;
     this.#extensions = options.extensions;
     this.#settings = options.settings;
     this.#store = options.store;
     this.mutationGate = options.mutationGate;
+    this.#env = new WorkspaceExecutionEnv(options.workspace);
+  }
+
+  get title(): string {
+    return this.#meta.title;
+  }
+
+  get meta(): ChatMeta {
+    return { ...this.#meta };
   }
 
   get snapshot(): AgentSessionSnapshot {
@@ -150,214 +195,129 @@ export class AgentSession {
     };
   }
 
-  get laneName(): string {
-    return this.#lane?.name ?? "main";
-  }
-
-  get model(): Model<any> | undefined {
-    return this.#model;
-  }
-
   async initialize(): Promise<void> {
     const settings = this.#settings();
-    const opened = await this.#store.open({
-      id: this.id,
-      title: this.title,
-      workspaceId: this.workspace.info.id,
-      workspaceName: this.workspace.info.name,
-      providerId: settings.providerId,
-      modelId: settings.modelId,
-    });
-    this.title = opened.record.title;
-    this.#pi = opened.session;
-    this.#persistMeta = opened.update;
-    this.#flushPersist = opened.persist;
-    const storedModelId =
-      opened.record.providerId === settings.providerId ? opened.record.modelId : settings.modelId;
-    const model = this.#providers.resolveModel(
-      settings.providerId,
-      storedModelId || settings.modelId,
-    );
-    const resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
-    this.#resources = resources;
-    const created = await AgentHarness.create(
+    this.#resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
+    this.#installExtensions();
+    const storage = await this.#store.openStorage(this.id);
+    this.#harness = await Harness.open(
+      storage,
       {
-        session: opened.session,
-        models: this.#providers.models,
-        model,
-        thinkingLevel: settings.thinkingLevel,
-        tools: toHarnessTools(this.#tools()),
-        resources,
-        retry: retryPolicy(settings),
-        steeringMode: settings.steeringMode,
-        followUpMode: settings.followUpMode,
-        systemPrompt: () => this.#systemPrompt(),
-        streamOptions: streamOptions(settings),
-        compaction: compactionSettings(settings),
+        models: this.#providers.harnessModels,
+        registry: this.#registry,
+        settings: harnessSettings(this.#settings),
+        env: () => this.#env,
+        onReport: (error) => console.warn("Pi harness report", error),
       },
       context,
     );
-    this.#harness = created.harness;
-    const lanes = await this.#harness.lanes(context);
-    const laneName = lanes.find((lane) => lane.name === "main")?.name ?? lanes[0]?.name ?? "main";
-    this.#lane = await this.#harness.lane(laneName, context);
-    this.#model = (await this.#lane.getModel(context)) ?? model;
-    const watch = await this.#lane.watch(context);
-    this.#unsubscribe = watch.unsubscribe;
-    watch.start((event) => this.#onEvent(event));
-    this.#taskUnsubs.push(
-      this.#harness.hooks.on("before_tool", async (event, toolContext) => {
-        const decision = await this.mutationGate.request(
-          event.toolName,
-          event.args,
-          this.workspace,
-          this.#settings().permissionMode,
-          toolContext.abortSignal ?? this.#runAbort.signal,
-        );
-        return decision.block
-          ? { block: { reason: decision.reason || "User denied this action." } }
-          : undefined;
+    const stored =
+      this.#meta.conversationId === undefined
+        ? undefined
+        : await this.#harness.conversation(this.#meta.conversationId as ConversationId, context);
+    const conversation = stored ?? (await this.#harness.root(context));
+    // Work the previous app session left running waits for the user to resume it.
+    const inspection = await this.#harness.inspect(context);
+    const interrupted = inspection.tasks.find((task) => task.state.kind !== "blocked");
+    if (interrupted) {
+      this.#recovery = {
+        kind: "interrupted",
+        operation: interrupted.record.kind === "pi.compaction" ? "compaction" : "run",
+        message:
+          "This chat was interrupted when the app closed. Resume to continue from Pi's last durable checkpoint.",
+      };
+    } else this.#harness.resume();
+    this.#unsubscribers.push(
+      this.#tasks.subscribe(() => {
+        this.#saveTasks();
+        this.#publish();
       }),
     );
-    const interrupted = created.open.find((operation) => operation.lane === laneName);
-    this.#bindTaskRuntime();
-    await this.#loadTasks();
-    this.#snapshot = {
-      ...this.#snapshot,
-      commands: resourceSlashCommands(resources, settings),
-      tasks: this.#tasks.list(),
-      recovery: interrupted
-        ? {
-            kind: "interrupted",
-            operation: interrupted.kind,
-            message:
-              "This operation stopped when the app or agent process went away. Resume it from Pi's last durable checkpoint.",
-          }
-        : undefined,
-    };
-    await this.#refreshContext();
-    this.#publish();
+    await this.#activate(conversation);
+    await this.applyModel(settings.providerId, settings.modelId, settings.thinkingLevel);
   }
 
-  async refreshTools(): Promise<void> {
-    if (!this.#harness) return;
-    const tools = this.#tools();
-    await this.#harness.setTools(toHarnessTools(tools), context);
-    await this.#requireLane().setActiveTools(
-      tools.map((tool) => tool.name),
+  /** Point the chat at its model; Pi stores the choice on the conversation. */
+  async applyModel(
+    providerId: string,
+    modelId: string,
+    thinkingLevel: AgentSettings["thinkingLevel"],
+  ): Promise<void> {
+    const conversation = this.#conversation;
+    if (!conversation) return;
+    const agent = await conversation.agent(context);
+    if (
+      agent.model?.provider === providerId &&
+      agent.model.modelId === modelId &&
+      agent.thinkingLevel === thinkingLevel
+    )
+      return;
+    await conversation.configure(
+      { model: { provider: providerId, modelId }, thinkingLevel },
       context,
     );
   }
 
+  refreshTools(): void {
+    this.#installExtensions();
+  }
+
   async reloadResources(): Promise<{ skills: string[]; prompts: string[]; roots: string[] }> {
-    const harness = this.#requireHarness();
     const settings = this.#settings();
-    const resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
-    this.#resources = resources;
-    await harness.setResources(resources, context);
-    this.#snapshot = {
-      ...this.#snapshot,
-      commands: resourceSlashCommands(resources, settings),
-      error: undefined,
-    };
+    this.#resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
+    this.#installExtensions();
     this.#publish();
     return {
-      skills: (resources.skills ?? []).map((skill) => skill.name),
-      prompts: (resources.promptTemplates ?? []).map((prompt) => prompt.name),
-      roots: resources.skillRoots,
+      skills: this.#resources.skills.map((skill) => skill.name),
+      prompts: this.#resources.promptTemplates.map((prompt) => prompt.name),
+      roots: this.#resources.skillRoots,
     };
   }
 
-  async applySettings(settings: AgentSettings): Promise<void> {
-    const harness = this.#harness;
-    if (!harness) return;
-    await Promise.all([
-      harness.setSteeringMode(settings.steeringMode, context),
-      harness.setFollowUpMode(settings.followUpMode, context),
-      harness.setCompactionSettings(compactionSettings(settings), context),
-      harness.setRetryPolicy(retryPolicy(settings), context),
-      harness.setStreamOptions(streamOptions(settings), context),
-    ]);
-    this.#snapshot = {
-      ...this.#snapshot,
-      commands: resourceSlashCommands(this.#resources, settings),
-    };
+  applySettings(): void {
+    // Harness settings are read live through getters; only derived UI state changes here.
     this.#publish();
   }
 
+  /** `/skill:name` and prompt templates become an ordinary user message. */
   async invokeResource(commandName: string, args: string): Promise<void> {
-    const harness = this.#requireHarness();
-    if (this.#running || this.#compacting)
-      throw new Error("Wait for the current run to finish before starting a command.");
-    const resources = await harness.getResources(context);
-    this.#runAbort = new AbortController();
-    this.#snapshot = { ...this.#snapshot, error: undefined };
     if (commandName.startsWith("skill:")) {
-      const name = commandName.slice("skill:".length);
-      if (
-        !(resources.skills ?? []).some((skill) => skill.name.toLowerCase() === name.toLowerCase())
-      ) {
-        throw new Error(`Unknown skill command: /${commandName}`);
-      }
-      assertOperation(
-        getOrThrow(await this.#requireLane().skill(name, args || undefined, context)),
-      );
+      const name = commandName.slice("skill:".length).toLowerCase();
+      const skill = this.#resources.skills.find((item) => item.name.toLowerCase() === name);
+      if (!skill) throw new Error(`Unknown skill command: /${commandName}`);
+      await this.prompt(skillInvocation(skill, args), "followUp");
       return;
     }
-    const template = (resources.promptTemplates ?? []).find(
+    const template = this.#resources.promptTemplates.find(
       (item) => item.name.toLowerCase() === commandName.toLowerCase(),
     );
     if (!template) throw new Error(`Unknown command: /${commandName}`);
-    assertOperation(
-      getOrThrow(
-        await this.#requireLane().promptFromTemplate(
-          template.name,
-          parseCommandArgs(args),
-          context,
-        ),
-      ),
-    );
+    await this.prompt(expandPromptTemplate(template.content, parseCommandArgs(args)), "followUp");
   }
 
-  async compact(customInstructions?: string): Promise<void> {
-    if (this.#running || this.#compacting)
-      throw new Error("Wait for the current run to finish before compacting.");
-    this.#requireHarness();
-    this.#compacting = true;
-    this.#publish();
-    try {
-      assertOperation(
-        getOrThrow(
-          await this.#requireLane().compact(
-            { customInstructions: customInstructions?.trim() || undefined },
-            context,
-          ),
-        ).compaction,
-      );
-      await this.#settleStore();
-    } finally {
-      this.#compacting = false;
-      this.#publish();
-    }
+  async compact(instructions?: string): Promise<void> {
+    const harness = this.#requireHarness();
+    const task = await this.#requireConversation().compact(
+      instructions?.trim() || undefined,
+      context,
+    );
+    const settled = await harness.waitForTask(task, context);
+    const outcome = settled.state.outcome;
+    if (outcome.status === "failed" || outcome.status === "faulted")
+      throw new Error(outcome.error.message || "Compaction failed.");
+    if (outcome.status === "completed" && !outcome.result.entryId && !outcome.result.submissionId)
+      throw new Error("Nothing to compact yet.");
   }
 
   async rename(name: string): Promise<void> {
     const next = name.replace(/[\r\n]+/g, " ").trim();
     if (!next) throw new Error("Add a name after /name.");
-    if (!this.#pi) throw new Error("Agent session has not been initialized.");
-    await this.#pi.setName(next, context);
-    this.title = next;
-    this.#persistMeta?.({ title: next });
-    await this.#flushPersist?.();
+    await this.#saveMeta({ title: next });
     this.#publish();
   }
 
   latestAssistantText(): string {
-    for (let index = this.#messages.length - 1; index >= 0; index -= 1) {
-      const message = this.#messages[index];
-      if (message?.role === "assistant") return messagePlainText(message);
-    }
-    return "";
+    return latestAssistantText(this.#snapshot.messages);
   }
 
   sessionInfo(): { id: string; title: string; tokens: number; cost: number } {
@@ -370,47 +330,71 @@ export class AgentSession {
   }
 
   async treeItems(): Promise<SessionTreeItem[]> {
-    if (!this.#pi) return [];
-    const [entries, leafId] = await Promise.all([
-      this.#pi.findEntries({ order: "asc" }, context),
-      this.#requireLane().getTipId(context),
-    ]);
-    const items = buildTreeItems(entries, leafId);
-    return Promise.all(
-      items.map(async (item) => ({ ...item, label: await this.#pi!.getLabel(item.id, context) })),
-    );
+    if (!this.#harness || !this.#conversation) return [];
+    return buildTreeItems(this.#harness, this.#conversation.id, context);
   }
 
-  async navigateTree(
-    targetId: string,
-    options: { summarize?: boolean; customInstructions?: string } = {},
-  ): Promise<string | undefined> {
-    if (this.#running || this.#compacting)
-      throw new Error("Wait for the current run to finish before navigating the tree.");
-    const selected = await this.#pi?.getEntry(targetId, context);
-    const user =
-      selected?.type === "message" && selected.message.role === "user" ? selected : undefined;
-    const outcome = getOrThrow(
-      await this.#requireLane().navigateTree(user ? user.parentId : targetId, options, context),
-    );
-    assertOperation(outcome.navigation);
-    await this.#settleStore();
-    return user && outcome.navigation.status === "completed"
-      ? messagePlainText(user.message)
-      : undefined;
+  /**
+   * Switch to another point of the chat's tree. Picking a user message branches just
+   * before it and returns its text for the composer; picking any other entry continues
+   * from there, reusing the branch that already ends at it.
+   */
+  async navigateTree(target: string): Promise<string | undefined> {
+    const harness = this.#requireHarness();
+    this.#assertIdle("navigating the tree");
+    const entryId = Number(target) as EntryId;
+    const owner = await this.#ownerOf(entryId);
+    if (!owner) throw new Error("That message is no longer in this chat.");
+    const history = await historyEntries(owner, context, entryId);
+    const entry = history.at(-1);
+    if (!entry || entry.id !== entryId) throw new Error("That message is no longer in this chat.");
+    if (UserEntry.is(entry)) {
+      const before = history.at(-2);
+      const next = before
+        ? await this.#branchAt(owner, before.id)
+        : await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
+      await this.#activate(next);
+      return messagePlainText(entry.model![0]!);
+    }
+    await this.#activate(await this.#branchAt(owner, entryId));
+    return undefined;
   }
 
-  async branchEntries(targetId?: string): Promise<Entry[]> {
-    if (!this.#pi) return [];
-    return this.#requireLane().findEntries(
-      { ...(targetId ? { start: targetId } : {}), order: "oldestFirst" },
-      context,
-    );
+  /** Visible history up to an entry (or all of it), for copying into another chat. */
+  async historyUntil(target?: string): Promise<{ entries: EntryDraft[]; restoredText?: string }> {
+    const conversation = this.#requireConversation();
+    if (target === undefined) return { entries: await historyEntries(conversation, context) };
+    const entryId = Number(target) as EntryId;
+    const owner = await this.#ownerOf(entryId);
+    if (!owner) throw new Error("That message is no longer in this chat.");
+    const history = await historyEntries(owner, context, entryId);
+    const entry = history.at(-1);
+    if (!entry || entry.id !== entryId || !UserEntry.is(entry))
+      throw new Error("Forks must start from a user message.");
+    return { entries: history.slice(0, -1), restoredText: messagePlainText(entry.model![0]!) };
+  }
+
+  /** Seed a new, empty chat with copied history. */
+  async importHistory(entries: readonly EntryDraft[]): Promise<void> {
+    await appendHistory(this.#requireHarness(), this.#requireConversation().id, entries, context);
+    if (this.#meta.title === "New chat")
+      await this.#saveMeta({ title: titleFromMessages(transcriptFromEntries(entries as never)) });
+    this.#publish();
+  }
+
+  taskSnapshot(): ReturnType<TaskList["snapshot"]> {
+    return this.#tasks.snapshot();
+  }
+
+  restoreTasks(store: ReturnType<TaskList["snapshot"]>): void {
+    this.#tasks.restore(store);
+    this.#saveTasks();
+    this.#publish();
   }
 
   async exportJsonl(): Promise<string> {
-    await this.persist();
-    return this.#store.export(this.id);
+    const entries = await historyEntries(this.#requireConversation(), context);
+    return toPiSessionJsonl(entries, { id: this.id, createdAt: this.#meta.createdAt });
   }
 
   async prompt(
@@ -418,126 +402,48 @@ export class AgentSession {
     mode: "steer" | "followUp" = "steer",
     images?: ImageContent[],
   ): Promise<void> {
-    const lane = this.#requireLane();
+    const conversation = this.#requireConversation();
     const attachments = toPiImages(images ?? []);
-    if (this.#running) {
-      getOrThrow(
-        await (mode === "followUp"
-          ? lane.followUp(text, attachments, context)
-          : lane.steer(text, attachments, context)),
-      );
-      return;
-    }
-    if (this.#compacting) throw new Error("Wait for compaction to finish.");
-    this.#runAbort = new AbortController();
-    this.#beginRun();
+    const content = attachments.length
+      ? [...(text ? [{ type: "text" as const, text }] : []), ...attachments]
+      : text;
+    this.#runError = undefined;
+    // Sending resumes any interrupted work first, then queues behind it.
+    this.#recovery = undefined;
+    const submission = await conversation.submit(
+      { type: "input", content, whenBusy: mode },
+      context,
+    );
     this.#publish();
-    try {
-      const result = getOrThrow(await lane.prompt(text, attachments, context));
-      if (result.status === "failed")
-        throw new Error(result.error?.message || "The model request failed.");
-    } finally {
-      this.#running = false;
-      this.#settleActivities();
-      this.#publish();
-      await this.#settleStore();
-    }
+    void this.#followSubmission(submission);
   }
 
+  /** Stop the run and withdraw queued prompts, returning them so the composer can restore them. */
   async abort(): Promise<RestoredPrompt[]> {
-    const harness = this.#harness;
-    this.#runAbort.abort();
+    const conversation = this.#conversation;
     this.questionGate.cancel();
-    this.#running = false;
-    this.#queued = [];
-    this.#settleActivities();
+    if (!conversation) return [];
+    const inbox = this.#view?.value.docs["pi.inbox"] as unknown as InboxState | undefined;
+    const restored = (inbox?.items ?? []).flatMap((item) =>
+      item.mode === "write" ? [] : [restorePrompt(item.content)],
+    );
+    this.#recovery = undefined;
     this.#publish();
-    if (!harness) return [];
     try {
-      const outcome = await this.#requireLane().abort(context);
-      if (!outcome.ok) return [];
-      const result = outcome.value;
-      const restored = [...result.steer, ...result.followUp]
-        .map(restorePrompt)
-        .filter((item) => item.text || item.images.length);
-      await this.#refreshContext();
-      this.#publish();
-      return restored;
+      await conversation.abort(context);
     } catch (error) {
-      this.#publish({ error: error instanceof Error ? error.message : String(error) });
-      return [];
+      this.#runError = error instanceof Error ? error.message : String(error);
     }
+    this.#publish();
+    return restored.filter((item) => item.text || item.images.length);
   }
 
   async resume(): Promise<void> {
-    if (this.#running || this.#compacting)
-      throw new Error("Wait for the current operation to finish before resuming.");
-    if (!this.#snapshot.recovery) throw new Error("There is no interrupted run to resume.");
-    const lane = this.#requireLane();
-    this.#runAbort = new AbortController();
-    this.#beginRun();
+    if (!this.#recovery) throw new Error("There is no interrupted run to resume.");
+    this.#recovery = undefined;
+    this.#runError = undefined;
+    this.#requireHarness().resume();
     this.#publish();
-    try {
-      const result = getOrThrow(await lane.resume(context));
-      if (result.status === "suspended") {
-        this.#snapshot.recovery = {
-          kind: "deferred",
-          operation: "run",
-          message: "The provider is still processing this run. Resume to check it again.",
-        };
-      } else if (result.status === "failed") {
-        throw new Error(result.error?.message || "The interrupted operation could not resume.");
-      }
-    } finally {
-      this.#running = false;
-      this.#settleActivities();
-      this.#publish();
-      await this.#settleStore();
-    }
-  }
-
-  async setModel(model: Model<any>): Promise<void> {
-    if (!this.#harness) return;
-    await this.#requireLane().setModel({ provider: model.provider, modelId: model.id }, context);
-    this.#model = model;
-    this.#persistMeta?.({ providerId: model.provider, modelId: model.id });
-    this.#publish();
-  }
-
-  async setThinkingLevel(level: AgentSettings["thinkingLevel"]): Promise<void> {
-    if (!this.#harness) return;
-    await this.#requireLane().setThinkingLevel(level, context);
-  }
-
-  async persist(activity = true): Promise<void> {
-    if (!this.#pi) return;
-    this.title = (await this.#pi.getName(context)) || titleFromMessages(this.#messages);
-    this.#persistMeta?.(
-      {
-        title: this.title,
-        providerId: this.#model?.provider,
-        modelId: this.#model?.id,
-      },
-      activity,
-    );
-    await Promise.all([
-      this.#flushPersist?.(),
-      this.#store.saveTasks(this.id, this.#tasks.snapshot()),
-    ]);
-  }
-
-  #settleStore(activity = true): Promise<void> {
-    const next = (this.#storeWork ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(async () => {
-        await this.#refreshContext();
-        await this.persist(activity);
-        this.#publish();
-      });
-    this.#storeWork = next.finally(() => {
-      if (this.#storeWork === next) this.#storeWork = undefined;
-    });
-    return this.#storeWork;
   }
 
   updateTaskStatus(id: string, status: TaskStatus | "deleted"): void {
@@ -558,255 +464,162 @@ export class AgentSession {
   }
 
   async dispose(): Promise<void> {
-    this.#runAbort.abort();
     this.questionGate.cancel();
-    await this.#lane?.abort(context).catch(() => undefined);
-    await this.#lane?.waitForIdle(context).catch(() => undefined);
-    await this.#storeWork?.catch(() => undefined);
-    await this.persist(false).catch(() => undefined);
-    this.#unsubscribe?.();
-    this.#unsubscribe = undefined;
-    for (const unsubscribe of this.#taskUnsubs.splice(0)) unsubscribe();
+    this.#unsubscribeView?.();
+    this.#view?.dispose();
+    for (const unsubscribe of this.#unsubscribers.splice(0)) unsubscribe();
     this.mutationGate.dispose();
     this.questionGate.dispose();
     this.changes.clear();
-    await this.#harness?.close(context);
-    await this.#store.release(this.id);
-    this.#lane = undefined;
+    await this.#persistTasks.catch(() => undefined);
+    // Closing keeps unfinished work durable; it resumes when the chat is opened again.
+    await this.#harness?.close(context).catch((error) => console.warn("Pi harness close", error));
     this.#harness = undefined;
-    this.#pi = undefined;
+    this.#conversation = undefined;
   }
 
-  async #onEvent(event: HarnessEvent): Promise<void> {
-    this.#onAgentEvent(event);
-    if (event.type === "queue_update") {
-      this.#queued = event.queues.flatMap((item) =>
-        item.type === "message" && (item.kind === "steer" || item.kind === "followUp")
-          ? [queuedFromMessage(item.message, item.kind)]
-          : [],
-      );
+  async #activate(conversation: Conversation): Promise<void> {
+    this.#unsubscribeView?.();
+    this.#view?.dispose();
+    this.#conversation = conversation;
+    if (this.#meta.conversationId !== conversation.id)
+      await this.#saveMeta({ conversationId: conversation.id }, false);
+    await this.#loadTasks();
+    const view = await conversation.viewState(context);
+    this.#view = view;
+    this.#unsubscribeView = view.subscribe(() => this.#publish());
+    this.#publish();
+  }
+
+  async #branchAt(owner: Conversation, entryId: EntryId): Promise<Conversation> {
+    const harness = this.#requireHarness();
+    // Reuse a branch that already ends at this entry instead of forking it again.
+    const existing = await harness.commit(async (tx) => {
+      const page = await tx.scanConversations({}, 1000);
+      for (const record of page.items) {
+        if (record.owner) continue;
+        const latest = await tx.scanEntries({ conversationId: record.id }, 1);
+        if (latest.items[0]?.id === entryId) return record.id;
+      }
+      return undefined;
+    }, context);
+    if (existing !== undefined) {
+      const conversation = await harness.conversation(existing, context);
+      if (conversation) return conversation;
     }
-    if (event.type === "turn_start") {
-      this.#running = true;
-      onTurnStart(this.#cadence);
-      noteResolvedBoundary(this.#cadence, this.#tasks.list());
-      if (shouldAutoClear(this.#cadence, this.#tasks.list())) this.#tasks.clearAll();
-    }
-    if (event.type === "run_resume") {
-      this.#running = true;
-      this.#snapshot.recovery = undefined;
-    }
-    if (event.type === "run_suspend") {
-      this.#running = false;
-      this.#snapshot.recovery = {
-        kind: "deferred",
-        operation: "run",
-        message: "The provider is still processing this run. Resume to check it again.",
-      };
-    }
-    if (event.type === "retry_scheduled") {
-      this.#running = true;
-      this.#snapshot.retry = {
-        attempt: event.attempt,
-        maxAttempts: event.maxAttempts,
-        errorMessage: event.errorMessage,
-      };
-      this.#snapshot.error = undefined;
-    }
-    if (event.type === "retry_start") {
-      this.#running = true;
-      this.#snapshot.error = undefined;
-    }
-    if (event.type === "retry_end") this.#snapshot.retry = undefined;
-    if (event.type === "turn_end") markStaleInProgress(this.#cadence, this.#tasks.list());
-    if (event.type === "run_start") this.#beginRun();
-    if (event.type === "compaction_start") this.#compacting = true;
-    if (event.type === "compaction_end") this.#compacting = false;
-    if (event.type === "fault") this.#snapshot.error = event.message;
-    if (
-      (event.type === "run_end" ||
-        event.type === "compaction_end" ||
-        event.type === "navigation_end") &&
-      event.status === "failed"
-    )
-      this.#snapshot.error = event.error.message;
-    if (event.type === "run_end" || event.type === "operation_abort") {
-      this.#running = false;
-      this.#snapshot.recovery = undefined;
-      this.#snapshot.retry = undefined;
-      this.#settleActivities();
-      if (event.type === "operation_abort") this.#queued = [];
-      this.#publish();
-      void this.#settleStore();
-      return;
-    }
-    if (event.type === "compaction_end") {
-      this.#publish();
-      void this.#settleStore();
-      return;
+    return owner.fork(entryId, { ownership: { kind: "ownerless" } }, context);
+  }
+
+  /** A conversation that owns the entry, so a fork from it can see it. */
+  async #ownerOf(entryId: EntryId): Promise<Conversation | undefined> {
+    const harness = this.#requireHarness();
+    const conversationId = await harness.commit(
+      async (tx) => (await tx.entry(entryId))?.conversationId,
+      context,
+    );
+    return conversationId === undefined ? undefined : harness.conversation(conversationId, context);
+  }
+
+  async #followSubmission(submission: Submission): Promise<void> {
+    try {
+      const settled = await submission.wait(context);
+      if (settled.status === "unanswered" && settled.reason !== "aborted") {
+        this.#runError = describeUnanswered(settled.reason, settled.detail);
+      }
+      if (this.#meta.title === "New chat") {
+        const title = titleFromMessages(this.#snapshot.messages);
+        if (title !== "New chat") await this.#saveMeta({ title });
+      }
+      await this.#saveMeta({});
+    } catch (error) {
+      this.#runError = error instanceof Error ? error.message : String(error);
     }
     this.#publish();
   }
 
-  #onAgentEvent(event: HarnessEvent): void {
-    if (event.type === "entry_added" && event.entry.type === "message")
-      this.#rememberMessage(event.entry.message);
-    if (event.type === "usage") {
-      this.#snapshot.usage = { tokens: event.totals.totalTokens, cost: event.totals.cost.total };
-    }
-    if (
-      event.type === "message_start" ||
-      event.type === "message_update" ||
-      event.type === "message_end"
-    ) {
-      this.#rememberMessage(event.message);
-      if (event.message.role === "assistant") {
-        this.#streaming = event.type === "message_end" ? undefined : event.message;
-        if (event.type === "message_end" && event.message.stopReason !== "toolUse") {
-          this.#running = false;
-          this.#settleActivities();
-        }
-      }
-    }
-    if (event.type === "message_end") {
-      if (
-        event.message.role === "assistant" &&
-        (event.message.stopReason === "error" || event.message.stopReason === "aborted")
-      ) {
-        this.#snapshot = {
-          ...this.#snapshot,
-          error:
-            event.message.errorMessage?.trim() ||
-            (event.message.stopReason === "aborted"
-              ? "The model request was cancelled."
-              : "The model request failed."),
-        };
-      }
-    }
-    if (event.type === "tool_start") {
-      this.#activities.set(event.toolCallId, {
-        id: event.toolCallId,
-        name: event.toolName,
-        args: sanitizeArgs(event.args),
-        status: "running",
-        startedAt: Date.now(),
-      });
-    }
-    if (event.type === "tool_update") {
-      const activity = this.#activities.get(event.toolCallId);
-      if (activity) activity.summary = toolResultText(event.partialResult);
-    }
-    if (event.type === "tool_end") {
-      const activity = this.#activities.get(event.toolCallId);
-      if (activity) {
-        activity.status = event.isError ? "error" : "done";
-        activity.summary = toolResultText(event.result);
-        activity.endedAt = Date.now();
-        if (event.isError) activity.error = activity.summary;
-      }
-    }
-  }
-
-  async #refreshContext(): Promise<void> {
-    if (!this.#pi || !this.#lane) return;
-    const [entries, stats] = await Promise.all([
-      this.#lane.findEntries({ stopAtType: "compaction", order: "oldestFirst" }, context),
-      this.#pi.getStats(context),
-    ]);
-    // Projection for the transcript only; Pi constructs provider context itself.
-    this.#messages = entries.flatMap((entry): AgentMessage[] => {
-      if (entry.type === "message") return [entry.message];
-      if (entry.type === "compaction")
-        return [
-          createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp),
-          ...entry.retainedTail,
-        ];
-      if (entry.type === "branch_summary")
-        return [createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)];
-      return [];
-    });
-    this.#snapshot = {
-      ...this.#snapshot,
-      usage: { tokens: stats.usage.totalTokens, cost: stats.usage.cost.total },
-      contextTokens: estimateContextTokens(this.#messages).tokens,
-    };
-  }
-
-  #beginRun(): void {
-    this.#running = true;
-    this.#activities.clear();
-    this.#streaming = undefined;
-    this.#snapshot = { ...this.#snapshot, recovery: undefined, retry: undefined, error: undefined };
-  }
-
-  #rememberMessage(message: AgentMessage): void {
-    const index = this.#messages.findIndex(
-      (item) =>
-        item.role === message.role &&
-        "timestamp" in item &&
-        "timestamp" in message &&
-        item.timestamp === message.timestamp &&
-        (item.role !== "toolResult" ||
-          message.role !== "toolResult" ||
-          item.toolCallId === message.toolCallId),
-    );
-    if (index < 0) this.#messages = [...this.#messages, message];
-    else
-      this.#messages = this.#messages.map((item, position) =>
-        position === index ? message : item,
-      );
-  }
-
-  #settleActivities(): void {
-    this.#activities.clear();
-    this.#streaming = undefined;
-  }
-
-  #publish(overrides?: Partial<Pick<AgentSessionSnapshot, "error">>): void {
-    this.#snapshot = {
-      messages: this.#messages,
-      streamingMessage: this.#running ? this.#streaming : undefined,
-      activities: [...this.#activities.values()].slice(-20),
-      queued: [...this.#queued],
-      isRunning: this.#running || this.#compacting,
-      compacting: this.#compacting,
-      usage: this.#snapshot.usage,
-      contextTokens: this.#snapshot.contextTokens,
-      commands: this.#snapshot.commands,
-      tasks: this.#tasks.list(),
-      recovery: this.#snapshot.recovery,
-      retry: this.#snapshot.retry,
-      error: overrides?.error ?? this.#snapshot.error,
-    };
-    this.changes.emit(this.snapshot);
-  }
-
-  #tools(): AgentTool[] {
-    const bash = createTerminalBashTool(this.workspace);
-    return [
+  #installExtensions(): void {
+    const tools = [
       ...createWorkspaceTools(this.workspace, {
         maxWalkFiles: () => this.#settings().maxWalkFiles,
         autoResizeImages: () => this.#settings().imageAutoResize,
-        fileOperations: !bash,
+        fileOperations: !this.#env.shell,
+        bash: Boolean(this.#env.shell),
       }),
-      ...(bash ? [bash] : []),
-      ...createTaskTools(this.#tasks),
-      createAskTool(this.questionGate),
-      this.#skillTool(),
-      ...createWebTools(
-        createWebSearchContext({
-          models: this.#providers.models,
-          settings: this.#settings,
-        }),
-      ),
-      ...this.#extensions.tools,
+      ...[
+        ...createTaskTools(this.#tasks),
+        createAskTool(this.questionGate),
+        this.#skillTool(),
+        ...createWebTools(
+          createWebSearchContext({ models: this.#providers.models, settings: this.#settings }),
+        ),
+      ].map(withReadableErrors),
     ];
+    this.#registry.install(
+      defineExtension({
+        name: "acode",
+        tools,
+        sections: systemPromptSections({
+          workspace: this.workspace,
+          settings: this.#settings,
+          extensions: this.#extensions,
+          skills: () => this.#resources.skills,
+        }),
+        hooks: [
+          hook(ToolTask, {
+            beforeTool: async (call, _api, toolContext) => {
+              const decision = await this.mutationGate.request(
+                call.name,
+                call.arguments,
+                this.workspace,
+                this.#settings().permissionMode,
+                toolContext.abortSignal,
+              );
+              return decision.block
+                ? { block: decision.reason || "User denied this action." }
+                : undefined;
+            },
+            afterTool: (call) => {
+              evaluateReminder(this.#cadence, call.name, this.#tasks.list());
+              return undefined;
+            },
+          }),
+          hook(GenerationTask, {
+            beforeRequest: (request) => this.#beforeRequest(request.messages),
+          }),
+        ],
+      }),
+    );
+    this.#registry.install(
+      defineExtension({ name: "plugins", tools: this.#extensions.tools.map(withReadableErrors) }),
+    );
   }
 
-  #skillTool(): AgentTool<any> {
-    return {
+  /** Each request starts a task-list turn and may carry a reminder the model sees only once. */
+  #beforeRequest(messages: readonly Message[]): { messages: readonly Message[] } | undefined {
+    try {
+      const tasks = this.#tasks.list();
+      if (this.#cadence.currentTurn > 0) markStaleInProgress(this.#cadence, tasks);
+      onTurnStart(this.#cadence);
+      noteResolvedBoundary(this.#cadence, tasks);
+      if (shouldAutoClear(this.#cadence, tasks)) this.#tasks.clearAll();
+      if (!drainReminder(this.#cadence)) return undefined;
+      const reminder = buildTaskReminder(this.#tasks.list());
+      if (!reminder) return undefined;
+      const last = messages.at(-1);
+      if (last?.role === "user" && messagePlainText(last).includes("<system-reminder>"))
+        return undefined;
+      return {
+        messages: [...messages, { role: "user", content: reminder, timestamp: Date.now() }],
+      };
+    } catch (error) {
+      console.warn("AI task reminder could not be injected", error);
+      return undefined;
+    }
+  }
+
+  #skillTool(): ToolRegistration {
+    return defineTool({
       name: "load_skill",
-      label: "Load skill",
       description:
         "Load an already-discovered project or global skill, or one of its relative reference files. Do not search the workspace for SKILL.md first; global skills are outside the workspace sandbox.",
       parameters: Type.Object({
@@ -819,14 +632,13 @@ export class AgentSession {
         ),
       }),
       executionMode: "parallel",
-      execute: async (_id, params) => {
-        const input = params as { name?: string; path?: string };
-        const name = String(input.name ?? "");
-        const skill = (this.#resources.skills ?? []).find(
-          (item) => item.name.toLowerCase() === name.toLowerCase(),
+      replay: "safe",
+      execute: async (args) => {
+        const skill = this.#resources.skills.find(
+          (item) => item.name.toLowerCase() === args.name.toLowerCase(),
         );
-        if (!skill) throw new Error(`Unknown skill: ${name}`);
-        const relativePath = normalizeSkillPath(input.path);
+        if (!skill) throw new Error(`Unknown skill: ${args.name}`);
+        const relativePath = normalizeSkillPath(args.path);
         const text = relativePath
           ? await readSkillRelativeFile(this.workspace, skill.filePath, relativePath)
           : skill.content;
@@ -840,94 +652,216 @@ export class AgentSession {
           details: { name: skill.name, path: relativePath || skill.filePath },
         };
       },
+    });
+  }
+
+  #publish(): void {
+    const view = this.#view?.value;
+    const live = view?.docs["pi.live"] as unknown as LiveState | undefined;
+    const inbox = view?.docs["pi.inbox"] as unknown as InboxState | undefined;
+    const usage = view?.docs["pi.usage"] as unknown as UsageState | undefined;
+    const entries = view?.entries ?? [];
+    const messages = transcriptFromEntries(entries);
+    const running = Boolean(live?.run);
+    const compacting = Boolean(live?.compactions?.length);
+    const streaming = live?.generation?.message as AssistantMessage | undefined;
+    const retry = live?.generation?.retry;
+    const settings = this.#settings();
+    this.#snapshot = {
+      messages,
+      streamingMessage: running ? streaming : undefined,
+      activities: this.#activities(live, messages, streaming),
+      queued: (inbox?.items ?? []).flatMap((item) =>
+        item.mode === "write" ? [] : [queuedPrompt(item.content, item.mode)],
+      ),
+      isRunning: running || Boolean(live?.compactions?.some((item) => item.blocking)),
+      compacting,
+      usage: totalUsage(usage),
+      contextTokens: estimateContextTokens(
+        entries.flatMap((entry) => entry.model ?? []) as Message[],
+      ).tokens,
+      commands: resourceSlashCommands(this.#resources, settings),
+      tasks: this.#tasks.list(),
+      recovery: this.#recovery,
+      retry:
+        retry && live?.generation
+          ? {
+              attempt: live.generation.attempt,
+              maxAttempts: settings.retryMaxRetries + 1,
+              errorMessage: retry.error,
+            }
+          : undefined,
+      error: this.#runError ?? lastTurnError(messages),
     };
+    this.changes.emit(this.snapshot);
   }
 
-  async #systemPrompt(): Promise<string> {
-    try {
-      const prompt = await buildSystemPrompt(this.workspace, this.#settings(), this.#extensions);
-      const skills = this.#resources.skills ?? [];
-      const skillBlock = formatAcodeSkills(skills.filter((skill) => !skill.disableModelInvocation));
-      return skillBlock ? `${prompt}\n\n${skillBlock}` : prompt;
-    } catch (error) {
-      console.warn("AI system prompt context failed", error);
-      return [
-        "You are Acode's in-editor coding agent, powered by the Pi agent runtime.",
-        "Work autonomously toward the user's requested outcome and use tools to inspect evidence before guessing.",
-        "Every tool path is POSIX-style and relative to the active workspace.",
-        `Workspace: ${this.workspace.info.name}.`,
-      ].join("\n\n");
+  #activities(
+    live: LiveState | undefined,
+    messages: TranscriptMessage[],
+    streaming: AssistantMessage | undefined,
+  ): ToolActivity[] {
+    const slots = live?.tools ?? [];
+    if (!slots.length) {
+      this.#toolStarts.clear();
+      return [];
     }
-  }
-
-  #requireLane(): AgentLane {
-    if (!this.#lane) throw new Error("Agent session has not been initialized.");
-    return this.#lane;
-  }
-
-  #requireHarness(): AgentHarness<undefined> {
-    if (!this.#harness) throw new Error("Agent session has not been initialized.");
-    return this.#harness;
+    const calls = new Map<string, Record<string, unknown>>();
+    for (const message of [...messages.slice(-4), ...(streaming ? [streaming] : [])]) {
+      if (message.role !== "assistant") continue;
+      for (const part of message.content)
+        if (part.type === "toolCall") calls.set(part.id, part.arguments as Record<string, unknown>);
+    }
+    return slots.map((slot) => {
+      const startedAt = this.#toolStarts.get(slot.callId) ?? Date.now();
+      this.#toolStarts.set(slot.callId, startedAt);
+      const summary = slot.output?.slice(-300);
+      const failed = slot.diagnostics?.some((item) => item.severity === "error");
+      return {
+        id: slot.callId,
+        name: slot.name,
+        args: sanitizeArgs(calls.get(slot.callId)),
+        status: slot.status === "done" ? (failed ? "error" : "done") : "running",
+        summary,
+        error: failed
+          ? slot.diagnostics?.find((item) => item.severity === "error")?.message
+          : undefined,
+        startedAt,
+      };
+    });
   }
 
   async #loadTasks(): Promise<void> {
+    const harness = this.#harness;
+    const conversation = this.#conversation;
+    if (!harness || !conversation) return;
     try {
-      this.#tasks.restore(parseTaskStore(await this.#store.loadTasks(this.id)));
+      const stored = await harness.snapshot(TasksDoc, conversation.id, context);
+      this.#tasks.restore(parseTaskStore(stored?.store ?? undefined));
     } catch (error) {
       console.warn("AI task list could not be restored", error);
     }
   }
 
-  #bindTaskRuntime(): void {
+  #saveTasks(): void {
     const harness = this.#harness;
-    if (!harness) return;
-    this.#taskUnsubs.push(
-      this.#tasks.subscribe(() => {
-        void this.#store.saveTasks(this.id, this.#tasks.snapshot()).catch((error) => {
-          console.warn("AI task list could not be persisted", error);
-        });
-        this.#publish();
-      }),
-      harness.hooks.on("after_tool", (event) => {
-        evaluateReminder(this.#cadence, event.toolName, this.#tasks.list());
-        return undefined;
-      }),
-      harness.hooks.on("transform_context", (event) => this.#injectTaskReminder(event.messages)),
-    );
+    const conversation = this.#conversation;
+    if (!harness || !conversation) return;
+    const store = JSON.parse(JSON.stringify(this.#tasks.snapshot())) as JsonValue;
+    this.#persistTasks = this.#persistTasks
+      .catch(() => undefined)
+      .then(() =>
+        conversation.commit(async (tx) => {
+          (await tx.doc(TasksDoc, conversation.id)).store = store;
+        }, context),
+      )
+      .catch((error) => console.warn("AI task list could not be persisted", error));
   }
 
-  #injectTaskReminder(messages: AgentMessage[]): { messages: AgentMessage[] } | undefined {
-    try {
-      if (!drainReminder(this.#cadence)) return undefined;
-      const tasks = this.#tasks.list();
-      const reminder = buildTaskReminder(tasks);
-      if (!reminder) return undefined;
-      const last = messages.at(-1);
-      if (last && last.role === "user" && messagePlainText(last).includes("<system-reminder>"))
-        return undefined;
+  async #saveMeta(patch: Partial<ChatMeta>, activity = true): Promise<void> {
+    this.#meta = { ...this.#meta, ...patch, ...(activity ? { updatedAt: Date.now() } : {}) };
+    await this.#store.save(this.#meta);
+  }
+
+  #assertIdle(action: string): void {
+    if (this.#snapshot.isRunning || this.#snapshot.compacting)
+      throw new Error(`Wait for the current run to finish before ${action}.`);
+  }
+
+  #requireHarness(): Harness {
+    if (!this.#harness) throw new Error("Agent session has not been initialized.");
+    return this.#harness;
+  }
+
+  #requireConversation(): Conversation {
+    if (!this.#conversation) throw new Error("Agent session has not been initialized.");
+    return this.#conversation;
+  }
+}
+
+/** Harness policy read live from the settings store. */
+function harnessSettings(settings: () => AgentSettings): HarnessSettings {
+  return {
+    get stream() {
+      const value = settings();
       return {
-        messages: [...messages, { role: "user", content: reminder, timestamp: Date.now() }],
+        transport: value.transport,
+        timeoutMs: value.providerTimeoutMs,
+        maxRetries: value.providerMaxRetries,
+        maxRetryDelayMs: value.providerMaxRetryDelayMs,
       };
-    } catch (error) {
-      console.warn("AI task reminder could not be injected", error);
-      return undefined;
+    },
+    get retry() {
+      const value = settings();
+      return {
+        enabled: value.retryEnabled,
+        maxRetries: value.retryMaxRetries,
+        baseDelayMs: value.retryBaseDelayMs,
+      };
+    },
+    get compaction() {
+      const value = settings();
+      return {
+        enabled: value.autoCompaction,
+        reserveTokens: value.compactionReserveTokens,
+        keepRecentTokens: value.compactionKeepRecentTokens,
+      };
+    },
+    // Fewer storage commits while streaming; a crash loses at most this much output.
+    progress: { partialIntervalMs: 150, outputIntervalMs: 250 },
+    get steeringMode() {
+      return settings().steeringMode;
+    },
+    get followUpMode() {
+      return settings().followUpMode;
+    },
+  };
+}
+
+function totalUsage(usage: UsageState | undefined): { tokens: number; cost: number } {
+  let tokens = 0;
+  let cost = 0;
+  for (const bucket of [usage?.models ?? {}, usage?.tools ?? {}]) {
+    for (const item of Object.values(bucket)) {
+      tokens += item.totalTokens ?? 0;
+      cost += item.cost?.total ?? 0;
     }
   }
+  return { tokens, cost };
 }
 
-function toHarnessTools(tools: AgentTool[]): AgentHarnessTool<undefined>[] {
-  return tools.map((tool) => ({
-    ...tool,
-    execute: (toolCallId, params, onUpdate, _toolContext, _invocation, context) =>
-      tool.execute(toolCallId, params, context.abortSignal, onUpdate),
-  }));
+/** A provider failure the user should see: the newest answer after the newest prompt failed. */
+function lastTurnError(messages: TranscriptMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.role === "user") return undefined;
+    if (message.role !== "assistant") continue;
+    return message.stopReason === "error"
+      ? message.errorMessage?.trim() || "The model request failed."
+      : undefined;
+  }
+  return undefined;
 }
 
-function restorePrompt(message: AgentMessage): RestoredPrompt {
+function describeUnanswered(reason: string, detail: unknown): string {
+  const message =
+    detail && typeof detail === "object" && "message" in detail
+      ? String((detail as { message: unknown }).message)
+      : undefined;
+  return message || `The prompt was not answered (${reason}).`;
+}
+
+type InboxContent =
+  | string
+  | Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+
+function restorePrompt(content: unknown): RestoredPrompt {
+  const message = { role: "user", content } as const;
   return { text: messagePlainText(message), images: messageImages(message) };
 }
 
-function queuedFromMessage(message: AgentMessage, mode: QueuedPrompt["mode"]): QueuedPrompt {
+function queuedPrompt(content: unknown, mode: QueuedPrompt["mode"]): QueuedPrompt {
+  const message = { role: "user", content: content as InboxContent } as const;
   const images = messageImages(message).length;
   return { text: messagePlainText(message), mode, images: images || undefined };
 }
@@ -986,131 +920,6 @@ function summarizeQuestionArg(item: unknown): Record<string, unknown> {
   };
 }
 
-function toolResultText(result: unknown): string {
-  if (!result || typeof result !== "object") return "";
-  const content = (result as { content?: Array<{ type?: string; text?: string }> }).content;
-  return content?.find((item) => item.type === "text")?.text?.slice(0, 300) ?? "";
-}
-
-function retryPolicy(settings: AgentSettings): RetryPolicy {
-  return {
-    enabled: settings.retryEnabled,
-    maxRetries: settings.retryMaxRetries,
-    baseDelayMs: settings.retryBaseDelayMs,
-  };
-}
-
-function streamOptions(settings: AgentSettings) {
-  return {
-    transport: settings.transport,
-    timeoutMs: settings.providerTimeoutMs,
-    maxRetries: settings.providerMaxRetries,
-    maxRetryDelayMs: settings.providerMaxRetryDelayMs,
-  };
-}
-
-function buildTreeItems(entries: Entry[], leafId: string | null): SessionTreeItem[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const activeIds = new Set<string>();
-  let cursor = leafId;
-  while (cursor) {
-    activeIds.add(cursor);
-    cursor = byId.get(cursor)?.parentId ?? null;
-  }
-  const displayEntries = entries.filter(
-    (entry) => !["label", "leaf", "session_info"].includes(entry.type),
-  );
-  const displayIds = new Set(displayEntries.map((entry) => entry.id));
-  const displayAncestor = (id: string | null): string | null => {
-    let next = id;
-    while (next && !displayIds.has(next)) next = byId.get(next)?.parentId ?? null;
-    return next;
-  };
-  const currentId = displayAncestor(leafId);
-  return displayEntries.map((entry) => {
-    const described = describeTreeEntry(entry);
-    return {
-      id: entry.id,
-      parentId: displayAncestor(entry.parentId),
-      type: entry.type,
-      kind: described.kind,
-      text: described.text,
-      timestamp: new Date(entry.timestamp).toISOString(),
-      active: activeIds.has(entry.id),
-      current: entry.id === currentId,
-    };
-  });
-}
-
-function describeTreeEntry(entry: Entry): Pick<SessionTreeItem, "kind" | "text"> {
-  if (entry.type === "message") {
-    const role = entry.message.role;
-    return {
-      kind: role === "user" ? "user" : role === "assistant" ? "assistant" : "tool",
-      text:
-        agentMessageText(entry.message) ||
-        (role === "assistant"
-          ? "Assistant response"
-          : role === "user"
-            ? "User prompt"
-            : "Tool result"),
-    };
-  }
-  if (entry.type === "compaction")
-    return { kind: "summary", text: `Compaction · ${entry.summary}` };
-  if (entry.type === "branch_summary")
-    return { kind: "summary", text: `Branch summary · ${entry.summary}` };
-  if (entry.type === "custom") return { kind: "state", text: `Custom · ${entry.customType}` };
-  return { kind: "state", text: "Session entry" };
-}
-
-function agentMessageText(message: AgentMessage): string {
-  if (!("content" in message)) return messagePlainText(message).replace(/\s+/g, " ").trim();
-  const content = message.content;
-  if (typeof content === "string") return content.replace(/\s+/g, " ").trim();
-  if (Array.isArray(content)) {
-    return content
-      .flatMap((part) =>
-        part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part
-          ? [String(part.text)]
-          : [],
-      )
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-  return messagePlainText(message).replace(/\s+/g, " ").trim();
-}
-
-function formatAcodeSkills(skills: NonNullable<LoadedWorkspaceResources["skills"]>): string {
-  if (!skills.length) return "";
-  const rows = skills.map((skill) =>
-    [
-      "  <skill>",
-      `    <name>${escapeXml(skill.name)}</name>`,
-      `    <description>${escapeXml(skill.description)}</description>`,
-      "  </skill>",
-    ].join("\n"),
-  );
-  return [
-    "The skills below have already been discovered from project and configured global Pi skill roots.",
-    "Treat this catalog as the source of truth for skill access. Do not list .agents/.pi or search for SKILL.md to check access; global skills are intentionally outside workspace file tools.",
-    "When a task matches, call load_skill directly with its listed name. Use load_skill's optional path for referenced files.",
-    "<available_skills>",
-    ...rows,
-    "</available_skills>",
-  ].join("\n");
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
 function normalizeSkillPath(value: string | undefined): string {
   const path = value?.trim().replace(/\\/g, "/").replace(/^\.\//, "") ?? "";
   if (!path) return "";
@@ -1131,17 +940,4 @@ async function readSkillRelativeFile(
     return acode.fsOperation(acode.joinUrl(base, relativePath)).readFile("utf-8");
   }
   return workspace.readText([base, relativePath].filter(Boolean).join("/"));
-}
-
-function compactionSettings(settings: AgentSettings) {
-  return {
-    ...DEFAULT_COMPACTION_SETTINGS,
-    enabled: settings.autoCompaction,
-    reserveTokens: settings.compactionReserveTokens,
-    keepRecentTokens: settings.compactionKeepRecentTokens,
-  };
-}
-
-function assertOperation(result: { status: string; error?: { message: string } }): void {
-  if (result.status === "failed") throw new Error(result.error?.message || "Pi operation failed.");
 }

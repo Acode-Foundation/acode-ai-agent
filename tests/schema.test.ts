@@ -1,6 +1,6 @@
-import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
+import { DEFAULT_COMPACTION_POLICY as DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-durable";
 import { expect, test } from "vitest";
-import { parseChatIndex, parseSettings, permissionModeSchema } from "../src/core/schema.ts";
+import { isPermissionMode, parseSettings } from "../src/core/schema.ts";
 import { DEFAULT_SETTINGS } from "../src/core/settings.ts";
 
 test("settings accept permission modes and migrate unknown junk", () => {
@@ -12,7 +12,12 @@ test("settings accept permission modes and migrate unknown junk", () => {
   });
   expect(settings.permissionMode).toBe("full-access");
   expect(settings.customModels.openrouter).toEqual(["a/b"]);
-  expect(permissionModeSchema.parse("ask")).toBe("ask");
+  expect(isPermissionMode("ask")).toBe(true);
+  expect(isPermissionMode("root")).toBe(false);
+  expect(parseSettings({ permissionMode: "root", maxWalkFiles: 9_999 })).toMatchObject({
+    permissionMode: "ask",
+    maxWalkFiles: 200,
+  });
 });
 
 test("compaction defaults come from Pi instead of a local copy", () => {
@@ -26,17 +31,4 @@ test("compaction defaults come from Pi instead of a local copy", () => {
   expect(DEFAULT_SETTINGS.showTaskTray).toBe(true);
   expect(parseSettings({}).customEndpoints).toEqual([]);
   expect(DEFAULT_SETTINGS.customEndpoints).toEqual([]);
-});
-
-test("chat index drops malformed rows", () => {
-  expect(
-    parseChatIndex({
-      chats: [{ id: "1", title: "Hi", workspaceId: "w", workspaceName: "Demo", updatedAt: 1 }],
-    }),
-  ).toEqual([{ id: "1", title: "Hi", workspaceId: "w", workspaceName: "Demo", updatedAt: 1 }]);
-  expect(
-    parseChatIndex({ chats: [{ id: "2", title: "Legacy", workspaceId: "w", updatedAt: 1 }] })[0]
-      ?.workspaceName,
-  ).toBe("");
-  expect(parseChatIndex({ chats: [{ title: "bad" }] })).toEqual([]);
 });

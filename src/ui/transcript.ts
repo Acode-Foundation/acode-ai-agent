@@ -1,5 +1,6 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ToolActivity } from "../core/types";
+import type { ToolActivity, TranscriptMessage } from "../core/types";
+
+type AgentMessage = TranscriptMessage;
 import { userPartsFromMessage, type UserPart } from "./composerDraft";
 
 export type WorkStatus = "running" | "done" | "error";
@@ -31,7 +32,7 @@ export type ChatTurn = {
   userParts?: UserPart[];
   work: WorkEntry[];
   answer?: string;
-  notice?: { kind: "compaction" | "branch"; text: string };
+  notice?: { kind: "compaction"; text: string };
   error?: string;
   streaming?: boolean;
   startedAt?: number;
@@ -74,7 +75,7 @@ export function buildTurns(
   };
 
   for (const message of transcript) {
-    if (message.role === "compactionSummary" || message.role === "branchSummary") {
+    if (message.role === "compactionSummary") {
       flushBucket();
       turns.push(noticeTurn(message));
       continue;
@@ -152,7 +153,7 @@ export function presentTool(
   const path = firstString(args, ["path", "file_path", "filePath", "filename", "target"]);
   const query = firstString(args, ["query", "pattern", "search", "needle"]);
   switch (name) {
-    case "read_file":
+    case "read":
       return { kind: "read", label: "Read file", detail: readDetail(path, args, output) };
     case "list_dir":
       return {
@@ -176,9 +177,9 @@ export function presentTool(
         label: "Fetched page",
         detail: firstString(args, ["url"]) ?? fetchTitle(output),
       };
-    case "write_file":
+    case "write":
       return { kind: "change", label: "Wrote file", detail: path };
-    case "edit_file":
+    case "edit":
       return { kind: "change", label: "Changed files", detail: path };
     case "move_path":
     case "copy_path":
@@ -302,7 +303,7 @@ export function groupWorkEntries(entries: WorkEntry[]): WorkGroup[] {
 }
 
 function noticeTurn(message: AgentMessage): ChatTurn {
-  const kind = message.role === "branchSummary" ? "branch" : "compaction";
+  const kind = "compaction" as const;
   const text = "summary" in message && typeof message.summary === "string" ? message.summary : "";
   const timestamp = "timestamp" in message ? message.timestamp : Date.now();
   return {

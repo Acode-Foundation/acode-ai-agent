@@ -1,288 +1,307 @@
-import { afterEach, expect, test, vi } from "vitest";
-import { createModels, Type } from "@earendil-works/pi-ai";
+import "fake-indexeddb/auto";
+import { createModels } from "@earendil-works/pi-ai";
 import {
-  AgentHarness,
-  BACKGROUND_CONTEXT as context,
-  getOrThrow,
-} from "@earendil-works/pi-agent-core";
-import {
-  fauxProvider,
   fauxAssistantMessage,
+  fauxProvider,
   fauxToolCall,
+  type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
-import { AgentSession } from "../src/session/agentSession";
-import { SessionStore } from "../src/platform/sessionStore";
+import { afterEach, expect, test, vi } from "vitest";
 import { ExtensionRegistry } from "../src/core/extensionRegistry";
 import { DEFAULT_SETTINGS } from "../src/core/settings";
 import { MutationGate } from "../src/permissions/mutationGate";
-import type { AcodeWorkspace } from "../src/workspace/acodeWorkspace";
+import { openAgentDatabase } from "../src/platform/idbFileSystem";
 import type { ProviderRegistry } from "../src/providers/providerRegistry";
-import { sessionFileSystemFixture } from "./sessionFileSystem.fixture";
+import { AgentSession, type AgentSessionSnapshot } from "../src/session/agentSession";
+import { ChatStore, type ChatMeta } from "../src/session/chatStore";
+import { fromPiSessionJsonl } from "../src/session/history";
+import type { AcodeWorkspace } from "../src/workspace/acodeWorkspace";
+
 const cleanups: Array<() => Promise<unknown>> = [];
+let databases = 0;
+
 afterEach(async () => {
-  for (const fn of cleanups.splice(0).reverse()) await fn();
+  for (const fn of cleanups.splice(0).reverse()) await fn().catch(() => undefined);
   vi.unstubAllGlobals();
 });
-async function setup() {
-  const fixture = await sessionFileSystemFixture();
-  cleanups.push(fixture.cleanup);
-  vi.stubGlobal("window", {});
+
+function environment() {
+  vi.stubGlobal("window", { editorManager: { files: [] } });
   vi.stubGlobal("acode", { require: () => undefined });
+  databases += 1;
+  const store = new ChatStore(openAgentDatabase(`session-test-${databases}`));
   const faux = fauxProvider();
   const models = createModels();
   models.setProvider(faux.provider);
-  const providers = { models, resolveModel: () => faux.getModel() } as unknown as ProviderRegistry;
+  const providers = {
+    models,
+    harnessModels: models,
+    resolveModel: () => faux.getModel(),
+  } as unknown as ProviderRegistry;
+  const files: Record<string, string> = { "a.txt": "alpha\n" };
   const workspace = {
-    info: { id: "workspace", name: "Project", rootUri: "file:///workspace", remote: false },
-    sandbox: { normalize: (path: string) => path },
-    walk: async () => {},
+    info: {
+      id: "workspace",
+      name: "Project",
+      rootUri: "file:///workspace",
+      scheme: "file",
+      remote: false,
+    },
+    sandbox: {
+      normalize: (path: string) => path.replace(/^\/+/, ""),
+      relative: () => undefined,
+    },
+    walk: async () => ({ visited: 0, stop: "done", skippedFolders: [] }),
     list: async () => [],
-    readText: async () => "",
-    writeText: vi.fn(),
+    stat: async (path: string) => {
+      if (!(path in files)) throw new Error("not found");
+      return { isDirectory: false, size: files[path]!.length, modifiedDate: 0 };
+    },
+    readText: async (path: string) => {
+      if (!(path in files)) throw new Error(`No such file: ${path}`);
+      return files[path]!;
+    },
+    readBinary: async (path: string) => new TextEncoder().encode(files[path] ?? ""),
+    writeText: vi.fn(async (path: string, content: string) => {
+      files[path] = content;
+      return "disk" as const;
+    }),
   } as unknown as AcodeWorkspace;
-  const store = new SessionStore(fixture.adapter);
-  const extensions = new ExtensionRegistry();
-  const gate = new MutationGate();
   const settings = {
     ...DEFAULT_SETTINGS,
     providerId: faux.provider.id,
     modelId: faux.getModel().id,
+    thinkingLevel: "off" as const,
     autoCompaction: false,
     retryEnabled: false,
   };
-  const session = new AgentSession({
-    id: "integration",
-    workspace,
-    providers,
-    extensions,
-    settings: () => settings,
-    store,
-    mutationGate: gate,
+  const extensions = new ExtensionRegistry();
+  const open = async (meta: ChatMeta) => {
+    const gate = new MutationGate();
+    const session = new AgentSession({
+      meta,
+      workspace,
+      providers,
+      extensions,
+      settings: () => settings,
+      store,
+      mutationGate: gate,
+    });
+    cleanups.push(() => session.dispose());
+    await session.initialize();
+    return { session, gate };
+  };
+  const newMeta = (id: string): ChatMeta => ({
+    id,
+    title: "New chat",
+    workspaceId: "workspace",
+    workspaceName: "Project",
+    createdAt: 1,
+    updatedAt: 1,
   });
-  cleanups.push(() => session.dispose());
-  await session.initialize();
-  return { session, store, extensions, faux, gate, settings, workspace };
+  return { store, faux, settings, files, workspace, open, newMeta };
 }
 
-test("streams a real Pi lane into the UI and reopens persisted messages", async () => {
-  const { session, faux, store } = await setup();
-  faux.setResponses([fauxAssistantMessage("Hello from Pi")]);
-  await session.prompt("hello");
-  expect(session.snapshot.isRunning).toBe(false);
-  expect(session.snapshot.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+function settle(session: AgentSession, done: (snapshot: AgentSessionSnapshot) => boolean) {
+  return vi.waitFor(
+    () => {
+      const snapshot = session.snapshot;
+      if (!done(snapshot)) throw new Error("not yet");
+      return snapshot;
+    },
+    { timeout: 3_000, interval: 5 },
+  );
+}
+
+const idle = (snapshot: AgentSessionSnapshot) =>
+  !snapshot.isRunning && snapshot.messages.length > 0;
+
+test("runs a prompt through Pi and reopens the chat from IndexedDB", async () => {
+  const env = environment();
+  const meta = env.newMeta("chat-1");
+  await env.store.save(meta);
+  const { session } = await env.open(meta);
+  env.faux.setResponses([fauxAssistantMessage("Hello from Pi")]);
+
+  await session.prompt("hello there");
+  const done = await settle(session, idle);
+  expect(done.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+  await vi.waitFor(() => expect(env.store.get("chat-1")?.title).toBe("hello there"));
   expect(await session.treeItems()).toHaveLength(2);
   const exported = await session.exportJsonl();
-  expect(exported).toContain("Hello from Pi");
-  await session.rename("Renamed chat");
+  expect(fromPiSessionJsonl(exported).map((entry) => entry.kind)).toEqual([
+    "pi.user",
+    "pi.assistant",
+  ]);
   await session.dispose();
-  const reopened = await store.open({
-    id: "integration",
-    workspaceId: "workspace",
-    providerId: "faux",
-    modelId: "test",
-  });
-  expect(reopened.record.title).toBe("Renamed chat");
-  await store.release("integration");
+
+  const reopened = await env.open(env.store.get("chat-1")!);
+  expect(reopened.session.snapshot.messages.map((message) => message.role)).toEqual([
+    "user",
+    "assistant",
+  ]);
+  expect(reopened.session.snapshot.recovery).toBeUndefined();
 });
 
-test("offers and resumes a durable Pi operation left open by an interrupted app", async () => {
-  const fixture = await sessionFileSystemFixture();
-  cleanups.push(fixture.cleanup);
-  vi.stubGlobal("window", {});
-  vi.stubGlobal("acode", { require: () => undefined });
-  const faux = fauxProvider();
-  const models = createModels();
-  models.setProvider(faux.provider);
-  const store = new SessionStore(fixture.adapter);
-  const opened = await store.open({
-    id: "interrupted",
-    workspaceId: "workspace",
-    providerId: faux.provider.id,
-    modelId: faux.getModel().id,
-  });
-  const seeded = await AgentHarness.create(
-    { session: opened.session, models, model: faux.getModel() },
-    context,
-  );
-  const lane = await seeded.harness.lane("main", context);
-  getOrThrow(await lane.accept({ kind: "prompt", prompt: "finish the work" }, context));
-  await seeded.harness.close(context);
-  await store.release("interrupted");
-
-  const providers = { models, resolveModel: () => faux.getModel() } as unknown as ProviderRegistry;
-  const workspace = {
-    info: { id: "workspace", name: "Project", rootUri: "file:///workspace", remote: false },
-    sandbox: { normalize: (path: string) => path },
-    walk: async () => {},
-    list: async () => [],
-    readText: async () => "",
-    writeText: vi.fn(),
-  } as unknown as AcodeWorkspace;
-  const settings = {
-    ...DEFAULT_SETTINGS,
-    providerId: faux.provider.id,
-    modelId: faux.getModel().id,
-    autoCompaction: false,
-    retryEnabled: false,
-  };
-  const session = new AgentSession({
-    id: "interrupted",
-    workspace,
-    providers,
-    extensions: new ExtensionRegistry(),
-    settings: () => settings,
-    store,
-    mutationGate: new MutationGate(),
-  });
-  cleanups.push(() => session.dispose());
-  faux.setResponses([fauxAssistantMessage("Recovered from the checkpoint")]);
-
-  await session.initialize();
-  expect(session.snapshot.recovery?.kind).toBe("interrupted");
-  expect(session.snapshot.isRunning).toBe(false);
-  await session.resume();
-  expect(session.snapshot.recovery).toBeUndefined();
-  expect(JSON.stringify(session.snapshot.messages.at(-1)?.content)).toContain(
-    "Recovered from the checkpoint",
-  );
-  expect(faux.state.callCount).toBe(1);
-});
-
-test("keeps the run controllable while Pi retries a transient provider failure", async () => {
-  const { session, faux, settings } = await setup();
-  settings.retryEnabled = true;
-  settings.retryMaxRetries = 1;
-  settings.retryBaseDelayMs = 0;
-  await session.applySettings(settings);
-  const retries: Array<{ running: boolean; attempt: number }> = [];
-  session.changes.subscribe((snapshot) => {
-    if (snapshot.retry)
-      retries.push({ running: snapshot.isRunning, attempt: snapshot.retry.attempt });
-  });
-  faux.setResponses([
-    fauxAssistantMessage("", { stopReason: "error", errorMessage: "Temporary network error" }),
-    fauxAssistantMessage("Connected again"),
+test("runs Pi's read tool against the workspace", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-read"));
+  env.faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("read", { path: "a.txt" })], { stopReason: "toolUse" }),
+    fauxAssistantMessage("It says alpha."),
   ]);
 
-  await session.prompt("try the request");
-  expect(retries).toContainEqual({ running: true, attempt: 2 });
-  expect(faux.state.callCount).toBe(2);
-  expect(JSON.stringify(session.snapshot.messages.at(-1)?.content)).toContain("Connected again");
-  expect(session.snapshot.retry).toBeUndefined();
+  await session.prompt("what is in a.txt?");
+  const done = await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 4);
+  const result = done.messages.find((message) => message.role === "toolResult");
+  expect(result && "content" in result ? JSON.stringify(result.content) : "").toContain("alpha");
 });
 
-test("Pi before_tool blocks a denied edit without executing the tool", async () => {
-  const { session, faux, gate, workspace } = await setup();
-  // Use the built-in write_file: denying must avoid reaching the workspace writer.
-  gate.changes.subscribe((request) => {
-    if (request) gate.resolve("deny");
-  });
-  faux.setResponses([
-    fauxAssistantMessage(fauxToolCall("write_file", { path: "a.txt", content: "no" }), {
+test("the approval gate blocks a denied write without touching the workspace", async () => {
+  const env = environment();
+  const { session, gate } = await env.open(env.newMeta("chat-gate"));
+  env.faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("write", { path: "b.txt", content: "new" })], {
       stopReason: "toolUse",
     }),
-    fauxAssistantMessage("Edit denied"),
+    fauxAssistantMessage("Understood."),
   ]);
-  await session.prompt("write it");
-  expect(JSON.stringify(session.snapshot.messages)).toContain("User denied");
-  expect(session.snapshot.error).toBeUndefined();
-  expect(workspace.writeText).not.toHaveBeenCalled();
+
+  await session.prompt("write b.txt");
+  await vi.waitFor(() => expect(gate.pending?.toolName).toBe("write"));
+  gate.resolve("deny");
+  const done = await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 4);
+  const result = done.messages.find((message) => message.role === "toolResult");
+  expect(result?.role === "toolResult" && result.isError).toBe(true);
+  expect(env.workspace.writeText).not.toHaveBeenCalled();
 });
 
-test("adapts tool progress and cancellation, and preserves queued input on abort", async () => {
-  const { session, extensions, faux } = await setup();
-  let started!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  extensions.registerTool({
-    name: "wait_tool",
-    label: "Wait",
-    description: "Wait",
-    parameters: Type.Object({}),
-    execute: async (_id, _params, signal, update) => {
-      update?.({ content: [{ type: "text", text: "working" }], details: {} });
-      started();
-      await new Promise<void>((resolve) => {
-        if (signal?.aborted) resolve();
-        else signal?.addEventListener("abort", () => resolve(), { once: true });
-      });
-      return { content: [{ type: "text", text: "stopped" }], details: {} };
-    },
-  });
-  await session.refreshTools();
-  faux.setResponses([
-    fauxAssistantMessage(fauxToolCall("wait_tool", {}), { stopReason: "toolUse" }),
-  ]);
-  const run = session.prompt("wait");
-  await ready;
-  await session.prompt("do this next", "followUp");
-  expect(session.snapshot.queued[0]?.text).toBe("do this next");
-  const restored = await session.abort();
-  await run;
-  expect(restored[0]?.text).toBe("do this next");
-  expect(session.snapshot.isRunning).toBe(false);
-});
-
-test("manual compaction uses Pi's summary and keeps the session usable", async () => {
-  const { session, faux, settings } = await setup();
-  settings.compactionKeepRecentTokens = 1024;
-  settings.compactionReserveTokens = 1024;
-  await session.applySettings(settings);
-  faux.setResponses(
-    Array.from({ length: 10 }, () => fauxAssistantMessage("A response ".repeat(500))),
-  );
-  await session.prompt("First question ".repeat(500));
-  await session.prompt("Second question ".repeat(500));
-  await session.compact();
-  expect(session.snapshot.messages.some((message) => message.role === "compactionSummary")).toBe(
-    true,
-  );
-  expect(session.snapshot.isRunning).toBe(false);
-  await session.prompt("Continue");
-  expect(session.snapshot.messages.at(-1)?.role).toBe("assistant");
-});
-
-test("idles the composer as soon as the assistant finishes, before persistence", async () => {
-  const { session, faux, store } = await setup();
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  vi.spyOn(store, "saveTasks").mockImplementation(() => held);
-  faux.setResponses([fauxAssistantMessage("CodeMirror 6 is the real editor.")]);
-  const idled = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error("UI stayed running after the assistant finished")),
-      5_000,
+test("abort stops the run and returns queued prompts for the composer", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-abort"));
+  const hang: FauxResponseStep = (_context, options) =>
+    new Promise((_resolve, reject) =>
+      options?.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
     );
-    session.changes.subscribe((snapshot) => {
-      const answer = snapshot.messages.find((message) => message.role === "assistant");
-      if (!answer || snapshot.isRunning || snapshot.streamingMessage) return;
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-  const run = session.prompt("Which editor is actually used");
-  try {
-    await idled;
-    expect(session.snapshot.isRunning).toBe(false);
-    expect(session.snapshot.streamingMessage).toBeUndefined();
-  } finally {
-    release();
-  }
-  await run;
+  env.faux.setResponses([hang]);
+
+  await session.prompt("first");
+  await settle(session, (snapshot) => snapshot.isRunning);
+  await session.prompt("second", "followUp");
+  await settle(session, (snapshot) => snapshot.queued.length === 1);
+  const restored = await session.abort();
+  expect(restored.map((item) => item.text)).toEqual(["second"]);
+  const done = await settle(session, (snapshot) => !snapshot.isRunning);
+  expect(done.queued).toEqual([]);
 });
 
-test("closing an idle session preserves its last activity time", async () => {
-  const { session, store } = await setup();
-  await session.rename("Last activity");
-  const activity = store.load("integration")!.updatedAt;
-  const clock = vi.spyOn(Date, "now").mockReturnValue(activity + 86_400_000);
-  try {
-    await session.dispose();
-    expect(store.load("integration")!.updatedAt).toBe(activity);
-  } finally {
-    clock.mockRestore();
-  }
+test("offers to resume a run the previous app session left unfinished", async () => {
+  const env = environment();
+  const meta = env.newMeta("chat-resume");
+  await env.store.save(meta);
+  const first = await env.open(meta);
+  const hang: FauxResponseStep = (_context, options) =>
+    new Promise((_resolve, reject) =>
+      options?.signal?.addEventListener("abort", () => reject(new Error("closed"))),
+    );
+  env.faux.setResponses([hang]);
+  await first.session.prompt("keep going");
+  await settle(first.session, (snapshot) => snapshot.isRunning);
+  await first.session.dispose();
+
+  env.faux.setResponses([fauxAssistantMessage("Resumed answer")]);
+  const { session } = await env.open(env.store.get("chat-resume")!);
+  expect(session.snapshot.recovery?.kind).toBe("interrupted");
+  await session.resume();
+  const done = await settle(
+    session,
+    (snapshot) =>
+      !snapshot.isRunning &&
+      snapshot.messages.some(
+        (message) =>
+          message.role === "assistant" && JSON.stringify(message).includes("Resumed answer"),
+      ),
+  );
+  expect(done.recovery).toBeUndefined();
+});
+
+test("tree navigation branches before a user message and can return to the old branch", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-tree"));
+  env.faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+  await session.prompt("first question");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 2);
+  await session.prompt("second question");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 4);
+
+  const items = await session.treeItems();
+  const second = items.find((item) => item.kind === "user" && item.text === "second question")!;
+  const oldTip = items.find((item) => item.current)!;
+  expect(await session.navigateTree(second.id)).toBe("second question");
+  expect(session.snapshot.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+
+  await session.navigateTree(oldTip.id);
+  expect(session.snapshot.messages).toHaveLength(4);
+});
+
+test("copies history into a new chat for /fork", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-source"));
+  env.faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+  await session.prompt("first question");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 2);
+  await session.prompt("second question");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 4);
+  const second = (await session.treeItems()).find((item) => item.text === "second question")!;
+
+  const { entries, restoredText } = await session.historyUntil(second.id);
+  expect(restoredText).toBe("second question");
+  const target = await env.open(env.newMeta("chat-fork"));
+  await target.session.importHistory(entries);
+  expect(target.session.snapshot.messages.map((message) => message.role)).toEqual([
+    "user",
+    "assistant",
+  ]);
+});
+
+test("manual compaction keeps a summary and the chat stays usable", async () => {
+  const env = environment();
+  env.settings.compactionKeepRecentTokens = 1;
+  const { session } = await env.open(env.newMeta("chat-compact"));
+  env.faux.setResponses([
+    fauxAssistantMessage("one"),
+    fauxAssistantMessage("two"),
+    fauxAssistantMessage("Summary of the work so far."),
+  ]);
+  await session.prompt("first question");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 2);
+  await session.prompt("second question");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 4);
+
+  await session.compact();
+  const done = await settle(session, (snapshot) =>
+    snapshot.messages.some((message) => message.role === "compactionSummary"),
+  );
+  const summary = done.messages.find((message) => message.role === "compactionSummary");
+  expect(summary && "summary" in summary ? summary.summary : "").toContain("Summary of the work");
+  env.faux.appendResponses([fauxAssistantMessage("three")]);
+  await session.prompt("third question");
+  await settle(session, (snapshot) =>
+    snapshot.messages.some((message) => JSON.stringify(message).includes("three")),
+  );
+});
+
+test("deleting a chat removes its storage", async () => {
+  const env = environment();
+  const meta = env.newMeta("chat-delete");
+  await env.store.save(meta);
+  const { session } = await env.open(meta);
+  env.faux.setResponses([fauxAssistantMessage("bye")]);
+  await session.prompt("hello");
+  await settle(session, idle);
+  await session.dispose();
+  await env.store.remove("chat-delete");
+  expect(env.store.get("chat-delete")).toBeUndefined();
+  const reopened = await env.open(env.newMeta("chat-delete"));
+  expect(reopened.session.snapshot.messages).toEqual([]);
 });

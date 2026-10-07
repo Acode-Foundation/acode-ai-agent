@@ -238,6 +238,7 @@ export class ProviderRegistry {
   #overrides = new Map<string, Model<any>>();
   #catalogs = new Map<string, RemoteCatalog>();
   #availableModelIds = new Map<string, ReadonlySet<string>>();
+  #harnessModels?: MutableModels;
 
   constructor(
     credentials: PortableCredentialStore,
@@ -263,6 +264,29 @@ export class ProviderRegistry {
     }
     this.models = withNativeFetch(models);
     this.syncCustomEndpoints();
+  }
+
+  /**
+   * `models` for Pi's harness, which resolves a conversation's stored model reference on
+   * every request. It goes through `resolveModel`, so custom model ids, custom endpoints,
+   * and refreshed model metadata resolve like they do in the model picker.
+   */
+  get harnessModels(): MutableModels {
+    this.#harnessModels ??= new Proxy(this.models, {
+      get: (target, property) => {
+        if (property === "getModel")
+          return (providerId: string, modelId: string) => {
+            try {
+              return this.resolveModel(providerId, modelId);
+            } catch {
+              return undefined;
+            }
+          };
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    return this.#harnessModels;
   }
 
   descriptors(): ProviderDescriptor[] {

@@ -1,7 +1,7 @@
 export type EditPair = { oldText: string; newText: string };
 
 /**
- * The replacements in an `edit_file` call: Pi's `edits: [{ oldText, newText }]`, a single
+ * The replacements in an `edit` call: Pi's `edits: [{ oldText, newText }]`, a single
  * `oldText`/`newText`, or the earlier `old_string`/`new_string` arguments stored in older sessions.
  */
 export function editPairs(args: Record<string, unknown> | undefined): EditPair[] {

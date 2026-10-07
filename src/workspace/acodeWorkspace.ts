@@ -63,7 +63,7 @@ export class NotDirectoryError extends Error {
   readonly path: string;
 
   constructor(path: string) {
-    super(`${path} is a file, not a directory. Use read_file to read it.`);
+    super(`${path} is a file, not a directory. Use read to read it.`);
     this.name = "NotDirectoryError";
     this.path = path;
   }

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createWorkspaceTools } from "../src/tools/createTools.ts";
+import { WorkspaceExecutionEnv } from "../src/tools/workspaceEnv.ts";
+import { legacyTool } from "./toolHarness.ts";
 import { describeError } from "../src/tools/errors.ts";
 import { AcodeWorkspace } from "../src/workspace/acodeWorkspace.ts";
 
@@ -176,7 +178,7 @@ test("list_dir explains when the path is a file", async () => {
   const list = tool(memoryWorkspace({ "src/a.ts": "" }), "list_dir", 10);
 
   await expect(list.execute("l", { path: "src/a.ts" })).rejects.toThrow(
-    "src/a.ts is a file, not a directory. Use read_file to read it.",
+    "src/a.ts is a file, not a directory. Use read to read it.",
   );
 });
 
@@ -225,7 +227,7 @@ test("list_dir reports a missing folder instead of an empty one", async () => {
 });
 
 test("read_file turns Cordova FileError objects into readable messages", async () => {
-  const read = tool(memoryWorkspace({ "a.ts": "" }), "read_file", 10);
+  const read = tool(memoryWorkspace({ "a.ts": "" }), "read", 10);
 
   const error = await read.execute("r", { path: "nope.ts" }).catch((reason: unknown) => reason);
 
@@ -256,7 +258,7 @@ test("tools never surface [object Object] for non-Error rejections", async () =>
 
 test("edit_file keeps $ patterns in the replacement text literally", async () => {
   const files = { "a.js": "const out = input;\n" };
-  const edit = tool(memoryWorkspace(files), "edit_file", 10);
+  const edit = tool(memoryWorkspace(files), "edit", 10);
 
   await edit.execute("e", {
     path: "a.js",
@@ -268,7 +270,7 @@ test("edit_file keeps $ patterns in the replacement text literally", async () =>
 
 test("edit_file matches LF edits against CRLF files and keeps CRLF", async () => {
   const files = { "win.txt": "one\r\ntwo\r\nthree\r\n" };
-  const edit = tool(memoryWorkspace(files), "edit_file", 10);
+  const edit = tool(memoryWorkspace(files), "edit", 10);
 
   const output = await edit.execute("e", {
     path: "win.txt",
@@ -276,13 +278,13 @@ test("edit_file matches LF edits against CRLF files and keeps CRLF", async () =>
   });
 
   expect(files["win.txt"]).toBe("one\r\n2\r\nthree\r\n");
-  expect(output.details).toMatchObject({ operation: "edit", path: "win.txt", target: "disk" });
   expect((output.details as { diff?: string }).diff).toBeTruthy();
+  expect(text(output)).not.toContain("unsaved buffer");
 });
 
 test("edit_file applies several edits in one call", async () => {
   const files = { "a.ts": "let a = 1;\nlet b = 2;\nlet c = 3;\n" };
-  const edit = tool(memoryWorkspace(files), "edit_file", 10);
+  const edit = tool(memoryWorkspace(files), "edit", 10);
 
   const output = await edit.execute("e", {
     path: "a.ts",
@@ -294,11 +296,10 @@ test("edit_file applies several edits in one call", async () => {
 
   expect(files["a.ts"]).toBe("const a = 1;\nlet b = 2;\nconst c = 3;\n");
   expect(text(output)).toBe("Successfully replaced 2 block(s) in a.ts.");
-  expect(output.details).toMatchObject({ count: 2 });
 });
 
 test("edit_file accepts old_string/new_string arguments", () => {
-  const edit = tool(memoryWorkspace({}), "edit_file", 10);
+  const edit = tool(memoryWorkspace({}), "edit", 10);
 
   expect(edit.prepareArguments?.({ path: "a.ts", old_string: "x", new_string: "y" })).toEqual({
     path: "a.ts",
@@ -307,7 +308,7 @@ test("edit_file accepts old_string/new_string arguments", () => {
 });
 
 test("edit_file explains a missing file and an unmatched edit", async () => {
-  const edit = tool(memoryWorkspace({ "a.ts": "hello" }), "edit_file", 10);
+  const edit = tool(memoryWorkspace({ "a.ts": "hello" }), "edit", 10);
 
   await expect(
     edit.execute("e1", { path: "nope.ts", edits: [{ oldText: "a", newText: "b" }] }),
@@ -330,7 +331,7 @@ test("edit_file writes into an open editor buffer without saving", async () => {
       },
     },
   };
-  const edit = tool(memoryWorkspace({ "notes.md": "on disk" }), "edit_file", 10);
+  const edit = tool(memoryWorkspace({ "notes.md": "on disk" }), "edit", 10);
   vi.stubGlobal("editorManager", {
     getFile: (uri: string) => (uri.endsWith("/notes.md") ? openFile : undefined),
     activeFile: undefined,
@@ -344,7 +345,6 @@ test("edit_file writes into an open editor buffer without saving", async () => {
   });
 
   expect(buffer.value).toBe("final text");
-  expect(output.details).toMatchObject({ target: "buffer" });
   expect(text(output)).toContain("unsaved buffer");
 });
 
@@ -359,7 +359,7 @@ test("describeError handles Cordova and DOM error shapes", () => {
 });
 
 function tool(workspace: AcodeWorkspace, name: string, maxWalkFiles: number) {
-  return createWorkspaceTools(workspace, { maxWalkFiles: () => maxWalkFiles }).find(
+  return legacyWorkspaceTools(workspace, { maxWalkFiles: () => maxWalkFiles }).find(
     (candidate) => candidate.name === name,
   )!;
 }
@@ -414,4 +414,13 @@ function memoryWorkspace(files: Record<string, string>): AcodeWorkspace {
     },
   });
   return new AcodeWorkspace(ROOT, "project");
+}
+
+/** Workspace tools with the old `execute(id, args, signal)` shape, run against the workspace. */
+function legacyWorkspaceTools(
+  workspace: AcodeWorkspace,
+  options: Parameters<typeof createWorkspaceTools>[1],
+) {
+  const env = new WorkspaceExecutionEnv(workspace, null);
+  return createWorkspaceTools(workspace, options).map((tool) => legacyTool(tool, env));
 }

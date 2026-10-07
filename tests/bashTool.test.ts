@@ -1,7 +1,10 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { createTerminalBashTool, resolveTerminalWorkingDirectory } from "../src/tools/bash.ts";
 import { MutationGate } from "../src/permissions/mutationGate.ts";
+import { createWorkspaceTools } from "../src/tools/createTools.ts";
+import { resolveTerminalWorkingDirectory } from "../src/tools/terminalShell.ts";
+import { WorkspaceExecutionEnv } from "../src/tools/workspaceEnv.ts";
 import type { AcodeWorkspace } from "../src/workspace/acodeWorkspace.ts";
+import { runTool } from "./toolHarness.ts";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -49,17 +52,17 @@ test("maps only Acode Terminal public and Alpine workspace roots", () => {
   ).toBeUndefined();
 });
 
-test("does not register bash outside terminal workspaces", () => {
+test("does not offer a shell outside terminal workspaces", () => {
   vi.stubGlobal("Executor", fakeExecutor());
-  expect(createTerminalBashTool(workspace("sftp://example.com/project"))).toBeUndefined();
+  expect(new WorkspaceExecutionEnv(workspace("sftp://example.com/project")).shell).toBeUndefined();
   expect(
-    createTerminalBashTool(
+    new WorkspaceExecutionEnv(
       workspace("content://com.android.externalstorage.documents/tree/primary%3Aproject"),
-    ),
+    ).shell,
   ).toBeUndefined();
 });
 
-test("streams a Pi-shaped bash command from the mapped workspace cwd", async () => {
+test("runs Pi's bash tool in Acode Terminal from the mapped workspace cwd", async () => {
   let started = "";
   const executor = fakeExecutor((command, onData) => {
     started = command;
@@ -69,30 +72,19 @@ test("streams a Pi-shaped bash command from the mapped workspace cwd", async () 
     onData("exit", "0");
   });
   vi.stubGlobal("Executor", executor);
-  const tool = createTerminalBashTool(
-    workspace("file:///data/user/0/com.foxdebug.acode/files/public/project"),
-  )!;
-  const updates: string[] = [];
-  const result = await tool.execute(
-    "bash-1",
-    { command: "pwd && echo ok" },
-    undefined,
-    (update) => {
-      const part = update.content[0];
-      if (part?.type === "text") updates.push(part.text);
-    },
-  );
+  const result = await bash("file:///data/user/0/com.foxdebug.acode/files/public/project", {
+    command: "pwd && echo ok",
+  });
 
   expect(started).toContain("cd --");
   expect(started).toContain("/public/project");
   expect(started).toContain("pwd && echo ok");
-  expect(result.content[0]).toEqual({ type: "text", text: "hello\nwarning" });
-  expect(updates.at(-1)).toBe("hello\nwarning");
+  expect(result.content[0]?.text).toBe("hello\nwarning\n");
   expect(executor.stopped).toEqual(["process-1"]);
   expect(executor.stoppedService).toBe(1);
 });
 
-test("reports non-zero exits as tool errors with captured output", async () => {
+test("reports non-zero exits as tool errors", async () => {
   vi.stubGlobal(
     "Executor",
     fakeExecutor((_command, onData) => {
@@ -100,49 +92,12 @@ test("reports non-zero exits as tool errors with captured output", async () => {
       onData("exit", "7");
     }),
   );
-  const tool = createTerminalBashTool(
-    workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
-  )!;
-  await expect(tool.execute("bash-2", { command: "false" })).rejects.toThrow(
-    "failed\n\nCommand exited with code 7",
-  );
+  await expect(
+    bash("file:///data/user/0/com.foxdebug.acode/files/public", { command: "false" }),
+  ).rejects.toThrow("Command exited with code 7");
 });
 
-test("keeps the tail of output at Pi's line limit", async () => {
-  vi.stubGlobal(
-    "Executor",
-    fakeExecutor((_command, onData) => {
-      for (let line = 1; line <= 2_002; line += 1) onData("stdout", `line ${line}`);
-      onData("exit", "0");
-    }),
-  );
-  const tool = createTerminalBashTool(
-    workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
-  )!;
-  const result = await tool.execute("bash-tail", { command: "many-lines" });
-  const text = result.content.find((part) => part.type === "text")?.text ?? "";
-  expect(text).toMatch(/^line 3\nline 4/);
-  expect(text).toContain("line 2002\n\n[Showing lines 3-2002 of 2002.]");
-});
-
-test("reports the byte limit when it is reached before the line limit", async () => {
-  vi.stubGlobal(
-    "Executor",
-    fakeExecutor((_command, onData) => {
-      for (let line = 1; line <= 2_001; line += 1) onData("stdout", `${line}:${"x".repeat(100)}`);
-      onData("exit", "0");
-    }),
-  );
-  const tool = createTerminalBashTool(
-    workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
-  )!;
-  const result = await tool.execute("bash-bytes", { command: "large-output" });
-  const text = result.content.find((part) => part.type === "text")?.text ?? "";
-  expect(result.details?.truncation?.truncatedBy).toBe("bytes");
-  expect(text).toMatch(/\(50KB limit\)\.\]$/);
-});
-
-test("stops timed-out commands and includes their captured output", async () => {
+test("stops timed-out commands", async () => {
   vi.useFakeTimers();
   const executor = fakeExecutor();
   executor.start = async (_command: string, onData: (type: string, data: string) => void) => {
@@ -150,13 +105,11 @@ test("stops timed-out commands and includes their captured output", async () => 
     return "process-timeout";
   };
   vi.stubGlobal("Executor", executor);
-  const tool = createTerminalBashTool(
-    workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
-  )!;
-  const execution = tool.execute("bash-3", { command: "sleep 10", timeout: 1 });
-  const rejected = expect(execution).rejects.toThrow(
-    "still running\n\nCommand timed out after 1 seconds",
-  );
+  const execution = bash("file:///data/user/0/com.foxdebug.acode/files/public", {
+    command: "sleep 10",
+    timeout: 1,
+  });
+  const rejected = expect(execution).rejects.toThrow("Command timed out after 1 seconds");
   await vi.advanceTimersByTimeAsync(1_000);
 
   await rejected;
@@ -168,10 +121,7 @@ test("stops timed-out commands and includes their captured output", async () => 
 test("stops the executor service after an agent-started command when nothing else is running", async () => {
   const executor = fakeExecutor((_command, onData) => onData("exit", "0"));
   vi.stubGlobal("Executor", executor);
-  const tool = createTerminalBashTool(
-    workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
-  )!;
-  await tool.execute("bash-cleanup", { command: "true" });
+  await bash("file:///data/user/0/com.foxdebug.acode/files/public", { command: "true" });
   expect(executor.stopped).toEqual(["process-1"]);
   expect(executor.stoppedService).toBe(1);
 });
@@ -180,10 +130,7 @@ test("does not stop the executor service when other terminal processes are alrea
   const executor = fakeExecutor((_command, onData) => onData("exit", "0"));
   executor.listProcesses = async () => [{ id: "user-terminal" }];
   vi.stubGlobal("Executor", executor);
-  const tool = createTerminalBashTool(
-    workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
-  )!;
-  await tool.execute("bash-shared", { command: "true" });
+  await bash("file:///data/user/0/com.foxdebug.acode/files/public", { command: "true" });
   expect(executor.stopped).toEqual(["process-1"]);
   expect(executor.stoppedService).toBe(0);
 });
@@ -214,6 +161,15 @@ test("requires separate shell approval even in allow-edits mode", async () => {
   ).toEqual({});
   gate.dispose();
 });
+
+async function bash(rootUri: string, args: { command: string; timeout?: number }) {
+  const ws = workspace(rootUri);
+  const env = new WorkspaceExecutionEnv(ws);
+  const tool = createWorkspaceTools(ws, { maxWalkFiles: () => 10, bash: true }).find(
+    (candidate) => candidate.name === "bash",
+  )!;
+  return runTool(tool, args, { env });
+}
 
 function workspace(rootUri: string): AcodeWorkspace {
   return {

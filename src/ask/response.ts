@@ -1,4 +1,4 @@
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { ToolExecutionResult } from "@earendil-works/pi-durable";
 import { MAX_PREVIEW_CHARS, type QuestionAnswer, type QuestionnaireResult } from "./types";
 
 export const DECLINE_MESSAGE = "User declined to answer questions";
@@ -7,7 +7,7 @@ const SUFFIX = "You can now continue with the user's answers in mind.";
 
 export function buildQuestionnaireResponse(
   result: QuestionnaireResult,
-): AgentToolResult<QuestionnaireResult> {
+): ToolExecutionResult<QuestionnaireResult> {
   if (result.cancelled || result.answers.length === 0) {
     return textResult(DECLINE_MESSAGE, {
       answers: result.answers,
@@ -28,7 +28,7 @@ export function buildQuestionnaireResponse(
 export function textResult(
   content: string,
   details: QuestionnaireResult,
-): AgentToolResult<QuestionnaireResult> {
+): ToolExecutionResult<QuestionnaireResult> {
   return { content: [{ type: "text", text: content }], details };
 }
 

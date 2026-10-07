@@ -1,55 +1,28 @@
-export {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-  truncateHead,
-} from "@earendil-works/pi-agent-core";
+/** Pi's default tool-output budget, shared by the workspace tools Pi does not provide. */
+export const DEFAULT_MAX_BYTES = 50 * 1024;
+export const DEFAULT_MAX_LINES = 2000;
 
-import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "@earendil-works/pi-agent-core";
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
 
-export function selectReadOutput(
+/** Keep whole leading lines within the byte budget; report how many survived. */
+export function truncateHead(
   text: string,
-  offset?: number,
-  limit?: number,
-): { text: string; truncated: boolean } {
-  const allLines = text.split("\n");
-  const startLine = offset ? Math.max(0, offset - 1) : 0;
-  if (startLine >= allLines.length) {
-    throw new Error(`Offset ${offset} is beyond end of file (${allLines.length} lines total)`);
+  maxBytes = DEFAULT_MAX_BYTES,
+): { content: string; truncated: boolean; outputLines: number } {
+  const encoder = new TextEncoder();
+  if (encoder.encode(text).length <= maxBytes)
+    return { content: text, truncated: false, outputLines: text.split("\n").length };
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const line of text.split("\n")) {
+    const size = encoder.encode(line).length + (kept.length ? 1 : 0);
+    if (bytes + size > maxBytes) break;
+    kept.push(line);
+    bytes += size;
   }
-
-  let selected = allLines.slice(startLine).join("\n");
-  let userLimited: number | undefined;
-  if (limit !== undefined) {
-    const endLine = Math.min(startLine + limit, allLines.length);
-    selected = allLines.slice(startLine, endLine).join("\n");
-    userLimited = endLine - startLine;
-  }
-
-  const truncation = truncateHead(selected);
-  const startDisplay = startLine + 1;
-  const total = allLines.length;
-  if (truncation.firstLineExceedsLimit) {
-    return {
-      text: `[Line ${startDisplay} exceeds the ${formatSize(DEFAULT_MAX_BYTES)} limit.]`,
-      truncated: true,
-    };
-  }
-  if (truncation.truncated) {
-    const endDisplay = startDisplay + truncation.outputLines - 1;
-    const reason =
-      truncation.truncatedBy === "lines" ? "" : ` (${formatSize(DEFAULT_MAX_BYTES)} limit)`;
-    return {
-      text: `[Showing lines ${startDisplay}-${endDisplay} of ${total}${reason}. Use offset=${endDisplay + 1} to continue.]\n\n${truncation.content}`,
-      truncated: true,
-    };
-  }
-  if (userLimited !== undefined && startLine + userLimited < total) {
-    const remaining = total - (startLine + userLimited);
-    return {
-      text: `[${remaining} more lines in file. Use offset=${startLine + userLimited + 1} to continue.]\n\n${truncation.content}`,
-      truncated: true,
-    };
-  }
-  return { text: truncation.content, truncated: false };
+  return { content: kept.join("\n"), truncated: true, outputLines: kept.length };
 }

@@ -1,4 +1,4 @@
-import { DEFAULT_COMPACTION_SETTINGS } from "@earendil-works/pi-agent-core";
+import { DEFAULT_COMPACTION_POLICY } from "@earendil-works/pi-durable";
 import { sanitizeCustomEndpoints } from "../providers/customEndpoints";
 import { parseSettings } from "./schema";
 import type { AgentSettings } from "./types";
@@ -12,9 +12,9 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   permissionMode: "ask",
   includeSelection: true,
   hideThinkingBlock: false,
-  autoCompaction: DEFAULT_COMPACTION_SETTINGS.enabled,
-  compactionReserveTokens: DEFAULT_COMPACTION_SETTINGS.reserveTokens,
-  compactionKeepRecentTokens: DEFAULT_COMPACTION_SETTINGS.keepRecentTokens,
+  autoCompaction: DEFAULT_COMPACTION_POLICY.enabled,
+  compactionReserveTokens: DEFAULT_COMPACTION_POLICY.reserveTokens,
+  compactionKeepRecentTokens: DEFAULT_COMPACTION_POLICY.keepRecentTokens,
   retryEnabled: true,
   retryMaxRetries: 3,
   retryBaseDelayMs: 2_000,

@@ -259,11 +259,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                   />
                 )}
                 {turn.notice && (
-                  <CompactNotice
-                    kind={turn.notice.kind}
-                    text={turn.notice.text}
-                    workspace={state.workspace}
-                  />
+                  <CompactNotice text={turn.notice.text} workspace={state.workspace} />
                 )}
                 <WorkLog turn={turn} workspace={state.workspace} />
                 {turn.answer && (
@@ -294,7 +290,11 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
         )}
         {state.recovery && (
           <ErrorNotice
-            title={state.recovery.kind === "deferred" ? "Run still in progress" : "Run interrupted"}
+            title={
+              state.recovery.operation === "compaction"
+                ? "Compaction interrupted"
+                : "Run interrupted"
+            }
             message={state.recovery.message}
             action={{
               label: resuming ? "Resuming…" : "Resume",
@@ -1908,11 +1908,9 @@ function ModelPicker({
 }
 
 function CompactNotice({
-  kind,
   text,
   workspace,
 }: {
-  kind: "branch" | "compaction";
   text: string;
   workspace?: PublicAgentState["workspace"];
 }) {
@@ -1925,7 +1923,7 @@ function CompactNotice({
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        {kind === "branch" ? "Branch summary" : "History compacted"}
+        {text.startsWith("Context reset") ? "Context reset" : "History compacted"}
       </button>
       <Collapse open={open}>
         <Markdown text={text} workspace={workspace} />

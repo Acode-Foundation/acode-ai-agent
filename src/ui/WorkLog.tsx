@@ -211,7 +211,7 @@ function WorkRow({
   const path = toolPath(entry);
   const directFileAction =
     entry.type === "tool" &&
-    entry.name === "read_file" &&
+    entry.name === "read" &&
     entry.status !== "error" &&
     Boolean(path && workspace);
   const hasBody =
@@ -337,7 +337,7 @@ function hasToolBody(
   webSearch: ReturnType<typeof parseWebSearchOutput>,
 ): boolean {
   if (entry.status === "error") return true;
-  if (entry.name === "read_file") return false;
+  if (entry.name === "read") return false;
   if (entry.name === "todo_write" || entry.name === "ask_user_question")
     return Boolean(entry.output);
   if (entry.kind === "change") return Boolean(changeInput(entry));
@@ -417,7 +417,7 @@ function ChangeBody({ entry, workspace }: { entry: WorkEntry; workspace?: Worksp
   return (
     <div class="change-card">
       <div class="change-card-head">
-        <span>{entry.name === "edit_file" ? "Edit preview" : "Written contents"}</span>
+        <span>{entry.name === "edit" ? "Edit preview" : "Written contents"}</span>
         <button
           type="button"
           class="change-open-file"
@@ -538,7 +538,7 @@ function changeInput(
 ): { path: string; oldContents: string; newContents: string } | undefined {
   const path = toolPath(entry);
   if (!path) return undefined;
-  if (entry.name === "edit_file") {
+  if (entry.name === "edit") {
     const pairs = editPairs(entry.args);
     if (!pairs.length) return undefined;
     return {
@@ -547,7 +547,7 @@ function changeInput(
       newContents: pairs.map((pair) => pair.newText).join("\n\n"),
     };
   }
-  if (entry.name === "write_file") {
+  if (entry.name === "write") {
     const newContents = stringArg(entry.args, "content");
     if (newContents === undefined) return undefined;
     return { path, oldContents: "", newContents };

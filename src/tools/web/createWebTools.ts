@@ -1,5 +1,9 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import {
+  defineTool,
+  type ToolExecutionResult,
+  type ToolRegistration,
+} from "@earendil-works/pi-durable";
 import { fetchReadable } from "./extract";
 import { formatFetchResponse, formatSearchResponse } from "./format";
 import { attachPageContent, searchWeb } from "./router";
@@ -14,12 +18,11 @@ type ToolDetails = {
   count?: number;
 };
 
-type ToolResult = AgentToolResult<ToolDetails>;
+type ToolResult = ToolExecutionResult<ToolDetails>;
 
-export function createWebTools(ctx: WebSearchContext): AgentTool<any>[] {
-  const webSearch: AgentTool<any> = {
+export function createWebTools(ctx: WebSearchContext): ToolRegistration[] {
+  const webSearch = defineTool({
     name: "web_search",
-    label: "Web search",
     description:
       "Search the live web for current documentation, APIs, package versions, news, and citations. " +
       "Uses the model host's search when it has one, otherwise the device browser. Use fetch_content to read a specific page.",
@@ -40,7 +43,8 @@ export function createWebTools(ctx: WebSearchContext): AgentTool<any>[] {
       ),
     }),
     executionMode: "parallel",
-    execute: async (_id, params, signal, onUpdate) => {
+    execute: async (params, api, context) => {
+      const signal = context.abortSignal;
       const input = params as {
         query?: string;
         queries?: string[];
@@ -57,7 +61,7 @@ export function createWebTools(ctx: WebSearchContext): AgentTool<any>[] {
       let total = 0;
       for (const query of queries) {
         throwIfAborted(signal);
-        onUpdate?.(result(`Searching “${query}”…`, { operation: "web_search", query }));
+        api.output(`Searching “${query}”…` + "\n");
         let response = await searchWeb(
           query,
           {
@@ -81,11 +85,10 @@ export function createWebTools(ctx: WebSearchContext): AgentTool<any>[] {
         count: total,
       });
     },
-  };
+  });
 
-  const fetchContent: AgentTool<any> = {
+  const fetchContent = defineTool({
     name: "fetch_content",
-    label: "Fetch page",
     description:
       "Fetch a public http(s) URL as readable markdown. GitHub blob URLs are rewritten to raw file contents. " +
       "Uses the device browser when the direct fetch is blocked or too thin.",
@@ -94,7 +97,8 @@ export function createWebTools(ctx: WebSearchContext): AgentTool<any>[] {
       urls: Type.Optional(Type.Array(Type.String(), { description: "Multiple URLs" })),
     }),
     executionMode: "parallel",
-    execute: async (_id, params, signal, onUpdate) => {
+    execute: async (params, api, context) => {
+      const signal = context.abortSignal;
       const input = params as { url?: string; urls?: string[] };
       const urls = [...(input.url ? [input.url] : []), ...(input.urls ?? [])]
         .map((value) => value.trim())
@@ -103,7 +107,7 @@ export function createWebTools(ctx: WebSearchContext): AgentTool<any>[] {
       const pages = [];
       for (const url of urls.slice(0, 6)) {
         throwIfAborted(signal);
-        onUpdate?.(result(`Fetching ${url}…`, { operation: "fetch_content", path: url }));
+        api.output(`Fetching ${url}…` + "\n");
         pages.push(await fetchReadable(url, signal));
       }
       const ok = pages.filter((page) => page.content && !page.error).length;
@@ -113,7 +117,7 @@ export function createWebTools(ctx: WebSearchContext): AgentTool<any>[] {
         count: ok,
       });
     },
-  };
+  });
 
   return [webSearch, fetchContent];
 }

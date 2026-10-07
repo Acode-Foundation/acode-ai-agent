@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { MutationGate } from "../src/permissions/mutationGate.ts";
 import { createWorkspaceTools } from "../src/tools/createTools.ts";
+import { WorkspaceExecutionEnv } from "../src/tools/workspaceEnv.ts";
+import { legacyTool } from "./toolHarness.ts";
 import { AcodeWorkspace } from "../src/workspace/acodeWorkspace.ts";
 
 const ROOT = "file:///project";
@@ -16,7 +18,7 @@ afterEach(() => {
 test("file operation tools are only added when requested", () => {
   const { workspace } = memoryFs({});
   const names = (fileOperations?: boolean) =>
-    createWorkspaceTools(workspace, { maxWalkFiles: () => 10, fileOperations }).map(
+    legacyWorkspaceTools(workspace, { maxWalkFiles: () => 10, fileOperations }).map(
       (tool) => tool.name,
     );
   expect(names()).not.toContain("move_path");
@@ -230,7 +232,7 @@ test("edits pass in allow-edits mode but deletes still ask, with their own sessi
 });
 
 async function run(workspace: AcodeWorkspace, name: string, args: Record<string, unknown>) {
-  const tool = createWorkspaceTools(workspace, {
+  const tool = legacyWorkspaceTools(workspace, {
     maxWalkFiles: () => 100,
     fileOperations: true,
   }).find((candidate) => candidate.name === name)!;
@@ -344,4 +346,13 @@ function memoryFs(initial: Record<string, string>, options: { recursiveDelete?: 
   };
   vi.stubGlobal("acode", acode);
   return { workspace: new AcodeWorkspace(ROOT, "project"), files, folders, acode };
+}
+
+/** Workspace tools with the old `execute(id, args, signal)` shape, run against the workspace. */
+function legacyWorkspaceTools(
+  workspace: AcodeWorkspace,
+  options: Parameters<typeof createWorkspaceTools>[1],
+) {
+  const env = new WorkspaceExecutionEnv(workspace, null);
+  return createWorkspaceTools(workspace, options).map((tool) => legacyTool(tool, env));
 }

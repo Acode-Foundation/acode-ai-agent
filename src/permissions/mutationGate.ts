@@ -86,7 +86,7 @@ export class MutationGate {
     if (toolName === "rename_path")
       return `${String(args.path ?? "")}\n→ ${String(args.new_name ?? "")}`;
     if (toolName === "create_directory") return `Create folder ${String(args.path ?? "")}`;
-    if (toolName === "edit_file") {
+    if (toolName === "edit") {
       const pairs = editPairs(args);
       const budget = Math.max(200, Math.floor(1400 / Math.max(1, pairs.length)));
       return pairs
@@ -133,8 +133,8 @@ const DELETE_PREVIEW_ENTRIES = 20;
 type Category = "edit" | "delete" | "shell";
 
 const EDIT_TOOLS = new Set([
-  "write_file",
-  "edit_file",
+  "write",
+  "edit",
   "move_path",
   "rename_path",
   "copy_path",
@@ -158,7 +158,7 @@ function approvalTitle(toolName: string, path: string): string {
   switch (toolName) {
     case "bash":
       return "Run terminal command";
-    case "write_file":
+    case "write":
       return `Write ${path}`;
     case "move_path":
       return `Move ${path}`;

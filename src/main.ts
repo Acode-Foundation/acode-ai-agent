@@ -1,3 +1,4 @@
+import "./platform/polyfills";
 import plugin from "../plugin.json";
 import { buildComposerRequest, type ActionSubject, type ComposerRequest } from "./app/agentActions";
 import { AgentController } from "./app/agentController";

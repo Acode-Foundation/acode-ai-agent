@@ -1,14 +1,19 @@
+import type { JsonValue } from "@earendil-works/chord";
 import {
-  BACKGROUND_CONTEXT,
+  defineTool,
+  type ToolExecutionApi,
+  type ToolExecutionResult,
+  type ToolRegistration,
+} from "@earendil-works/pi-durable";
+import {
+  createBashTool,
   createEditTool,
-  FileError,
-  withAbortSignal,
-  type EditToolDetails,
-  type EditToolInput,
-} from "@earendil-works/pi-agent-core";
+  createReadTool,
+  createWriteTool,
+} from "@earendil-works/pi-durable/tools";
 import { Type } from "@earendil-works/pi-ai";
-import type { AgentTool, AgentToolResult, ReadImageProcessor } from "@earendil-works/pi-agent-core";
-import { browserReadImageProcessor } from "../platform/readImageProcessor";
+import { FileError } from "@earendil-works/pi-durable/env";
+import { browserReadImageProcessor, type ReadImageProcessor } from "../platform/readImageProcessor";
 import { indexOmissions, NotDirectoryError } from "../workspace/acodeWorkspace";
 import type { AcodeWorkspace, FileEntry, WalkResult } from "../workspace/acodeWorkspace";
 import { isImagePath } from "../workspace/fileMentions";
@@ -16,77 +21,63 @@ import { workspaceRelativeFromIndex } from "../workspace/pathSandbox";
 import { describeError, fileOperationError, isAbortError } from "./errors";
 import { createFileOperationTools } from "./fileOperations";
 import { globMatcher } from "./glob";
-import {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-  selectReadOutput,
-  truncateHead,
-} from "./truncate";
 import { legacyEditArguments } from "./textEdits";
-import { WorkspaceExecutionEnv } from "./workspaceEnv";
+import { assertTextFile, detectSupportedImageMimeType, isBinaryPath } from "./textFiles";
+import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "./truncate";
+import type { WorkspaceExecutionEnv } from "./workspaceEnv";
 
-type ToolDetails = Partial<EditToolDetails> & {
+type ToolDetails = {
   path?: string;
   operation: string;
-  target?: "buffer" | "disk";
   count?: number;
   truncated?: boolean;
 };
 
-type ToolResult = AgentToolResult<ToolDetails>;
+export type WorkspaceToolOptions = {
+  maxWalkFiles: () => number;
+  autoResizeImages?: () => boolean;
+  imageProcessor?: ReadImageProcessor;
+  /** Add move/rename/copy/delete/mkdir tools, for workspaces where `bash` is unavailable. */
+  fileOperations?: boolean;
+  /** Offer Pi's `bash` tool; the workspace environment runs it in Acode Terminal. */
+  bash?: boolean;
+};
 
+/**
+ * Workspace tools. `read`, `write`, `edit`, and `bash` are Pi's own tools, run against the
+ * workspace through `WorkspaceExecutionEnv`; listing and search use Acode's file index.
+ */
 export function createWorkspaceTools(
   workspace: AcodeWorkspace,
-  options: {
-    maxWalkFiles: () => number;
-    autoResizeImages?: () => boolean;
-    imageProcessor?: ReadImageProcessor;
-    /** Add move/rename/copy/delete/mkdir tools, for workspaces where `bash` is unavailable. */
-    fileOperations?: boolean;
-  },
-): AgentTool<any>[] {
-  const readFile: AgentTool<any> = {
-    name: "read_file",
-    label: "Read file",
+  options: WorkspaceToolOptions,
+): ToolRegistration[] {
+  const executionMode = workspace.info.remote ? "sequential" : "parallel";
+
+  const piRead = createReadTool();
+  const read = defineTool({
+    ...piRead,
     description:
-      `Read a UTF-8 text file or image (jpg, png, gif, webp, bmp). Paths are relative to the active workspace. ` +
-      `Images are returned as model-visible attachments. Text output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB. ` +
-      `Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
-    parameters: Type.Object({
-      path: Type.String({ description: "Workspace-relative file path" }),
-      offset: Type.Optional(
-        Type.Number({ description: "Line number to start reading from (1-indexed)" }),
-      ),
-      limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
-    }),
-    executionMode: workspace.info.remote ? "sequential" : "parallel",
-    execute: async (_id, params, signal) => {
-      const input = params as { path: string; offset?: number; limit?: number };
-      throwIfAborted(signal);
-      const path = workspace.sandbox.normalize(input.path);
+      `${piRead.description} Images (jpg, png, gif, webp, bmp) are returned as attachments the model can see. ` +
+      "Paths are relative to the workspace.",
+    executionMode,
+    execute: async (args, api, context) => {
+      const path = workspace.sandbox.normalize(args.path);
       if (isImagePath(path)) {
         const bytes = await workspace
           .readBinary(path)
           .catch((error: unknown) => Promise.reject(fileOperationError("read", path, error)));
-        throwIfAborted(signal);
+        throwIfAborted(context.abortSignal);
         const mimeType = detectSupportedImageMimeType(bytes);
         if (mimeType) {
           const processor = options.imageProcessor ?? browserReadImageProcessor;
-          const processed = await processor(
-            bytes,
-            mimeType,
-            {
-              autoResizeImages: options.autoResizeImages?.() ?? true,
-            },
-            signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT,
-          );
-          if (!processed.ok) {
+          const processed = await processor(bytes, mimeType, {
+            autoResizeImages: options.autoResizeImages?.() ?? true,
+          });
+          if (!processed.ok)
             return result(`Read image file [${mimeType}]\n${processed.message}`, {
               operation: "read",
               path,
             });
-          }
           const hints = processed.hints.length ? `\n${processed.hints.join("\n")}` : "";
           return {
             content: [
@@ -97,18 +88,19 @@ export function createWorkspaceTools(
           };
         }
       }
-      const text = await workspace
-        .readText(path)
-        .catch((error: unknown) => Promise.reject(fileOperationError("read", path, error)));
-      assertTextFile(path, text);
-      const output = selectReadOutput(text, input.offset, input.limit);
-      return result(output.text, { operation: "read", path, truncated: output.truncated });
+      if (isBinaryPath(path)) throw new Error(`${path} appears to be binary.`);
+      try {
+        return await piRead.execute({ ...args, path }, api, context);
+      } catch (error) {
+        if (error instanceof FileError && error.code !== "aborted")
+          throw fileOperationError("read", path, error);
+        throw error;
+      }
     },
-  };
+  });
 
-  const listDir: AgentTool<any> = {
+  const listDir = defineTool({
     name: "list_dir",
-    label: "List directory",
     description:
       "List the direct children of a workspace directory, including hidden files. " +
       "Folders are listed first and end with '/'. Paths are workspace-relative, ready for other tools. " +
@@ -127,7 +119,8 @@ export function createWorkspaceTools(
       ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
-    execute: async (_id, params, signal) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const input = params as { path?: string; offset?: number; limit?: number };
       throwIfAborted(signal);
       const path = workspace.sandbox.normalize(input.path ?? "");
@@ -166,11 +159,10 @@ export function createWorkspaceTools(
         truncated: next < sorted.length,
       });
     },
-  };
+  });
 
-  const grep: AgentTool<any> = {
+  const grep = defineTool({
     name: "grep",
-    label: "Search workspace",
     description:
       "Search file contents for a string or regular expression. Returns `path:line: text` matches. " +
       `Returns up to ${GREP_DEFAULT_LIMIT} matches by default. ` +
@@ -203,7 +195,8 @@ export function createWorkspaceTools(
       ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
-    execute: async (_id, params, signal, onUpdate) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const input = params as {
         query: string;
         path?: string;
@@ -306,7 +299,6 @@ export function createWorkspaceTools(
             return true;
           }
           completedFiles += 1;
-          onUpdate?.(result(`Searched ${entry.path}`, { operation: "grep", count: hits.length }));
           return hits.length >= limit;
         },
       });
@@ -351,11 +343,10 @@ export function createWorkspaceTools(
       if (omitted) lines.push(omitted);
       return result(capOutput(lines), details(hits.length, matchLimited || filesRemain));
     },
-  };
+  });
 
-  const glob: AgentTool<any> = {
+  const glob = defineTool({
     name: "glob",
-    label: "Find files",
     description:
       "Find files by a glob pattern such as **/*.ts, src/**, or **/*.{md,json,js}. Returns workspace-relative paths. " +
       `Returns up to ${GLOB_DEFAULT_LIMIT} files by default; a truncated result says which offset continues it, ` +
@@ -379,7 +370,8 @@ export function createWorkspaceTools(
       ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
-    execute: async (_id, params, signal) => {
+    execute: async (params, _api, context) => {
+      const signal = context.abortSignal;
       const input = params as { pattern: string; path?: string; limit?: number; offset?: number };
       const pattern = String(input.pattern ?? "");
       if (!pattern.trim()) throw new Error("Glob pattern cannot be empty.");
@@ -432,59 +424,33 @@ export function createWorkspaceTools(
       if (omitted) lines.push(omitted);
       return result(lines.join("\n"), details);
     },
-  };
+  });
 
-  const writeFile: AgentTool<any> = {
-    name: "write_file",
-    label: "Write file",
-    description:
-      "Create or replace a UTF-8 text file. Requires user approval unless session approval is enabled.",
-    parameters: Type.Object({ path: Type.String(), content: Type.String() }),
-    executionMode: "sequential",
-    execute: async (_id, params, signal) => {
-      const input = params as { path: string; content: string };
-      throwIfAborted(signal);
-      const path = workspace.sandbox.normalize(input.path);
-      assertWritable(path, input.content);
-      const target = await workspace.writeText(path, input.content);
-      return result(
-        `Updated ${path} in the ${target === "buffer" ? "open editor buffer (not auto-saved)" : "workspace"}.`,
-        {
-          operation: "write",
-          path,
-          target,
-        },
-      );
+  const piWrite = createWriteTool();
+  const write = defineTool({
+    ...piWrite,
+    description: `${piWrite.description} Files open in the editor are written to their unsaved buffer.`,
+    execute: async (args, api, context) => {
+      const path = workspace.sandbox.normalize(args.path);
+      assertTextFile(path, args.content);
+      return noteBufferTarget(await piWrite.execute({ ...args, path }, api, context), api, path);
     },
-  };
+  });
 
-  // Pi's edit tool, run against the workspace: multi-edit, CRLF/BOM preservation, tolerant
-  // matching for whitespace and typographic quotes, and a diff for the change card.
+  // Pi's edit tool: multi-edit, CRLF/BOM preservation, tolerant matching for whitespace and
+  // typographic quotes, and a diff for the change card.
   const piEdit = createEditTool();
-  const editEnv = new WorkspaceExecutionEnv(workspace, assertTextFile);
-  const editFile: AgentTool<any> = {
-    name: "edit_file",
-    label: "Edit file",
+  const edit = defineTool({
+    ...piEdit,
     description: `${piEdit.description} Changes to files open in the editor stay in their unsaved buffer.`,
-    parameters: piEdit.parameters,
     prepareArguments: (args: unknown) =>
-      piEdit.prepareArguments ? piEdit.prepareArguments(legacyEditArguments(args)) : args,
-    executionMode: "sequential",
-    execute: async (id, params, signal) => {
-      throwIfAborted(signal);
-      const input = params as EditToolInput;
-      const path = workspace.sandbox.normalize(input.path);
-      const context = signal ? withAbortSignal(signal, BACKGROUND_CONTEXT) : BACKGROUND_CONTEXT;
-      let output: AgentToolResult<EditToolDetails | undefined>;
+      piEdit.prepareArguments
+        ? piEdit.prepareArguments(legacyEditArguments(args))
+        : (legacyEditArguments(args) as Parameters<typeof piEdit.execute>[0]),
+    execute: async (args, api, context) => {
+      const path = workspace.sandbox.normalize(args.path);
       try {
-        output = await piEdit.execute(
-          id,
-          { ...input, path },
-          () => undefined,
-          { env: editEnv },
-          undefined as never,
-          context,
-        );
+        return noteBufferTarget(await piEdit.execute({ ...args, path }, api, context), api, path);
       } catch (error) {
         // Pi reports environment failures as "Error code: not_found"; keep the readable cause.
         const cause = (error as { cause?: unknown } | null)?.cause;
@@ -492,50 +458,53 @@ export function createWorkspaceTools(
           throw new Error(`Could not edit ${path}: ${describeError(cause)}`);
         throw error;
       }
-      const target = editEnv.takeWriteTarget(path);
-      const summary =
-        output.content.find((part) => part.type === "text")?.text ?? `Edited ${path}.`;
-      return result(
-        target === "buffer"
-          ? `${summary} The file is open in the editor, so the change is in its unsaved buffer.`
-          : summary,
-        {
-          ...output.details,
-          operation: "edit",
-          path,
-          target,
-          count: Array.isArray(input.edits) ? input.edits.length : undefined,
-        },
-      );
     },
-  };
+  });
 
-  return [
-    readFile,
+  const bash = createBashTool();
+  const tools: ToolRegistration[] = [
+    read,
     listDir,
     grep,
     glob,
-    writeFile,
-    editFile,
+    write,
+    edit,
+    ...(options.bash
+      ? [
+          {
+            ...bash,
+            description: `${bash.description} The working directory is the workspace inside Acode Terminal's Alpine Linux.`,
+            executionMode: "sequential" as const,
+          },
+        ]
+      : []),
     ...(options.fileOperations ? createFileOperationTools(workspace) : []),
-  ].map(withReadableErrors);
+  ] as ToolRegistration[];
+  return tools.map(withReadableErrors);
 }
 
-const LIST_DEFAULT_LIMIT = 500;
-const LIST_MAX_LIMIT = 2000;
-const GREP_DEFAULT_LIMIT = 100;
-const GREP_MAX_LIMIT = 1000;
-const REMOTE_GREP_FILES = 80;
-const GLOB_DEFAULT_LIMIT = 200;
-const GLOB_MAX_LIMIT = 1000;
-const GLOB_SCAN_FILES = 20_000;
-const REMOTE_GLOB_SCAN_FILES = 2_000;
+/** Say when a write landed in an open editor buffer, which Acode does not auto-save. */
+function noteBufferTarget<T extends JsonValue>(
+  output: ToolExecutionResult<T>,
+  api: ToolExecutionApi,
+  path: string,
+): ToolExecutionResult<T> {
+  const env = api.env as WorkspaceExecutionEnv | undefined;
+  if (env?.takeWriteTarget(path) !== "buffer") return output;
+  const note = "The file is open in the editor, so the change is in its unsaved buffer.";
+  const content = [...(output.content ?? [])];
+  const last = content.at(-1);
+  if (last?.type === "text")
+    content[content.length - 1] = { ...last, text: `${last.text} ${note}` };
+  else content.push({ type: "text", text: note });
+  return { ...output, content };
+}
 
 /**
- * Pi turns a thrown value into tool output with `error.message`, so a rejected Cordova
+ * Pi turns a thrown value into an error result with `error.message`, so a rejected Cordova
  * `FileError` or plain object would reach the model as "[object Object]".
  */
-function withReadableErrors(tool: AgentTool<any>): AgentTool<any> {
+export function withReadableErrors<T extends ToolRegistration>(tool: T): T {
   const execute = tool.execute;
   return {
     ...tool,
@@ -549,6 +518,16 @@ function withReadableErrors(tool: AgentTool<any>): AgentTool<any> {
     },
   };
 }
+
+const LIST_DEFAULT_LIMIT = 500;
+const LIST_MAX_LIMIT = 2000;
+const GREP_DEFAULT_LIMIT = 100;
+const GREP_MAX_LIMIT = 1000;
+const REMOTE_GREP_FILES = 80;
+const GLOB_DEFAULT_LIMIT = 200;
+const GLOB_MAX_LIMIT = 1000;
+const GLOB_SCAN_FILES = 20_000;
+const REMOTE_GLOB_SCAN_FILES = 2_000;
 
 function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
   const number = typeof value === "string" ? Number(value) : value;
@@ -596,72 +575,17 @@ function describeScope(path: string, glob?: string): string {
 /** Keep huge match lists inside Pi's tool-output budget, keeping any trailing notice. */
 function capOutput(lines: string[]): string {
   const text = lines.join("\n");
-  const truncation = truncateHead(text, { maxLines: Number.MAX_SAFE_INTEGER });
+  const truncation = truncateHead(text);
   if (!truncation.truncated) return text;
   return `${truncation.content}\n[Output truncated at ${formatSize(DEFAULT_MAX_BYTES)} after ${truncation.outputLines} of ${lines.length} lines. Lower limit or narrow the search.]`;
 }
 
-export { globMatcher } from "./glob";
-
-function result(content: string, details: ToolDetails): ToolResult {
+function result(content: string, details: ToolDetails): ToolExecutionResult<ToolDetails> {
   return { content: [{ type: "text", text: content }], details };
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("Operation aborted", "AbortError");
-}
-
-function assertTextFile(path: string, content: string): void {
-  if (isBinaryPath(path) || content.includes("\0"))
-    throw new Error(`${path} appears to be binary.`);
-  if (content.length > maxTextCharacters())
-    throw new Error(`${path} exceeds Acode's configured file-size limit.`);
-}
-
-function assertWritable(path: string, content: string): void {
-  if (!path) throw new Error("A file path is required.");
-  assertTextFile(path, content);
-}
-
-function maxTextCharacters(): number {
-  try {
-    const settings = acode.require("settings") as Acode.Settings;
-    return Math.max(1, settings.value.maxFileSize) * 1024 * 1024;
-  } catch {
-    return 12 * 1024 * 1024;
-  }
-}
-
-function isBinaryPath(path: string): boolean {
-  try {
-    const helpers = acode.require("helpers") as Acode.Helpers | undefined;
-    return helpers?.isBinary?.(path) === true;
-  } catch {
-    return false;
-  }
-}
-
-export function detectSupportedImageMimeType(bytes: Uint8Array): string | undefined {
-  if (startsWith(bytes, [0xff, 0xd8, 0xff]) && bytes[3] !== 0xf7) return "image/jpeg";
-  if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
-  if (asciiAt(bytes, 0, "GIF87a") || asciiAt(bytes, 0, "GIF89a")) return "image/gif";
-  if (asciiAt(bytes, 0, "RIFF") && asciiAt(bytes, 8, "WEBP")) return "image/webp";
-  if (asciiAt(bytes, 0, "BM") && bytes.length >= 26) return "image/bmp";
-  return undefined;
-}
-
-function startsWith(bytes: Uint8Array, signature: number[]): boolean {
-  return (
-    bytes.length >= signature.length && signature.every((byte, index) => bytes[index] === byte)
-  );
-}
-
-function asciiAt(bytes: Uint8Array, offset: number, value: string): boolean {
-  if (bytes.length < offset + value.length) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (bytes[offset + index] !== value.charCodeAt(index)) return false;
-  }
-  return true;
 }
 
 function truncate(value: string, max: number): string {

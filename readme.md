@@ -4,15 +4,16 @@ A coding agent that runs inside [Acode](https://acode.app) as an editor tab. It 
 
 ## Built on Pi
 
-This is not a from-scratch agent. The model loop, providers, sessions, skills, compaction, and tool calling come from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-agent-core` and `@earendil-works/pi-ai` 0.87.1). This plugin is the Acode/Android host: editor UI, workspace sandbox, approvals, and anything that has to work in a WebView without Node.
+This is not a from-scratch agent. The agent harness, providers, durable sessions, compaction, queues, retries, and the `read` / `write` / `edit` / `bash` tools come from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-durable` and `@earendil-works/pi-ai` 1.0.4). This plugin is the Acode/Android host: editor UI, workspace sandbox, approvals, and anything that has to work in a WebView without Node.
 
 If you already use Pi on a desktop, the same ideas apply here:
 
 - Providers, models, thinking levels, and device-code / API-key login
-- Session trees, compaction, steer / follow-up queues, fork, clone, `/tree`
+- Durable runs: every model turn and tool call is committed before it is shown, so a chat interrupted by Android can resume where it stopped
+- Branches, compaction, steer / follow-up queues, fork, clone, `/tree`
 - Skills and prompt templates (`.pi/skills`, `.agents/skills`, `/skill:name`, `load_skill`)
 - Project instructions from `AGENTS.md` (or `CLAUDE.md`)
-- Import / export of Pi JSONL sessions
+- Import / export of Pi CLI session files (JSONL)
 
 What Pi’s desktop CLI does with a real terminal, cwd, and Node is adapted for Acode: files go through `fsOperation` (local, SAF, FTP, SFTP), `bash` exists only on Terminal-backed folders, and OAuth uses device codes or a pasted browser callback instead of running a localhost server. Pi packages, tmux, and the Pi TUI are not part of this plugin.
 
@@ -91,27 +92,28 @@ Codex offers browser sign-in and device-code sign-in. Device-code sign-in connec
 
 **Workspace tools** (always available in an open folder)
 
-- `read_file` — text or images (`jpg`, `png`, `gif`, `webp`, `bmp`); dirty editor buffers are the source of truth. Long text is paged with `offset` / `limit`.
+- `read` — Pi's read tool; text or images (`jpg`, `png`, `gif`, `webp`, `bmp`); dirty editor buffers are the source of truth. Long text is paged with `offset` / `limit`.
 - `list_dir` — up to 500 entries per call (max 2000), paged with `offset`
 - `grep` — plain text or regex, optional file glob; 100 matches by default (max 1000), paged with `offset`
 - `glob` — workspace-relative patterns; 200 files by default (max 1000), paged with `offset`
-- `write_file` — create a file or replace it entirely
-- `edit_file` — targeted replacements (see below)
+- `write` — Pi's write tool: create a file or replace it entirely
+- `edit` — Pi's edit tool: targeted replacements (see below)
+- `bash` — Pi's bash tool, run in Acode Terminal on Terminal-backed folders
 
 Truncated results always say so and tell the agent how to continue. `grep` and `glob` also list any folders they skipped, so the agent knows the search was incomplete rather than assuming there were no matches.
 
 **Editing files**
 
-`edit_file` runs Pi's edit tool against the workspace:
+`edit` is Pi's edit tool, run against the workspace:
 
 - One call can carry several `edits[]`, each an exact `oldText` → `newText` replacement. Each `oldText` must match exactly one place in the original file, and edits must not overlap.
 - Matching tolerates small whitespace and typographic-quote differences. Replacement text is inserted literally (`$&`, `$1` are not expanded).
 - Line endings (CRLF / LF) and a UTF-8 BOM are preserved.
 - Older `old_string` / `new_string` calls still work; they are mapped onto `edits[]`.
 
-If the file is open in Acode, `edit_file` and `write_file` change the editor buffer and leave it unsaved. You keep editor undo and choose when to save. Otherwise the file is written to the workspace.
+If the file is open in Acode, `edit` and `write` change the editor buffer and leave it unsaved. You keep editor undo and choose when to save. Otherwise the file is written to the workspace.
 
-In **Ask** mode the approval prompt previews each `−` / `+` replacement, or the new file content for `write_file`. After the tool finishes, the work log shows a CodeMirror diff card for that change. The diff card covers one tool call; there is no session-wide review tray.
+In **Ask** mode the approval prompt previews each `−` / `+` replacement, or the new file content for `write`. After the tool finishes, the work log shows a CodeMirror diff card for that change. The diff card covers one tool call; there is no session-wide review tray.
 
 **Web**
 
@@ -204,12 +206,12 @@ Focus on bugs, missing tests, and API breakage. Do not rewrite style-only issues
 | `/name`            | Rename this session                    |
 | `/session`         | Usage and identity                     |
 | `/tasks`           | Task list (`clear`, `clear-completed`) |
-| `/tree`            | Jump to an earlier point               |
-| `/fork`            | Fork from a user message               |
-| `/clone`           | Clone the active branch                |
+| `/tree`            | Branch from an earlier point           |
+| `/fork`            | New chat from before a user message    |
+| `/clone`           | Copy the active branch into a new chat |
 | `/copy`            | Copy the latest assistant reply        |
-| `/export`          | Show Pi JSONL (copy from the sheet)    |
-| `/import`          | Import a Pi JSONL session              |
+| `/export`          | Pi CLI session JSONL (copy from sheet) |
+| `/import`          | Import a Pi CLI session (`.jsonl`)     |
 | `/reload`          | Reload skills and prompts              |
 | `/hotkeys`         | Composer shortcuts                     |
 
@@ -234,7 +236,8 @@ Remote walks stay sequential and capped (default 200 files, lower on FTP/SFTP se
 - Provider secrets use `PluginContext.getSecret` / `setSecret`. A host without that API keeps credentials in memory only.
 - Writes are sequential and gated. Open files stay unsaved until you save them.
 - `fetch_content` refuses localhost, private networks, and URLs with embedded credentials.
-- Backgrounding the app keeps the current run alive. If the app process is interrupted, the chat offers to resume the durable Pi operation from its last safe checkpoint.
+- Chats are stored in the WebView's IndexedDB, one Pi durable session per chat; deleting a chat removes its data. Provider keys and bearer tokens are redacted from what is written.
+- Backgrounding the app keeps the current run alive. If the app process is interrupted, the chat offers to resume the run from Pi's last committed step, or to discard it.
 
 Treat **Full access** as a real grant: the agent can write and delete files and, on Terminal workspaces, run commands.
 
@@ -258,9 +261,9 @@ runtime.open();
 runtime.selectProvider("openrouter");
 ```
 
-- `registerTool` — Pi `AgentTool`. Tools registered after a session starts are applied immediately.
+- `registerTool` — a Pi durable tool (`defineTool` from `@earendil-works/pi-durable`: `execute(args, api, context)`). Tools registered after a chat starts are applied immediately.
 - `registerProvider` — Pi provider. Live sessions pick it up.
-- `registerContext` — extra system-prompt text, rebuilt before every user turn.
+- `registerContext` — extra system-prompt text, rendered before each request as its own prompt section; Pi re-sends it only when it changes.
 - `registerFeature` — metadata only in 0.1.0; it is **not** shown in the UI yet.
 - Never evaluate arbitrary project JavaScript in the WebView. Cross-plugin tools must come from another Acode plugin.
 

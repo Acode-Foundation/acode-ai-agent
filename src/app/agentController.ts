@@ -1,5 +1,5 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { AuthEvent, AuthPrompt, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
+import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { Signal } from "../core/events";
 import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";
@@ -24,8 +24,8 @@ import { MutationGate } from "../permissions/mutationGate";
 import { openAuthTab } from "../platform/authTab";
 import { PortableCredentialStore } from "../platform/credentials";
 import { createModelCatalogStore } from "../platform/modelCatalogStore";
-import { createSessionStore, type SessionStore } from "../platform/sessionStore";
-import { createChatId, messagePlainText } from "../session/sessionText";
+import { ChatStore, createChatId, type ChatMeta } from "../session/chatStore";
+import { fromPiSessionJsonl } from "../session/history";
 import { ProviderRegistry } from "../providers/providerRegistry";
 import { AgentSession } from "../session/agentSession";
 import { pickGlobalSkillsFolder } from "../session/workspaceResources";
@@ -50,7 +50,7 @@ export class AgentController {
   readonly credentials: PortableCredentialStore;
   readonly providers: ProviderRegistry;
   readonly extensions = new ExtensionRegistry();
-  #sessionStore: SessionStore;
+  #sessionStore = new ChatStore();
   #sessions = new Map<string, AgentSession>();
   #sessionListeners = new Map<string, () => void>();
   #activeId?: string;
@@ -72,7 +72,6 @@ export class AgentController {
       createModelCatalogStore(ctx),
       () => this.settings.value.customEndpoints,
     );
-    this.#sessionStore = createSessionStore(ctx);
     this.#state = {
       status: "booting",
       messages: [],
@@ -90,7 +89,7 @@ export class AgentController {
     this.settings.subscribe((settings) => {
       this.providers.syncCustomEndpoints();
       this.#state.settings = settings;
-      void this.#activeSession()?.applySettings(settings);
+      this.#activeSession()?.applySettings();
       this.#emit();
     });
     this.#hostUnsubscribers = [
@@ -288,7 +287,7 @@ export class AgentController {
               { label: "Tokens", value: formatTokens(info.tokens) },
               { label: "Cost", value: info.cost > 0 ? `$${info.cost.toFixed(4)}` : "—" },
               { label: "Provider", value: this.settings.value.providerId },
-              { label: "Model", value: session.model?.name ?? this.settings.value.modelId },
+              { label: "Model", value: this.#state.model?.name ?? this.settings.value.modelId },
             ],
           },
         };
@@ -312,7 +311,12 @@ export class AgentController {
       case "export": {
         const body = await session.exportJsonl();
         return {
-          panel: { title: "Export session", description: "Pi JSONL export", body, copyText: body },
+          panel: {
+            title: "Export session",
+            description: "Pi session JSONL, readable by Pi CLI and /import",
+            body,
+            copyText: body,
+          },
         };
       }
       case "import":
@@ -329,59 +333,28 @@ export class AgentController {
     return this.#activeSession()?.treeItems() ?? [];
   }
 
-  async navigateTree(
-    targetId: string,
-    options: { summarize?: boolean; customInstructions?: string } = {},
-  ): Promise<string | undefined> {
-    return this.#activeSession()?.navigateTree(targetId, options);
+  async navigateTree(targetId: string): Promise<string | undefined> {
+    return this.#activeSession()?.navigateTree(targetId);
   }
 
+  /** Copy the active branch, or the history before a user message, into a new chat. */
   async forkConversation(targetId?: string): Promise<string | undefined> {
     const session = this.#activeSession();
     const workspace = this.#state.workspace;
     if (!session || !workspace) throw new Error("Open a session before forking it.");
-    const entries = await session.branchEntries(targetId);
-    if (!entries.length && !targetId) throw new Error("There is no session branch to clone.");
-    let restoredText: string | undefined;
-    if (targetId) {
-      const selected = entries.at(-1);
-      if (
-        !selected ||
-        selected.id !== targetId ||
-        selected.type !== "message" ||
-        selected.message.role !== "user"
-      ) {
-        throw new Error("Forks must start from a user message.");
-      }
-      restoredText = messagePlainText(selected.message);
-    }
-    // Pi branch forks require an ancestor of the current tip. For another
-    // tree path, fork the tree and navigate only the new session.
-    const wholeTree = Boolean(
-      targetId && !(await session.branchEntries()).some((entry) => entry.id === targetId),
-    );
-    const id = createChatId();
-    await this.#sessionStore.fork(
-      session.id,
-      {
-        id,
-        title: `${session.title} (${targetId ? "fork" : "clone"})`,
-        workspaceId: workspace.id,
-        workspaceName: workspace.name,
-        providerId: session.model?.provider ?? this.settings.value.providerId,
-        modelId: session.model?.id ?? this.settings.value.modelId,
-        updatedAt: Date.now(),
-      },
-      targetId,
-      session.laneName,
-      wholeTree,
-    );
-    await this.#sessionStore.copyTasks(session.id, id);
-    await this.#openChat(id, workspace);
-    if (wholeTree && targetId) await this.#activeSession()?.navigateTree(targetId);
+    const { entries, restoredText } = await session.historyUntil(targetId);
+    if (!entries.length && !targetId) throw new Error("There is no conversation to clone yet.");
+    const tasks = session.taskSnapshot();
+    await this.#openChat(createChatId(), workspace, {
+      title: `${session.title} (${targetId ? "fork" : "clone"})`,
+    });
+    const created = this.#activeSession();
+    await created?.importHistory(entries);
+    created?.restoreTasks(tasks);
     return restoredText;
   }
 
+  /** Import a Pi CLI session (JSONL) as a new chat. */
   async importConversation(): Promise<void> {
     const workspace = this.#state.workspace;
     if (!workspace) throw new Error("Open a project folder before importing a session.");
@@ -389,24 +362,16 @@ export class AgentController {
     if (typeof browser !== "function") throw new Error("Acode's file picker is unavailable.");
     let picked: SelectedFile;
     try {
-      picked = await browser("file", "Choose a Pi JSONL session", true);
+      picked = await browser("file", "Choose a Pi session (.jsonl)", true);
     } catch (error) {
       if (/cancel|abort/i.test(error instanceof Error ? error.message : String(error))) return;
       throw error;
     }
-    const text = await acode.fsOperation(picked.url).readFile("utf-8");
-
-    const id = createChatId();
-    await this.#sessionStore.import(text, {
-      id,
+    const entries = fromPiSessionJsonl(await acode.fsOperation(picked.url).readFile("utf-8"));
+    await this.#openChat(createChatId(), workspace, {
       title: picked.name.replace(/\.(?:jsonl?|txt)$/i, "") || "Imported session",
-      workspaceId: workspace.id,
-      workspaceName: workspace.name,
-      providerId: this.settings.value.providerId,
-      modelId: this.settings.value.modelId,
-      updatedAt: Date.now(),
     });
-    await this.#openChat(id, workspace);
+    await this.#activeSession()?.importHistory(entries);
   }
 
   async abort(): Promise<RestoredPrompt[]> {
@@ -448,7 +413,7 @@ export class AgentController {
 
   async #selectChat(chatId: string): Promise<void> {
     await this.#sessionStore.hydrate();
-    const meta = this.#sessionStore.list().find((item) => item.id === chatId);
+    const meta = this.#sessionStore.get(chatId);
     const workspaceId =
       this.#sessions.get(chatId)?.workspace.info.id ??
       meta?.workspaceId ??
@@ -599,8 +564,7 @@ export class AgentController {
     const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
     this.settings.update({ providerId, modelId: model.id, thinkingLevel });
     this.#state.models = models;
-    void this.#activeSession()?.setModel(model);
-    void this.#activeSession()?.setThinkingLevel(thinkingLevel);
+    void this.#applyModel();
     this.#state.model = model;
     this.#emit();
     void this.#refreshProviderModel(providerId, model.id);
@@ -610,8 +574,7 @@ export class AgentController {
     const model = this.providers.resolveModel(this.settings.value.providerId, modelId);
     const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
     this.settings.update({ modelId: model.id, thinkingLevel });
-    void this.#activeSession()?.setModel(model);
-    void this.#activeSession()?.setThinkingLevel(thinkingLevel);
+    void this.#applyModel();
     this.#state.model = model;
     this.#refreshModels();
     void this.#refreshProviderModel(this.settings.value.providerId, model.id);
@@ -630,7 +593,7 @@ export class AgentController {
         : { ...this.settings.value.customModels, [providerId]: [...new Set([id, ...existing])] },
     });
     const model = this.providers.resolveModel(providerId, id);
-    void this.#activeSession()?.setModel(model);
+    void this.#applyModel();
     this.#state.model = model;
     this.#refreshModels();
     void this.#refreshProviderModel(providerId, model.id);
@@ -656,7 +619,7 @@ export class AgentController {
 
   setThinkingLevel(level: AgentSettings["thinkingLevel"]): void {
     this.settings.update({ thinkingLevel: level });
-    void this.#activeSession()?.setThinkingLevel(level);
+    void this.#applyModel();
   }
 
   async refreshModels(force = false): Promise<void> {
@@ -775,12 +738,13 @@ export class AgentController {
     this.#activeSession()?.questionGate.cancel();
   }
 
-  registerTool(tool: AgentTool): () => void {
+  /** Add a Pi tool (`defineTool` from @earendil-works/pi-durable) to every chat. */
+  registerTool(tool: ToolRegistration): () => void {
     const unregister = this.extensions.registerTool(tool);
-    void this.#activeSession()?.refreshTools();
+    for (const session of this.#sessions.values()) session.refreshTools();
     return () => {
       unregister();
-      void this.#activeSession()?.refreshTools();
+      for (const session of this.#sessions.values()) session.refreshTools();
     };
   }
 
@@ -931,10 +895,19 @@ export class AgentController {
     const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
     if (thinkingLevel !== this.settings.value.thinkingLevel)
       this.settings.update({ thinkingLevel });
-    await this.#activeSession()?.setModel(model);
-    await this.#activeSession()?.setThinkingLevel(thinkingLevel);
+    await this.#applyModel();
     this.#state.model = model;
     this.#refreshModels();
+  }
+
+  /** Chats follow the global model picker; Pi records the choice on the conversation. */
+  async #applyModel(): Promise<void> {
+    const { providerId, modelId, thinkingLevel } = this.settings.value;
+    try {
+      await this.#activeSession()?.applyModel(providerId, modelId, thinkingLevel);
+    } catch (error) {
+      console.warn("AI model could not be applied to the chat", error);
+    }
   }
 
   #emit(): void {
@@ -949,41 +922,45 @@ export class AgentController {
   }
 
   #summaries(): ChatSummary[] {
-    const stored = this.#sessionStore.list();
-    const seen = new Set(stored.map((item) => item.id));
-    const extras = [...this.#sessions.values()]
-      .filter((session) => !seen.has(session.id))
-      .map((session) => ({
-        id: session.id,
-        title: session.title,
-        workspaceId: session.workspace.info.id,
-        workspaceName: session.workspace.info.name,
-        updatedAt: Date.now(),
-        running: session.snapshot.isRunning,
-      }));
-    return [
-      ...stored.map((item) => ({
-        ...item,
-        workspaceName:
-          this.#sessions.get(item.id)?.workspace.info.name ||
-          item.workspaceName ||
-          this.workspaces.find((workspace) => workspace.id === item.workspaceId)?.name ||
-          "",
-        running: this.#sessions.get(item.id)?.snapshot.isRunning ?? false,
-      })),
-      ...extras,
-    ];
+    return this.#sessionStore.list().map((item) => ({
+      id: item.id,
+      title: this.#sessions.get(item.id)?.title ?? item.title,
+      workspaceId: item.workspaceId,
+      updatedAt: item.updatedAt,
+      workspaceName:
+        this.#sessions.get(item.id)?.workspace.info.name ||
+        item.workspaceName ||
+        this.workspaces.find((workspace) => workspace.id === item.workspaceId)?.name ||
+        "",
+      running: this.#sessions.get(item.id)?.snapshot.isRunning ?? false,
+    }));
   }
 
-  async #openChat(chatId: string, info: WorkspaceInfo): Promise<void> {
+  async #openChat(
+    chatId: string,
+    info: WorkspaceInfo,
+    create: Partial<Pick<ChatMeta, "title">> = {},
+  ): Promise<void> {
     this.#unbindUi();
     this.settings.update({ activeWorkspaceId: info.id, activeChatId: chatId });
     let session = this.#sessions.get(chatId);
     if (!session) {
-      const stored = this.#sessionStore.load(chatId);
+      await this.#sessionStore.hydrate();
+      let meta = this.#sessionStore.get(chatId);
+      if (!meta) {
+        const now = Date.now();
+        meta = {
+          id: chatId,
+          title: create.title ?? "New chat",
+          workspaceId: info.id,
+          workspaceName: info.name,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await this.#sessionStore.save(meta);
+      }
       session = new AgentSession({
-        id: chatId,
-        title: stored?.title,
+        meta,
         workspace: new AcodeWorkspace(info.rootUri, info.name),
         providers: this.providers,
         extensions: this.extensions,
@@ -1048,7 +1025,7 @@ export class AgentController {
       tasks: snapshot?.tasks ?? [],
       recovery: snapshot?.recovery,
       retry: snapshot?.retry,
-      model: session?.model ?? this.#state.model,
+      model: this.#state.model,
       workspace: session?.workspace.info ?? this.#state.workspace,
     };
     this.#emit();

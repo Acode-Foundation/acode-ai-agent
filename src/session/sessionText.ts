@@ -1,13 +1,5 @@
-import type { AgentMessage, Entry } from "@earendil-works/pi-agent-core";
-
-export function titleFromEntries(entries: Entry[]): string {
-  for (const entry of entries) {
-    if (entry.type !== "message") continue;
-    const title = titleFromMessages([entry.message]);
-    if (title !== "New chat") return title;
-  }
-  return "New chat";
-}
+import type { ImageContent, UserMessage } from "@earendil-works/pi-ai";
+import type { TranscriptMessage } from "../core/types";
 
 export function titleFromMessages(messages: Array<{ role?: string; content?: unknown }>): string {
   const user = messages.find((message) => message.role === "user");
@@ -26,33 +18,25 @@ export function titleFromMessages(messages: Array<{ role?: string; content?: unk
   return compact ? compact.slice(0, 48) : "New chat";
 }
 
-export function messageImages(
-  message: AgentMessage,
-): Array<{ type: "image"; data: string; mimeType: string }> {
-  if (message.role !== "user" || typeof message.content === "string") return [];
-  return message.content.flatMap((part) =>
-    part.type === "image" && part.data && part.mimeType
+export function messageImages(message: { role: string; content?: unknown }): ImageContent[] {
+  if (message.role !== "user" || !Array.isArray(message.content)) return [];
+  return (message.content as Exclude<UserMessage["content"], string>).flatMap((part) =>
+    part?.type === "image" && part.data && part.mimeType
       ? [{ type: "image" as const, data: part.data, mimeType: part.mimeType }]
       : [],
   );
 }
 
-export function messagePlainText(message: AgentMessage): string {
-  if (message.role === "user") {
-    return typeof message.content === "string"
-      ? message.content
-      : message.content
-          .filter((part) => part.type === "text")
-          .map((part) => part.text)
-          .join("");
-  }
-  if ("summary" in message && typeof message.summary === "string") return message.summary;
-  return "";
-}
-
-export function createChatId(): string {
-  return (
-    globalThis.crypto?.randomUUID?.() ??
-    `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  );
+export function messagePlainText(
+  message: TranscriptMessage | { role: string; content?: unknown },
+): string {
+  if (message.role === "compactionSummary" && "summary" in message) return String(message.summary);
+  if (!("content" in message)) return "";
+  const content = message.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part): part is { type: "text"; text: string } => part?.type === "text")
+    .map((part) => part.text)
+    .join("");
 }

@@ -1,8 +1,7 @@
-import { Copy, LocateFixed, Search, Sparkles, X } from "lucide-preact";
+import { Copy, LocateFixed, Search, X } from "lucide-preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
 import type { SessionTreeItem } from "../core/types";
-import { pickAcodeSelect } from "../platform/acodeSelect";
 import { Sheet } from "./Sheet";
 import {
   countTreeBranches,
@@ -109,14 +108,11 @@ export function TreeSheet({
     );
   };
 
-  const navigate = (
-    options: { summarize?: boolean; customInstructions?: string },
-    close: () => void,
-  ) => {
+  const navigate = (close: () => void) => {
     if (!selected || selected.current || busy) return;
     setBusy(true);
     void controller
-      .navigateTree(selected.id, options)
+      .navigateTree(selected.id)
       .then((text) => {
         close();
         if (text) onRestorePrompt(text);
@@ -125,31 +121,6 @@ export function TreeSheet({
         onError(error instanceof Error ? error.message : String(error));
         setBusy(false);
       });
-  };
-
-  const summarizeAndNavigate = (close: () => void) => {
-    if (!selected || selected.current || busy) return;
-    void pickAcodeSelect(
-      "Branch summary",
-      [
-        { value: "default", text: "Summarize abandoned branch" },
-        { value: "custom", text: "Summarize with custom focus" },
-      ],
-      "default",
-    )
-      .then(async (choice) => {
-        if (!choice) return;
-        if (choice === "default") {
-          navigate({ summarize: true }, close);
-          return;
-        }
-        const instructions = await acode.prompt("Summary focus", "", "textarea", {
-          placeholder: "What should the branch summary preserve?",
-        });
-        if (instructions?.trim())
-          navigate({ summarize: true, customInstructions: instructions.trim() }, close);
-      })
-      .catch((error) => onError(error instanceof Error ? error.message : String(error)));
   };
 
   const fork = (close: () => void) => {
@@ -181,7 +152,7 @@ export function TreeSheet({
       if (row.kind === "user") fork(close);
       return;
     }
-    if (!row.current) navigate({ summarize: false }, close);
+    if (!row.current) navigate(close);
   };
 
   const canGo =
@@ -369,24 +340,14 @@ export function TreeSheet({
                   {primaryLabel}
                 </button>
               ) : (
-                <>
-                  <button
-                    type="button"
-                    disabled={!canGo}
-                    onClick={() => summarizeAndNavigate(close)}
-                  >
-                    <Sparkles size={14} strokeWidth={2} />
-                    Summarize
-                  </button>
-                  <button
-                    class="primary"
-                    type="button"
-                    disabled={!canGo}
-                    onClick={() => navigate({ summarize: false }, close)}
-                  >
-                    {primaryLabel}
-                  </button>
-                </>
+                <button
+                  class="primary"
+                  type="button"
+                  disabled={!canGo}
+                  onClick={() => navigate(close)}
+                >
+                  {primaryLabel}
+                </button>
               )}
             </div>
           </footer>

@@ -1,4 +1,4 @@
-import type { PromptTemplate, Skill } from "@earendil-works/pi-agent-core";
+import type { PromptTemplate, Skill } from "../session/promptTemplates";
 
 export type SlashCommandSource = "action" | "prompt" | "skill";
 
