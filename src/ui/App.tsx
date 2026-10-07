@@ -273,6 +273,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                   </article>
                 )}
                 {turn.error && <ErrorNotice message={turn.error} />}
+                {turn.stopped && !turn.work.length && <div class="turn-stopped">Stopped</div>}
                 {turn.streaming && (
                   <WorkingIndicator startedAt={turn.startedAt} label={workingLabel} />
                 )}
@@ -339,6 +340,11 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           controller={controller}
           running={running}
           disabled={!state.workspace || Boolean(state.recovery)}
+          disabledReason={
+            state.workspace && state.recovery
+              ? "Resume or discard the interrupted run first"
+              : undefined
+          }
           permissionMode={state.settings.permissionMode}
           effort={state.settings.thinkingLevel}
           effortLevels={thinkingLevelsFor(state.model)}

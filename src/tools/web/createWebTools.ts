@@ -43,6 +43,7 @@ export function createWebTools(ctx: WebSearchContext): ToolRegistration[] {
       ),
     }),
     executionMode: "parallel",
+    replay: "safe",
     execute: async (params, api, context) => {
       const signal = context.abortSignal;
       const input = params as {
@@ -97,6 +98,7 @@ export function createWebTools(ctx: WebSearchContext): ToolRegistration[] {
       urls: Type.Optional(Type.Array(Type.String(), { description: "Multiple URLs" })),
     }),
     executionMode: "parallel",
+    replay: "safe",
     execute: async (params, api, context) => {
       const signal = context.abortSignal;
       const input = params as { url?: string; urls?: string[] };

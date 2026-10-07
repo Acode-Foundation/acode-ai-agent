@@ -2073,6 +2073,14 @@
 .compact-banner .md {
   margin-top: 8px;
 }
+.work-stopped,
+.turn-stopped {
+  color: var(--muted);
+}
+.turn-stopped {
+  font-size: 12px;
+  padding: 2px 2px 6px;
+}
 .compact-status {
   color: var(--muted);
   font-size: 12px;

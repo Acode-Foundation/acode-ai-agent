@@ -68,3 +68,33 @@ test("redacts provider keys in persisted records but keeps image data intact", (
   expect(redacted.text).toBe("key [REDACTED_API_KEY] and Bearer [REDACTED]");
   expect(redacted.image).toEqual(image);
 });
+
+test("ends a turn Pi recorded as aborted with a stop notice", () => {
+  const entries = [
+    { id: 1, conversationId: 1, kind: "pi.user", model: [user("run it", 10)] },
+    {
+      id: 2,
+      conversationId: 1,
+      kind: "pi.tool-result",
+      model: [
+        {
+          role: "toolResult",
+          toolCallId: "c",
+          toolName: "bash",
+          content: [],
+          isError: true,
+          timestamp: 20,
+        },
+      ],
+    },
+    { id: 3, conversationId: 1, kind: "pi.user", model: [user("next", 30)] },
+  ] as unknown as EntryRecord[];
+  const messages = transcriptFromEntries(entries, new Set([1 as EntryRecord["id"]]));
+  expect(messages.map((message) => message.role)).toEqual([
+    "user",
+    "toolResult",
+    "runNotice",
+    "user",
+  ]);
+  expect(messages[2]).toEqual({ role: "runNotice", timestamp: 20 });
+});

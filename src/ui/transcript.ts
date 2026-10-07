@@ -34,6 +34,8 @@ export type ChatTurn = {
   answer?: string;
   notice?: { kind: "compaction"; text: string };
   error?: string;
+  /** Pi recorded this turn's prompt as aborted: stopped, or discarded after an interruption. */
+  stopped?: boolean;
   streaming?: boolean;
   startedAt?: number;
   endedAt?: number;
@@ -85,6 +87,8 @@ export function buildTurns(
       bucket = [message];
       continue;
     }
+    // A stop marker closes its turn; a marker without a turn has nothing to annotate.
+    if (message.role === "runNotice" && !bucket.length) continue;
     if (!bucket.length) bucket = [];
     bucket.push(message);
   }
@@ -315,7 +319,9 @@ function noticeTurn(message: AgentMessage): ChatTurn {
   };
 }
 
-function projectTurn(messages: AgentMessage[], streaming: boolean): ChatTurn {
+function projectTurn(allMessages: AgentMessage[], streaming: boolean): ChatTurn {
+  const notice = [...allMessages].reverse().find((message) => message.role === "runNotice");
+  const messages = allMessages.filter((message) => message.role !== "runNotice");
   const userCandidate = messages.find((message) => message.role === "user");
   const user = userCandidate && !isReminderMessage(userCandidate) ? userCandidate : undefined;
   const parts = flatten(messages);
@@ -399,7 +405,8 @@ function projectTurn(messages: AgentMessage[], streaming: boolean): ChatTurn {
     }
   }
 
-  const lastMessage = messages[messages.length - 1];
+  // The stop marker's time ends the turn, so its duration is how long it ran before the stop.
+  const lastMessage = allMessages[allMessages.length - 1];
   const visibleAnswer = answer.join("\n\n").trim() || undefined;
   return {
     id: user ? `user-${user.timestamp}` : `turn-${messages[0]?.timestamp ?? 0}`,
@@ -408,6 +415,7 @@ function projectTurn(messages: AgentMessage[], streaming: boolean): ChatTurn {
     work,
     answer: visibleAnswer,
     error: turnError(messages, work, visibleAnswer, streaming),
+    stopped: notice ? true : undefined,
     streaming,
     startedAt: user?.timestamp ?? messages[0]?.timestamp,
     endedAt: lastMessage && "timestamp" in lastMessage ? lastMessage.timestamp : undefined,

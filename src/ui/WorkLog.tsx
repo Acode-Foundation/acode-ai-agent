@@ -90,6 +90,7 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
       >
         <span>
           {duration === undefined ? "Worked" : `Worked for ${formatWorkDuration(duration)}`}
+          {turn.stopped && <span class="work-stopped"> · Stopped</span>}
         </span>
         <RotateIcon open={expanded} class="work-chevron">
           <ChevronRight size={14} strokeWidth={2} />

@@ -202,3 +202,12 @@ function fakeExecutor(
   };
   return executor;
 }
+
+test("bash does not promise a spill file that Acode Terminal never writes", () => {
+  const tool = createWorkspaceTools(
+    workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
+    { maxWalkFiles: () => 10, bash: true },
+  ).find((candidate) => candidate.name === "bash")!;
+  expect(tool.description).not.toContain("temp file");
+  expect(tool.description).toContain("Acode Terminal");
+});

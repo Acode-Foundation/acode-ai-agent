@@ -21,10 +21,32 @@ const SUMMARY_PREFIX =
 const SUMMARY_SUFFIX = "\n</summary>";
 const PAGE = 500;
 
-/** UI messages for the active transcript: model messages, with compactions and resets as notices. */
-export function transcriptFromEntries(entries: readonly EntryRecord[]): TranscriptMessage[] {
+/**
+ * UI messages for the active transcript: model messages, with compactions and resets as
+ * notices. `stopped` holds user entries whose prompt Pi settled as aborted; their turn
+ * ends with a stop notice at the time of its last message.
+ */
+export function transcriptFromEntries(
+  entries: readonly EntryRecord[],
+  stopped: ReadonlySet<EntryId> = new Set(),
+): TranscriptMessage[] {
   const messages: TranscriptMessage[] = [];
+  let open: EntryId | undefined;
+  const closeTurn = () => {
+    if (open !== undefined && stopped.has(open)) {
+      const last = messages.at(-1);
+      messages.push({
+        role: "runNotice",
+        timestamp: last && "timestamp" in last ? last.timestamp : 0,
+      });
+    }
+    open = undefined;
+  };
   for (const entry of entries) {
+    if (UserEntry.is(entry)) {
+      closeTurn();
+      open = entry.id;
+    }
     if (CompactionEntry.is(entry)) {
       messages.push({
         role: "compactionSummary",
@@ -47,6 +69,7 @@ export function transcriptFromEntries(entries: readonly EntryRecord[]): Transcri
         messages.push(message);
     }
   }
+  closeTurn();
   return messages;
 }
 

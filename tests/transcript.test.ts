@@ -492,3 +492,13 @@ test("hides transient task reminders from the chat transcript", () => {
   expect(turns.some((turn) => turn.user?.includes("system-reminder"))).toBe(false);
   expect(turns.at(-1)?.answer).toBe("Continuing.");
 });
+
+test("marks a stopped turn and ends its duration at the stop", () => {
+  const turns = buildTurns([
+    { role: "user", content: "run it", timestamp: 1_000 },
+    { role: "runNotice", timestamp: 61_000 },
+    { role: "user", content: "next", timestamp: 70_000 },
+  ] as AgentMessage[]);
+  expect(turns[0]).toMatchObject({ stopped: true, startedAt: 1_000, endedAt: 61_000 });
+  expect(turns[1]?.stopped).toBeUndefined();
+});

@@ -53,6 +53,8 @@ type Props = {
   controller: AgentController;
   running: boolean;
   disabled: boolean;
+  /** Why the composer is disabled; shown as its placeholder. */
+  disabledReason?: string;
   permissionMode: PermissionMode;
   effort: string;
   effortLevels: Array<{ id: string; label: string }>;
@@ -413,7 +415,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
           {empty && (
             <span class="composer-placeholder">
               {props.disabled
-                ? "Open a folder to begin"
+                ? (props.disabledReason ?? "Open a folder to begin")
                 : props.running
                   ? "Steer now, or queue a follow-up…"
                   : "Ask anything…  / commands  @ files"}

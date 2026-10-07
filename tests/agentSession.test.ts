@@ -191,8 +191,26 @@ test("abort stops the run and returns queued prompts for the composer", async ()
   await settle(session, (snapshot) => snapshot.queued.length === 1);
   const restored = await session.abort();
   expect(restored.map((item) => item.text)).toEqual(["second"]);
-  const done = await settle(session, (snapshot) => !snapshot.isRunning);
+  const done = await settle(
+    session,
+    (snapshot) => !snapshot.isRunning && snapshot.messages.at(-1)?.role === "runNotice",
+  );
   expect(done.queued).toEqual([]);
+  expect(done.messages.at(-1)).toMatchObject({ role: "runNotice" });
+
+  // The notice comes from Pi's submission record; nothing extra reaches the model.
+  let seen: string[] = [];
+  env.faux.setResponses([
+    (context) => {
+      seen = context.messages.map((message) => message.role);
+      return fauxAssistantMessage("after stop");
+    },
+  ]);
+  await session.prompt("third");
+  await settle(session, (snapshot) =>
+    snapshot.messages.some((message) => JSON.stringify(message).includes("after stop")),
+  );
+  expect(seen).not.toContain("runNotice");
 });
 
 test("offers to resume a run the previous app session left unfinished", async () => {
@@ -212,6 +230,8 @@ test("offers to resume a run the previous app session left unfinished", async ()
   env.faux.setResponses([fauxAssistantMessage("Resumed answer")]);
   const { session } = await env.open(env.store.get("chat-resume")!);
   expect(session.snapshot.recovery?.kind).toBe("interrupted");
+  // Nothing runs until the user resumes, so Resume and Discard stay usable.
+  expect(session.snapshot.isRunning).toBe(false);
   await session.resume();
   const done = await settle(
     session,

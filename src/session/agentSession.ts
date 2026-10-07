@@ -20,12 +20,14 @@ import {
   type Conversation,
   type ConversationId,
   type ConversationView,
+  type Cursor,
   type EntryDraft,
   type EntryId,
   type HarnessSettings,
   type InboxState,
   type LiveState,
   type Registry,
+  type Storage,
   type Submission,
   type ToolRegistration,
   type UsageState,
@@ -143,6 +145,10 @@ export class AgentSession {
   #toolStarts = new Map<string, number>();
   #recovery?: RunRecovery;
   #runError?: string;
+  #storage?: Storage;
+  /** User entries whose prompt Pi settled as aborted; their turns show as stopped. */
+  #stopped = new Set<EntryId>();
+  #wasRunning = false;
   #persistTasks: Promise<void> = Promise.resolve();
   #snapshot: AgentSessionSnapshot = {
     messages: [],
@@ -200,6 +206,7 @@ export class AgentSession {
     this.#resources = await loadWorkspaceResources(this.workspace, settings.globalSkillRoots);
     this.#installExtensions();
     const storage = await this.#store.openStorage(this.id);
+    this.#storage = storage;
     this.#harness = await Harness.open(
       storage,
       {
@@ -233,6 +240,7 @@ export class AgentSession {
         this.#publish();
       }),
     );
+    await this.#refreshStopped();
     await this.#activate(conversation);
     await this.applyModel(settings.providerId, settings.modelId, settings.thinkingLevel);
   }
@@ -431,6 +439,7 @@ export class AgentSession {
     this.#publish();
     try {
       await conversation.abort(context);
+      await this.#refreshStopped();
     } catch (error) {
       this.#runError = error instanceof Error ? error.message : String(error);
     }
@@ -661,8 +670,16 @@ export class AgentSession {
     const inbox = view?.docs["pi.inbox"] as unknown as InboxState | undefined;
     const usage = view?.docs["pi.usage"] as unknown as UsageState | undefined;
     const entries = view?.entries ?? [];
-    const messages = transcriptFromEntries(entries);
-    const running = Boolean(live?.run);
+    const messages = transcriptFromEntries(entries, this.#stopped);
+    // Interrupted work stays in pi.live, but nothing runs until the user resumes it.
+    const paused = Boolean(this.#recovery);
+    const running = Boolean(live?.run) && !paused;
+    if (this.#wasRunning && !running)
+      void this.#refreshStopped().then(
+        () => this.#publish(),
+        () => undefined,
+      );
+    this.#wasRunning = running;
     const compacting = Boolean(live?.compactions?.length);
     const streaming = live?.generation?.message as AssistantMessage | undefined;
     const retry = live?.generation?.retry;
@@ -670,11 +687,11 @@ export class AgentSession {
     this.#snapshot = {
       messages,
       streamingMessage: running ? streaming : undefined,
-      activities: this.#activities(live, messages, streaming),
+      activities: paused ? [] : this.#activities(live, messages, streaming),
       queued: (inbox?.items ?? []).flatMap((item) =>
         item.mode === "write" ? [] : [queuedPrompt(item.content, item.mode)],
       ),
-      isRunning: running || Boolean(live?.compactions?.some((item) => item.blocking)),
+      isRunning: running || (!paused && Boolean(live?.compactions?.some((item) => item.blocking))),
       compacting,
       usage: totalUsage(usage),
       contextTokens: estimateContextTokens(
@@ -729,6 +746,22 @@ export class AgentSession {
         startedAt,
       };
     });
+  }
+
+  /** Read Pi's submission records for prompts that ended aborted (Stop or Discard). */
+  async #refreshStopped(): Promise<void> {
+    const storage = this.#storage;
+    if (!storage) return;
+    const stopped = new Set<EntryId>();
+    let cursor: Cursor | undefined;
+    do {
+      const page = await storage.scanSubmissions({ status: "unanswered" }, 200, cursor, context);
+      for (const record of page.items)
+        if (record.type === "input" && record.reason === "aborted" && record.entry !== undefined)
+          stopped.add(record.entry);
+      cursor = page.next;
+    } while (cursor);
+    this.#stopped = stopped;
   }
 
   async #loadTasks(): Promise<void> {

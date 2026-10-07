@@ -424,3 +424,16 @@ function legacyWorkspaceTools(
   const env = new WorkspaceExecutionEnv(workspace, null);
   return createWorkspaceTools(workspace, options).map((tool) => legacyTool(tool, env));
 }
+
+test("read-only tools rerun after an interruption; writes do not", () => {
+  const tools = createWorkspaceTools(memoryWorkspace({}), { maxWalkFiles: () => 10 });
+  const replay = Object.fromEntries(tools.map((item) => [item.name, item.replay ?? "unsafe"]));
+  expect(replay).toMatchObject({
+    read: "safe",
+    list_dir: "safe",
+    grep: "safe",
+    glob: "safe",
+    write: "unsafe",
+    edit: "unsafe",
+  });
+});

@@ -59,12 +59,19 @@ export type CompactionNotice = {
   timestamp: number;
 };
 
+/** Ends a turn whose prompt Pi recorded as aborted (Stop, or Discard after an interruption). */
+export type RunNotice = {
+  role: "runNotice";
+  timestamp: number;
+};
+
 /** What the chat UI renders: model messages from the active transcript, plus notices. */
 export type TranscriptMessage =
   | UserMessage
   | AssistantMessage
   | ToolResultMessage
-  | CompactionNotice;
+  | CompactionNotice
+  | RunNotice;
 
 export type ChatSummary = {
   id: string;

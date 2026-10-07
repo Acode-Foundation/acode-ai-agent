@@ -60,6 +60,7 @@ export function createWorkspaceTools(
       `${piRead.description} Images (jpg, png, gif, webp, bmp) are returned as attachments the model can see. ` +
       "Paths are relative to the workspace.",
     executionMode,
+    replay: "safe",
     execute: async (args, api, context) => {
       const path = workspace.sandbox.normalize(args.path);
       if (isImagePath(path)) {
@@ -119,6 +120,8 @@ export function createWorkspaceTools(
       ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
+    // Read-only: rerun after an interruption instead of failing the call.
+    replay: "safe",
     execute: async (params, _api, context) => {
       const signal = context.abortSignal;
       const input = params as { path?: string; offset?: number; limit?: number };
@@ -195,6 +198,8 @@ export function createWorkspaceTools(
       ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
+    // Read-only: rerun after an interruption instead of failing the call.
+    replay: "safe",
     execute: async (params, _api, context) => {
       const signal = context.abortSignal;
       const input = params as {
@@ -370,6 +375,8 @@ export function createWorkspaceTools(
       ),
     }),
     executionMode: workspace.info.remote ? "sequential" : "parallel",
+    // Read-only: rerun after an interruption instead of failing the call.
+    replay: "safe",
     execute: async (params, _api, context) => {
       const signal = context.abortSignal;
       const input = params as { pattern: string; path?: string; limit?: number; offset?: number };
@@ -473,7 +480,10 @@ export function createWorkspaceTools(
       ? [
           {
             ...bash,
-            description: `${bash.description} The working directory is the workspace inside Acode Terminal's Alpine Linux.`,
+            // Acode Terminal streams output but cannot spill it to a file the agent could read.
+            description:
+              `${bash.description.replace(/ If truncated, full output is saved to a temp file\./, " If truncated, rerun with narrower output (grep, head, tail) to see the rest.")} ` +
+              "The working directory is the workspace inside Acode Terminal's Alpine Linux.",
             executionMode: "sequential" as const,
           },
         ]
