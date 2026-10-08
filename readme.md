@@ -44,7 +44,6 @@ The plugin does not run a cloud backend. Inference happens through the provider 
 2. Open the agent from any of:
    - the **AI Agent** sidebar app
    - command palette → **AI Agent: Open**
-   - plugin settings → **Open AI Agent**
 3. Tap the overflow menu and add a provider credential.
 4. Ask it to inspect the project, edit a file, or review the open buffer.
 
@@ -59,6 +58,60 @@ The agent needs a folder. Without one, tools have no sandbox.
 | `AI Agent: New Random project` | Creates a starter project under Home and opens it |
 
 Sessions are stored per project. The sidebar lists them, can search them, and can open a session in a dedicated tab.
+
+## New to coding agents?
+
+A coding agent is a chat that can act on your project. You describe a task in plain words; the agent reads files, searches, edits code, and (on Terminal folders) runs commands until the task is done, then tells you what it did. You stay in control: in the default mode nothing changes on disk without your approval.
+
+**First-time setup**
+
+1. Open a project folder in Acode. The agent only works inside that folder.
+2. Open the agent and tap **⋯** (top right) to add a provider. If you are unsure which to pick, an [OpenRouter](https://openrouter.ai) API key gives you many models behind one key; paste it and you are done.
+3. Look at the chip in the composer, for example `Ask · Med · <model>`. Tap it to choose:
+   - **Permission mode** — start with **Ask**, so you approve every edit, delete, and command.
+   - **Thinking level** — higher thinks longer and costs more; **Med** is a good default.
+   - **Model** — the model that answers.
+
+**Your first task**
+
+An empty chat offers ready-made prompts such as **Map the project** and **Review the open file**. Tapping one fills the composer; tap send. Good first requests:
+
+- "Explain how this project is organized."
+- "Find where the login form is validated and explain it."
+- "Fix the typo in the README title."
+
+**Writing good requests**
+
+- Be specific: say what to change and what "done" looks like ("the button should be disabled while saving").
+- Point at files with `@` (for example `@src/app.js`) so the agent does not have to search for them.
+- For bigger changes, ask for a plan first ("Plan this, don't edit yet"), then say "go ahead".
+- Keep one task per chat. Tap **+** for a new chat when you switch topics.
+
+**While it works**
+
+- The work log shows each step (reading a file, searching, editing) as it happens. The running step shimmers and shows how long it has been running; tap a finished step to see its details.
+- Tap **Stop** to end the run. Typing and sending while it runs **steers** it (adds instructions mid-run); **Queue follow-up** saves a message for after it finishes.
+- When it finishes, the log collapses to "Worked for …"; tap it to look back at the steps.
+
+**Reviewing changes**
+
+- In **Ask** mode each edit shows a preview of the removed (`−`) and added (`+`) lines before you approve it.
+- Edits to files open in Acode stay unsaved, so you can read them and use editor undo before saving.
+- After a turn, a card lists the files it changed. **Undo** puts them back as they were before that turn.
+- Every message shows when it was sent, with a copy button (tap the time for the full date).
+
+**Keeping cost and context in check**
+
+- Every message, file, and tool result uses the model's context window. The ring in the composer shows how full it is.
+- When it gets full, run `/compact` to summarize older turns, or start a new chat.
+- Usage is billed by your provider; `/session` shows this chat's usage.
+
+**Common problems**
+
+- **"Open a folder first"** — open a project folder in Acode's sidebar.
+- **Empty or failed response** — try another model, or lower the thinking level.
+- **It can't run commands** — `bash` only exists on Acode Terminal folders; elsewhere the agent edits files but cannot run them.
+- **"Run interrupted"** — Android stopped the app mid-run. Tap **Resume** to continue from the last saved step, or **Discard**.
 
 ## Providers
 
