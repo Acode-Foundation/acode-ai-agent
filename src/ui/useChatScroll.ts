@@ -5,6 +5,53 @@ import { COLLAPSE_MOTION_EVENT } from "./Collapse";
 const AWAY_PX = 160;
 const AT_END_PX = 24;
 const KEYBOARD_HOLD_MS = 560;
+/** Longer than any expand/collapse spring, so a lost end event only pauses following briefly. */
+const COLLAPSE_FALLBACK_MS = 900;
+/** A tap this close before an expand/collapse means the user started it. */
+const USER_MOTION_MS = 400;
+
+export type MotionGate = {
+  readonly busy: boolean;
+  start: (target: EventTarget) => void;
+  end: (target: EventTarget) => void;
+  dispose: () => void;
+};
+
+/**
+ * Tracks running expand/collapse animations, which pause following. An interrupted animation
+ * (motion's stop() never settles its promise) or one whose row unmounts mid-flight never
+ * reports its end, so each animation also releases itself after a fallback delay.
+ */
+export function createMotionGate(
+  onIdle: () => void,
+  fallbackMs = COLLAPSE_FALLBACK_MS,
+): MotionGate {
+  const active = new Map<EventTarget, ReturnType<typeof setTimeout>>();
+  const end = (target: EventTarget) => {
+    const timer = active.get(target);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    active.delete(target);
+    if (!active.size) onIdle();
+  };
+  return {
+    get busy() {
+      return active.size > 0;
+    },
+    start(target) {
+      clearTimeout(active.get(target));
+      active.set(
+        target,
+        setTimeout(() => end(target), fallbackMs),
+      );
+    },
+    end,
+    dispose() {
+      for (const timer of active.values()) clearTimeout(timer);
+      active.clear();
+    },
+  };
+}
 
 export type ThreadSnapshot = {
   scrollTop: number;
@@ -51,16 +98,20 @@ function getAcodeKeyboard(): Acode.Keyboard | undefined {
  */
 export function useChatScroll(containerRef: RefObject<HTMLElement | null>, followKey: unknown) {
   const pinned = useRef(true);
-  const suppress = useRef(0);
+  const gate = useRef<MotionGate | null>(null);
   const viewportLock = useRef(0);
   const programmatic = useRef(false);
   const jumpTimer = useRef(0);
   const holdTimer = useRef(0);
   const lastHeight = useRef(0);
   const lastUser = useRef<ThreadSnapshot | null>(null);
+  const lastInput = useRef(0);
+  const motionSince = useRef(0);
   const pending = useRef<ThreadSnapshot | null>(null);
   const composerArmed = useRef(false);
   const [showLatest, setShowLatest] = useState(false);
+
+  const animating = () => gate.current?.busy === true;
 
   const distanceFromEnd = () => {
     const element = containerRef.current;
@@ -137,7 +188,7 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
 
   const syncFromPosition = () => {
     const away = distanceFromEnd() > AWAY_PX;
-    if (suppress.current > 0 || viewportLock.current > 0) return;
+    if (animating() || viewportLock.current > 0) return;
     pinned.current = !away;
     setShowLatest(away);
     rememberUser();
@@ -146,7 +197,7 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
   const scrollToEnd = (force = false, smooth = false) => {
     const element = containerRef.current;
     if (!element) return;
-    if (!force && (suppress.current > 0 || !pinned.current)) return;
+    if (!force && (animating() || !pinned.current)) return;
     const top = Math.max(0, element.scrollHeight - element.clientHeight);
     const reduce =
       typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -176,33 +227,48 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
     rememberUser();
 
     const onScroll = () => {
-      if (programmatic.current || suppress.current > 0 || viewportLock.current > 0) return;
+      if (programmatic.current || animating() || viewportLock.current > 0) return;
       if (lastHeight.current > 0 && element.clientHeight !== lastHeight.current) return;
       pending.current = null;
       syncFromPosition();
     };
+    // A row the user opened must not be yanked away, so their position decides; a row that
+    // opened by itself (a failed tool, a row regrouping) keeps following if they were pinned.
+    const motion = createMotionGate(() => {
+      if (lastInput.current >= motionSince.current - USER_MOTION_MS) syncFromPosition();
+      else scrollToEnd();
+    });
+    gate.current = motion;
+    const onInput = () => {
+      lastInput.current = performance.now();
+    };
     const onCollapse = (event: Event) => {
       const phase = (event as CustomEvent<{ phase?: "start" | "end" }>).detail?.phase;
+      const target = event.target;
+      if (!target) return;
       if (phase === "start") {
-        suppress.current += 1;
+        if (!motion.busy) motionSince.current = performance.now();
+        motion.start(target);
         return;
       }
       if (phase !== "end") return;
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          suppress.current = Math.max(0, suppress.current - 1);
-          if (suppress.current === 0) syncFromPosition();
-        });
+        requestAnimationFrame(() => motion.end(target));
       });
     };
 
+    const inputs = ["pointerdown", "touchstart", "wheel", "keydown"] as const;
     element.addEventListener("scroll", onScroll, { passive: true });
     element.addEventListener(COLLAPSE_MOTION_EVENT, onCollapse);
+    for (const type of inputs) element.addEventListener(type, onInput, { passive: true });
     return () => {
       element.removeEventListener("scroll", onScroll);
       element.removeEventListener(COLLAPSE_MOTION_EVENT, onCollapse);
+      for (const type of inputs) element.removeEventListener(type, onInput);
       window.clearTimeout(jumpTimer.current);
       window.clearTimeout(holdTimer.current);
+      motion.dispose();
+      gate.current = null;
     };
   }, [containerRef]);
 
@@ -220,7 +286,7 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
       const height = element.clientHeight;
       const viewportChanged = lastHeight.current > 0 && height !== lastHeight.current;
       lastHeight.current = height;
-      if (suppress.current > 0 || !viewportChanged) return;
+      if (animating() || !viewportChanged) return;
       if (!composerArmed.current && !pending.current) {
         if (pinned.current && lastUser.current?.atEnd) scrollToEnd();
         return;
@@ -232,7 +298,7 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
     };
 
     const onContent = () => {
-      if (suppress.current > 0 || viewportLock.current > 0) return;
+      if (animating() || viewportLock.current > 0) return;
       scrollToEnd();
     };
 
@@ -243,8 +309,24 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
       }
     });
     observer.observe(element);
-    const content = element.firstElementChild;
-    if (content) observer.observe(content);
+    // The empty state is replaced by the thread on the first message, so watch whichever
+    // children the container has now rather than the one it had at mount.
+    const observed = new Set<Element>();
+    const observeChildren = () => {
+      for (const child of observed) {
+        if (child.parentElement === element) continue;
+        observer.unobserve(child);
+        observed.delete(child);
+      }
+      for (const child of element.children) {
+        if (observed.has(child)) continue;
+        observer.observe(child);
+        observed.add(child);
+      }
+    };
+    observeChildren();
+    const children = new MutationObserver(observeChildren);
+    children.observe(element, { childList: true });
 
     const keyboard = getAcodeKeyboard();
     const onShowStart = () => {
@@ -274,6 +356,7 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
 
     return () => {
       observer.disconnect();
+      children.disconnect();
       keyboard?.off("keyboardShowStart", onShowStart);
       keyboard?.off("keyboardShow", onShow);
       keyboard?.off("keyboardHideStart", onHideStart);

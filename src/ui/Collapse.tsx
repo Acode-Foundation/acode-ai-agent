@@ -13,6 +13,15 @@ function emitCollapse(element: HTMLElement, phase: "start" | "end"): void {
 export function Collapse({ open, children }: { open: boolean; children: ComponentChildren }) {
   const ref = useRef<HTMLDivElement>(null);
   const ready = useRef(false);
+  const run = useRef(0);
+
+  // A row that unmounts mid-animation would otherwise never report the end to the scroller.
+  useLayoutEffect(() => {
+    const element = ref.current;
+    return () => {
+      if (element && run.current > 0) emitCollapse(element, "end");
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -26,8 +35,13 @@ export function Collapse({ open, children }: { open: boolean; children: Componen
       }
       return;
     }
+    const id = ++run.current;
     emitCollapse(element, "start");
-    void animateCollapse(element, open).finally(() => emitCollapse(element, "end"));
+    void animateCollapse(element, open).finally(() => {
+      if (run.current !== id) return;
+      run.current = 0;
+      emitCollapse(element, "end");
+    });
   }, [open]);
 
   return (
