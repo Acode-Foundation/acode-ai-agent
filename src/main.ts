@@ -13,7 +13,6 @@ import {
 import { createHomeProject } from "./platform/randomProject";
 import { installNativeFetch, uninstallNativeFetch } from "./platform/nativeHttp";
 import { setPluginBaseUrl } from "./platform/pluginAssets";
-import { PROVIDERS } from "./providers/providerRegistry";
 import { mountApp, unmountApp } from "./ui/mount";
 import { mountSidebar, unmountSidebar } from "./ui/sidebar/mountSidebar";
 import styles from "./ui/styles.css";
@@ -205,11 +204,6 @@ class AcodeAiAgentPlugin {
     return undefined;
   }
 
-  async selectProvider(providerId: string): Promise<void> {
-    this.open();
-    await this.#controller?.selectProvider(providerId);
-  }
-
   #setTabTitle(record: AgentTab): void {
     record.file.setCustomTitle(() => {
       const chat = this.#controller?.state.chats.find((item) => item.id === record.binding.chatId);
@@ -369,36 +363,9 @@ class AcodeAiAgentPlugin {
 
 const instance = new AcodeAiAgentPlugin();
 
-const pluginSettings: Acode.PluginSettings = {
-  list: [
-    {
-      key: "open",
-      text: "Open AI Agent",
-      icon: "brain",
-      info: "Opens as an editor tab. Configure provider credentials securely inside the agent.",
-    },
-    {
-      key: "provider",
-      text: "Default provider",
-      select: PROVIDERS.map((provider) => provider.id),
-      value: "openrouter",
-    },
-  ],
-  cb: (key, value) => {
-    if (key === "open") instance.open();
-    if (key === "provider") {
-      void instance.selectProvider(String(value)).catch((error) => {
-        acode.pushNotification(plugin.name, String(error), { type: "error" });
-      });
-    }
-  },
-};
-
 if (window.acode) {
-  acode.setPluginInit(
-    plugin.id,
-    async (baseUrl, $page, options) => instance.init(baseUrl, $page, options),
-    pluginSettings,
+  acode.setPluginInit(plugin.id, async (baseUrl, $page, options) =>
+    instance.init(baseUrl, $page, options),
   );
   acode.setPluginUnmount(plugin.id, () => {
     void instance.destroy();
