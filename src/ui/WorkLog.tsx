@@ -139,9 +139,33 @@ export function WorkingIndicator({ startedAt, label }: { startedAt?: number; lab
         <i />
         <i />
       </span>
-      <span ref={labelRef}>{label || "Working"}</span>
+      <span ref={labelRef} class="shimmer-text">
+        {label || "Working"}
+      </span>
     </div>
   );
+}
+
+/**
+ * Live seconds since a tool call started. Hidden for the first two seconds so quick calls
+ * don't flash a timer; ticks its own text so the turn tree doesn't re-render every second.
+ */
+function Elapsed({ since, prefix = "" }: { since?: number; prefix?: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (typeof since !== "number" || !Number.isFinite(since)) return;
+    const update = () => {
+      if (!ref.current) return;
+      const seconds = Math.floor((Date.now() - since) / 1_000);
+      ref.current.textContent =
+        seconds >= 2 ? `${prefix}${formatWorkDuration(seconds * 1_000)}` : "";
+    };
+    update();
+    const timer = window.setInterval(update, 1_000);
+    return () => window.clearInterval(timer);
+  }, [since, prefix]);
+  if (typeof since !== "number") return null;
+  return <span ref={ref} class="work-elapsed" />;
 }
 
 function WorkBurst({
@@ -292,7 +316,10 @@ function SubagentCard({
               <span class="agent-run-kind">{agent}</span>
               <span class="agent-run-task">{task.split("\n")[0]}</span>
             </span>
-            <span class="agent-run-meta">{meta}</span>
+            <span class="agent-run-meta">
+              {meta}
+              {running && <Elapsed since={entry.startedAt} prefix=" · " />}
+            </span>
           </span>
           <RotateIcon open={open} class="work-row-chevron">
             <ChevronRight size={14} strokeWidth={2} />
@@ -380,7 +407,10 @@ function ToolRow({
       <strong>{entry.label}</strong>
       {entry.detail && <span class="work-detail">{entry.detail}</span>}
       {entry.status === "running" ? (
-        <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" />
+        <span class="work-live">
+          <Elapsed since={entry.startedAt} />
+          <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" />
+        </span>
       ) : (
         tail
       )}

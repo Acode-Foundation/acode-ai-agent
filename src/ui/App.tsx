@@ -35,12 +35,13 @@ import { backActionId, useBackAction } from "./actionStack";
 import { Collapse } from "./Collapse";
 import { Composer, UserMessage, type ComposerHandle } from "./Composer";
 import { CopyButton } from "./CopyButton";
+import { MessageMeta } from "./MessageMeta";
 import { ErrorNotice } from "./ErrorNotice";
 import { fadeInUp, fadeSlide, playMotion } from "./motion";
 import { Markdown } from "./markdown";
 import { Sheet } from "./Sheet";
 import { TreeSheet } from "./TreeSheet";
-import { buildTurns } from "./transcript";
+import { buildTurns, formatWorkDuration, turnDurationMs, type ChatTurn } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
 import { AskCard } from "./AskCard";
 import { TaskSheet, TaskTray, taskStatusLine } from "./TaskTray";
@@ -279,25 +280,33 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
             {turns.map((turn) => (
               <section class="turn" key={turn.id}>
                 {(turn.userParts?.length || turn.user) && (
-                  <UserMessage
-                    parts={turn.userParts}
-                    text={turn.user}
-                    onOpenFile={(path) =>
-                      void controller
-                        .openWorkspaceFile(path)
-                        .catch((error) =>
-                          setToast(error instanceof Error ? error.message : String(error)),
-                        )
-                    }
-                    onPreviewImage={(image) => {
-                      void previewImageInAcode({ ...image, name: image.name || "image" }).catch(
-                        (error) => {
-                          setToast(error instanceof Error ? error.message : String(error));
-                        },
-                      );
-                    }}
-                    onPreviewAttachment={setPreview}
-                  />
+                  <div class="message from-user">
+                    <UserMessage
+                      parts={turn.userParts}
+                      text={turn.user}
+                      onOpenFile={(path) =>
+                        void controller
+                          .openWorkspaceFile(path)
+                          .catch((error) =>
+                            setToast(error instanceof Error ? error.message : String(error)),
+                          )
+                      }
+                      onPreviewImage={(image) => {
+                        void previewImageInAcode({ ...image, name: image.name || "image" }).catch(
+                          (error) => {
+                            setToast(error instanceof Error ? error.message : String(error));
+                          },
+                        );
+                      }}
+                      onPreviewAttachment={setPreview}
+                    />
+                    <MessageMeta
+                      align="end"
+                      timestamp={turn.startedAt}
+                      copyText={turn.user}
+                      copyLabel="Copy message"
+                    />
+                  </div>
                 )}
                 {turn.notice && (
                   <CompactNotice text={turn.notice.text} workspace={state.workspace} />
@@ -314,14 +323,19 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                   }
                 />
                 {turn.answer && (
-                  <article class={`bubble assistant${turn.streaming ? " streaming" : ""}`}>
-                    <Markdown text={turn.answer} workspace={state.workspace} />
+                  <div class="message from-assistant">
+                    <article class={`bubble assistant${turn.streaming ? " streaming" : ""}`}>
+                      <Markdown text={turn.answer} workspace={state.workspace} />
+                    </article>
                     {!turn.streaming && (
-                      <div class="bubble-actions">
-                        <CopyButton getText={() => turn.answer ?? ""} label="Copy response" />
-                      </div>
+                      <MessageMeta
+                        timestamp={turn.endedAt}
+                        detail={answerDuration(turn)}
+                        copyText={turn.answer}
+                        copyLabel="Copy response"
+                      />
                     )}
-                  </article>
+                  </div>
                 )}
                 {turn.error && <ErrorNotice message={turn.error} />}
                 {!turn.streaming &&
@@ -2095,6 +2109,13 @@ function ApprovalPanel({
       </div>
     </section>
   );
+}
+
+/** The work log already says how long a turn with tool calls took. */
+function answerDuration(turn: ChatTurn): string | undefined {
+  if (turn.work.length) return undefined;
+  const duration = turnDurationMs(turn);
+  return duration !== undefined && duration >= 1_000 ? formatWorkDuration(duration) : undefined;
 }
 
 function workspaceLabel(chat: ChatSummary, workspaces: WorkspaceInfo[]): string {

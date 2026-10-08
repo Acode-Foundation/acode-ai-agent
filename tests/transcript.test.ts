@@ -2,6 +2,8 @@ import { expect, test } from "vitest";
 import type { TranscriptMessage as AgentMessage } from "../src/core/types.ts";
 import {
   buildTurns,
+  formatMessageDateTime,
+  formatMessageTime,
   formatWorkDuration,
   groupWorkEntries,
   parseDirListing,
@@ -501,4 +503,47 @@ test("marks a stopped turn and ends its duration at the stop", () => {
   ] as AgentMessage[]);
   expect(turns[0]).toMatchObject({ stopped: true, startedAt: 1_000, endedAt: 61_000 });
   expect(turns[1]?.stopped).toBeUndefined();
+});
+
+test("carries the live tool start time into the running work entry", () => {
+  const turns = buildTurns(
+    [
+      user("run tests", 1),
+      assistant(
+        [{ type: "toolCall", id: "t1", name: "bash", arguments: { command: "npm test" } }],
+        2,
+      ),
+    ],
+    undefined,
+    [
+      {
+        id: "t1",
+        name: "bash",
+        args: { command: "npm test" },
+        status: "running",
+        startedAt: 1_234,
+      },
+    ],
+    true,
+  );
+  expect(turns[0]?.work[0]?.status).toBe("running");
+  expect(turns[0]?.work[0]?.startedAt).toBe(1_234);
+});
+
+test("formats message times relative to today", () => {
+  const now = new Date(2026, 9, 8, 15, 30).getTime();
+  const sameDay = new Date(2026, 9, 8, 9, 5).getTime();
+  const earlier = new Date(2026, 2, 3, 9, 5).getTime();
+  const lastYear = new Date(2025, 2, 3, 9, 5).getTime();
+  const time = new Date(sameDay).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  expect(formatMessageTime(sameDay, now)).toBe(time);
+  expect(formatMessageTime(earlier, now)).toMatch(new RegExp(`, ${time}$`));
+  expect(formatMessageTime(earlier, now)).not.toContain("2026");
+  expect(formatMessageTime(lastYear, now)).toContain("2025");
+  expect(formatMessageTime(undefined, now)).toBe("");
+  expect(formatMessageTime(0, now)).toBe("");
+  expect(formatMessageDateTime(sameDay)).toContain("2026");
 });

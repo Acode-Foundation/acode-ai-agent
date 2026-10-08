@@ -24,6 +24,8 @@ export type WorkEntry = {
   status: WorkStatus;
   output?: string;
   args?: Record<string, unknown>;
+  /** When the live tool call started (Pi's tool activity); absent for replayed history. */
+  startedAt?: number;
 };
 
 export type ChatTurn = {
@@ -142,6 +144,42 @@ export function formatWorkDuration(durationMs: number): string {
   if (minutes > 0) parts.push(`${minutes}m`);
   if (seconds > 0 && hours === 0) parts.push(`${seconds}s`);
   return parts.join(" ");
+}
+
+function validTimestamp(timestamp: number | undefined): timestamp is number {
+  return (
+    typeof timestamp === "number" && timestamp > 0 && Number.isFinite(new Date(timestamp).getTime())
+  );
+}
+
+/** Short message time: "10:42 AM" today, "Oct 3, 10:42 AM" this year, with the year otherwise. */
+export function formatMessageTime(timestamp: number | undefined, now = Date.now()): string {
+  if (!validTimestamp(timestamp)) return "";
+  const date = new Date(timestamp);
+  const today = new Date(now);
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (date.toDateString() === today.toDateString()) return time;
+  const day = date.toLocaleDateString(
+    undefined,
+    date.getFullYear() === today.getFullYear()
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" },
+  );
+  return `${day}, ${time}`;
+}
+
+/** Full message date and time, shown when the short time is tapped. */
+export function formatMessageDateTime(timestamp: number | undefined): string {
+  if (!validTimestamp(timestamp)) return "";
+  return new Date(timestamp).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 export function turnDurationMs(turn: ChatTurn, now = Date.now()): number | undefined {
@@ -504,6 +542,7 @@ function mergeActivities(
     const presented = presentTool(activity.name, activity.args);
     const existing = turn.work.find((entry) => entry.id === activity.id);
     if (existing) {
+      existing.startedAt = activity.startedAt;
       if (activity.status === "running") existing.status = "running";
       if (activity.status === "error") existing.status = "error";
       if (activity.summary && (!existing.output || existing.status === "running"))
@@ -523,6 +562,7 @@ function mergeActivities(
       status: activity.status,
       output: activity.summary,
       args: activity.args,
+      startedAt: activity.startedAt,
     });
   }
 }

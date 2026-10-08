@@ -230,11 +230,82 @@
 .bubble.assistant {
   width: 100%;
 }
-.bubble-actions {
+.message {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.message.from-user {
+  align-items: flex-end;
+}
+.message-meta {
   display: flex;
   align-items: center;
-  height: 28px;
-  margin-top: 4px;
+  gap: 2px;
+  min-height: 28px;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.message.from-user .message-meta {
+  margin-right: -6px;
+}
+.message.from-assistant .message-meta {
+  margin-left: -6px;
+}
+.message-time {
+  min-height: 28px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  white-space: nowrap;
+  opacity: 0.72;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.message-time:active {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.message-meta .copy-btn {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    opacity 0.16s ease,
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+/* With a mouse, copy waits for hover; touch screens keep it visible since there is no hover. */
+@media (hover: hover) and (pointer: fine) {
+  .message-meta .copy-btn {
+    opacity: 0;
+  }
+  .message:hover .message-meta .copy-btn,
+  .message-meta .copy-btn:focus-visible {
+    opacity: 0.6;
+  }
+  .message-meta .copy-btn:hover,
+  .message-meta .copy-btn.copied {
+    opacity: 1;
+  }
+  .message-time:hover {
+    opacity: 1;
+  }
+}
+@media (pointer: coarse) {
+  .message-meta,
+  .message-time,
+  .message-meta .copy-btn {
+    min-height: 34px;
+  }
+  .message-meta .copy-btn {
+    width: 34px;
+    height: 34px;
+  }
 }
 .copy-btn {
   display: inline-flex;
@@ -390,7 +461,7 @@
 }
 .work-row-toggle {
   display: grid;
-  grid-template-columns: 16px max-content minmax(0, 1fr) 14px;
+  grid-template-columns: 16px max-content minmax(0, 1fr) minmax(14px, auto);
   align-items: center;
   gap: 7px;
   width: 100%;
@@ -444,9 +515,66 @@
 }
 .work-row-toggle > .work-tail-icon,
 .work-row-toggle > .work-row-chevron,
-.work-row-toggle > .work-spin {
+.work-row-toggle > .work-live {
   grid-column: 4;
   justify-self: center;
+}
+.work-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.work-live .work-spin {
+  margin-left: 0;
+}
+.work-elapsed {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.work-elapsed:empty {
+  display: none;
+}
+.work-row.running .work-row-toggle,
+.agent-run.running .agent-run-title,
+.shimmer-text {
+  /* A 72px spotlight of full-strength text sweeps across dimmed text. The base mixes in the
+     background because some themes' secondary text is nearly as bright as the primary. */
+  --shimmer-band: 72px;
+  --shimmer-base: color-mix(in srgb, var(--fg) 48%, var(--bg));
+  background:
+    linear-gradient(
+        90deg,
+        transparent 0,
+        color-mix(in srgb, var(--fg) 12%, transparent) 15%,
+        color-mix(in srgb, var(--fg) 55%, transparent) 35%,
+        var(--fg) 50%,
+        color-mix(in srgb, var(--fg) 55%, transparent) 65%,
+        color-mix(in srgb, var(--fg) 12%, transparent) 85%,
+        transparent 100%
+      )
+      calc(-1 * var(--shimmer-band)) 0 / var(--shimmer-band) 100% no-repeat,
+    linear-gradient(var(--shimmer-base), var(--shimmer-base));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer 2.2s linear infinite;
+}
+.work-row.running .work-row-toggle *,
+.agent-run.running .agent-run-title * {
+  opacity: 1;
+}
+.agent-run.running .agent-run-title {
+  width: fit-content;
+  max-width: 100%;
+}
+/* New rows ease in while the agent works; settled logs and reloaded chats appear as-is. */
+.work-stream .work-row,
+.work-stream .agent-run,
+.work-stream .work-note,
+.typing {
+  animation: work-enter 0.24s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .work-kind {
   display: grid;
@@ -3986,6 +4114,28 @@ label.project-select:hover {
   font-size: 12px;
 }
 
+@keyframes work-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes text-shimmer {
+  from {
+    background-position:
+      calc(-1 * var(--shimmer-band)) 0,
+      0 0;
+  }
+  to {
+    background-position:
+      calc(100% + var(--shimmer-band)) 0,
+      0 0;
+  }
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -4033,5 +4183,12 @@ label.project-select:hover {
   .acode-agent-root *::after {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
+  }
+  .acode-agent-root .shimmer-text,
+  .acode-agent-root .work-row.running .work-row-toggle,
+  .acode-agent-root .agent-run.running .agent-run-title {
+    animation: none !important;
+    background: none;
+    -webkit-text-fill-color: currentColor;
   }
 }
