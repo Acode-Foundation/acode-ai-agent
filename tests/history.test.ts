@@ -98,3 +98,12 @@ test("ends a turn Pi recorded as aborted with a stop notice", () => {
   ]);
   expect(messages[2]).toEqual({ role: "runNotice", timestamp: 20 });
 });
+
+test("tells a subagent to report once it has used its step budget", async () => {
+  const { SUBAGENT_STEP_BUDGET, wrapUpReminder } = await import("../src/session/subagents");
+  const turn = { role: "assistant", content: [], timestamp: 1 } as never;
+  expect(wrapUpReminder(Array(SUBAGENT_STEP_BUDGET - 1).fill(turn))).toBeUndefined();
+  expect(wrapUpReminder(Array(SUBAGENT_STEP_BUDGET).fill(turn))?.content).toContain(
+    "Stop calling tools",
+  );
+});

@@ -143,12 +143,13 @@ test("requires separate shell approval even in allow-edits mode", async () => {
     workspace("file:///data/user/0/com.foxdebug.acode/files/public"),
     "allow-edits",
   );
-  await Promise.resolve();
-  expect(gate.pending).toMatchObject({
-    toolName: "bash",
-    title: "Run terminal command",
-    preview: "npm test",
-  });
+  await vi.waitFor(() =>
+    expect(gate.pending).toMatchObject({
+      toolName: "bash",
+      title: "Run terminal command",
+      preview: "npm test",
+    }),
+  );
   gate.resolve("allow-session");
   expect(await first).toEqual({});
   expect(
@@ -210,4 +211,17 @@ test("bash does not promise a spill file that Acode Terminal never writes", () =
   ).find((candidate) => candidate.name === "bash")!;
   expect(tool.description).not.toContain("temp file");
   expect(tool.description).toContain("Acode Terminal");
+});
+
+test("queues approvals instead of denying a second request, and a session grant covers the queue", async () => {
+  const gate = new MutationGate();
+  const ws = workspace("file:///data/user/0/com.foxdebug.acode/files/public");
+  const first = gate.request("bash", { command: "a" }, ws, "ask", undefined, "Subagent");
+  const second = gate.request("bash", { command: "b" }, ws, "ask");
+  await vi.waitFor(() => expect(gate.pending?.title).toBe("Subagent · Run terminal command"));
+  gate.resolve("allow-session");
+  expect(await first).toEqual({});
+  expect(await second).toEqual({});
+  expect(gate.pending).toBeUndefined();
+  gate.dispose();
 });

@@ -115,6 +115,17 @@ If the file is open in Acode, `edit` and `write` change the editor buffer and le
 
 In **Ask** mode the approval prompt previews each `−` / `+` replacement, or the new file content for `write`. After the tool finishes, the work log shows a CodeMirror diff card for that change. The diff card covers one tool call; there is no session-wide review tray.
 
+**Subagents**
+
+- `subagent` delegates a self-contained task to a child agent with its own context; only its report comes back. `explore` (default) reads and searches only; `general` can edit and run commands.
+- Several subagents in one turn run in parallel. Each shows in the work log with its task, live progress, and a **Stop** that ends just that subagent while the run continues; tap it for its report.
+- Subagents cannot start subagents, ask you questions, or edit the task list. Their edits still need your approval (the prompt is labeled "Subagent"), and approvals queue instead of being refused.
+- They run on Pi's child conversations: stopping the run stops them, and after a crash a resumed run continues the same subagent. Past 30 model turns a subagent is told to stop and report.
+
+**Undo a turn's changes**
+
+When a turn's `write` or `edit` calls change files, a card lists them with their added and removed line counts and Acode's file icons; tap a file to open it. Undo restores each file to its content from before that turn and deletes files the turn created. If a file changed again afterwards, Undo asks before overwriting. The snapshots are stored in the chat and survive restarts; the model is told about the undo. Moves, deletes, and `bash` commands are not recorded and are not undone.
+
 **Web**
 
 - `web_search` — live search. Uses the provider's native search on OpenAI, Codex, Google Gemini, xAI and Anthropic (API key); other providers, or a failed native search, fall back to the device browser

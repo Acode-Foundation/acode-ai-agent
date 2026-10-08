@@ -39,6 +39,7 @@ export function preamble(workspace: AcodeWorkspace): string {
     "Use web_search for current docs, APIs, package versions, and recent events instead of guessing. Follow with fetch_content when you need the full page. Cite source URLs.",
     "For 3+ step work, keep a live checklist with todo_write. Do not paste it into chat.",
     "When a decision is underspecified, ask with ask_user_question instead of guessing.",
+    "For broad searches or reading many files, delegate to subagent (explore) so only its report enters your context. Run independent subagents in the same turn to work in parallel.",
   ].join("\n\n");
 }
 

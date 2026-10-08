@@ -414,7 +414,7 @@
 }
 .work-row strong {
   color: var(--fg);
-  font-weight: 600;
+  font-weight: 500;
 }
 .work-detail {
   min-width: 0;
@@ -2072,6 +2072,276 @@
 }
 .compact-banner .md {
   margin-top: 8px;
+}
+/* Files a turn changed: quiet surface, counts, a text action, rows that open a diff. */
+.changes {
+  margin: 4px 0 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  overflow: hidden;
+}
+.changes-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 4px 0 14px;
+  font-size: 13px;
+}
+.changes-title {
+  color: var(--fg);
+  font-weight: 500;
+}
+.changes-head .line-counts {
+  flex: 1;
+}
+.changes-action,
+.changes-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.changes-action:active,
+.changes-more:active {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.changes-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.changes-files {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 4px;
+}
+.changes-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px 0 14px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.changes-row:disabled {
+  cursor: default;
+}
+.changes-row:active {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.changes-name {
+  flex: none;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12.5px;
+}
+.changes-folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.changes-name + .line-counts,
+.changes-name + .changes-skipped {
+  margin-left: auto;
+}
+.changes-skipped {
+  color: var(--muted);
+  font-size: 12px;
+}
+/* After Undo: a muted line like the work-log summary; the files open on tap. */
+.changes-undone {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.changes-undone-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.72;
+  -webkit-tap-highlight-color: transparent;
+}
+.changes-undone-toggle:active {
+  opacity: 1;
+}
+.changes-files.undone {
+  margin: 0 0 4px 6px;
+  padding: 0 0 0 8px;
+  border-left: 1px solid var(--line);
+}
+.changes-files.undone .changes-row {
+  min-height: 34px;
+  padding: 0 4px;
+  color: var(--muted);
+}
+.changes-files.undone .changes-name {
+  color: var(--muted);
+}
+.changes-files.undone .line-counts {
+  opacity: 0.5;
+}
+.changes-more {
+  margin: 0 0 4px 4px;
+}
+.line-counts {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.line-added {
+  color: var(--ok);
+}
+.line-removed {
+  color: var(--danger);
+}
+/* A subagent call: a two-line work-log row with a quiet Stop. */
+.agent-run-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.agent-run-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 2px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.agent-run-toggle:active {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.agent-run-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--accent);
+}
+.agent-run.error .agent-run-icon {
+  color: var(--muted);
+}
+.agent-run-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.agent-run-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.agent-run-kind {
+  flex: none;
+  color: var(--fg);
+  font-weight: 500;
+}
+.agent-run-task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+.agent-run-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  opacity: 0.7;
+}
+.agent-run-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.agent-run-stop:active {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.agent-run-stop:disabled {
+  opacity: 0.5;
+}
+.agent-run-body {
+  margin: 0 0 6px 7px;
+  padding: 2px 0 4px 15px;
+  border-left: 1px solid var(--line);
+}
+.agent-run-fulltask {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.agent-run-failure {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+.agent-run-report {
+  color: var(--fg);
+  font-size: 13px;
 }
 .work-stopped,
 .turn-stopped {

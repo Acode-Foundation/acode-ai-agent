@@ -44,6 +44,8 @@ import { buildTurns } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
 import { AskCard } from "./AskCard";
 import { TaskSheet, TaskTray, taskStatusLine } from "./TaskTray";
+import { ChangedFiles } from "./ChangedFiles";
+import { shareFileIconStyles } from "./hostIcons";
 import { WorkingIndicator, WorkLog } from "./WorkLog";
 import { openCustomTab } from "../platform/authTab";
 import { previewImageInAcode } from "../platform/deviceImage";
@@ -78,6 +80,9 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
   const [resuming, setResuming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  // File rows use Acode's own (or the icon theme's) file icons inside the tab's shadow root.
+  useEffect(() => (shellRef.current ? shareFileIconStyles(shellRef.current) : undefined), []);
   const bindingReady = useRef(false);
 
   useEffect(() => controller.changes.subscribe(setState), [controller]);
@@ -184,6 +189,42 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     );
   }, [controller]);
 
+  const revert = useCallback(
+    async (entryId: string) => {
+      const summary = state.edits[entryId];
+      if (!summary) return;
+      const files = summary.files.filter((file) => !file.skipped);
+      try {
+        const list = files.map((file) =>
+          file.created ? `${file.path} (new, will be deleted)` : file.path,
+        );
+        const confirmed = await acode.confirm(
+          "Undo changes",
+          `Restore ${files.length} file${files.length === 1 ? "" : "s"} to how they were before this turn?\n\n${list.join("\n")}`,
+        );
+        if (!confirmed) return;
+        let result = await controller.revertRun(entryId);
+        if (result.conflicts.length) {
+          const overwrite = await acode.confirm(
+            "Edited since",
+            `You or the agent changed these after this turn:\n\n${result.conflicts.join("\n")}\n\nUndo anyway and lose those later changes?`,
+          );
+          if (!overwrite) return;
+          result = await controller.revertRun(entryId, true);
+        }
+        const skipped = result.skipped.length
+          ? ` ${result.skipped.length} too large to restore.`
+          : "";
+        setToast(
+          `Undid changes to ${result.reverted.length} file${result.reverted.length === 1 ? "" : "s"}.${skipped}`,
+        );
+      } catch (error) {
+        setToast(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [controller, state.edits],
+  );
+
   const resume = useCallback(async () => {
     setResuming(true);
     try {
@@ -196,7 +237,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
   }, [controller]);
 
   return (
-    <div class="agent-shell">
+    <div class="agent-shell" ref={shellRef}>
       <header class="agent-header">
         <button class="chat-trigger" type="button" onClick={() => setChatsOpen(true)}>
           <span>
@@ -261,7 +302,17 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                 {turn.notice && (
                   <CompactNotice text={turn.notice.text} workspace={state.workspace} />
                 )}
-                <WorkLog turn={turn} workspace={state.workspace} />
+                <WorkLog
+                  turn={turn}
+                  workspace={state.workspace}
+                  onStopTool={(callId) =>
+                    void controller
+                      .stopTool(callId)
+                      .catch((error: unknown) =>
+                        setToast(error instanceof Error ? error.message : String(error)),
+                      )
+                  }
+                />
                 {turn.answer && (
                   <article class={`bubble assistant${turn.streaming ? " streaming" : ""}`}>
                     <Markdown text={turn.answer} workspace={state.workspace} />
@@ -273,6 +324,16 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                   </article>
                 )}
                 {turn.error && <ErrorNotice message={turn.error} />}
+                {!turn.streaming &&
+                  turn.entryId !== undefined &&
+                  state.edits[String(turn.entryId)] && (
+                    <ChangedFiles
+                      summary={state.edits[String(turn.entryId)]!}
+                      disabled={running}
+                      workspace={state.workspace}
+                      onUndo={() => void revert(String(turn.entryId))}
+                    />
+                  )}
                 {turn.stopped && !turn.work.length && <div class="turn-stopped">Stopped</div>}
                 {turn.streaming && (
                   <WorkingIndicator startedAt={turn.startedAt} label={workingLabel} />

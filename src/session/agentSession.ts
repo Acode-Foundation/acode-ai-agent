@@ -7,6 +7,7 @@ import {
   type Message,
 } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { diffLines } from "diff";
 import {
   createRegistry,
   defineDoc,
@@ -44,6 +45,8 @@ import type {
   RestoredPrompt,
   RunRecovery,
   RunRetry,
+  RunEditFile,
+  RunEditSummary,
   SessionTreeItem,
   ToolActivity,
   TranscriptMessage,
@@ -77,6 +80,7 @@ import {
   buildTreeItems,
   historyEntries,
   latestAssistantText,
+  REVERT_ENTRY_KIND,
   toPiSessionJsonl,
   transcriptFromEntries,
 } from "./history";
@@ -87,6 +91,13 @@ import {
   type WorkspaceResources,
 } from "./promptTemplates";
 import { messageImages, messagePlainText, titleFromMessages } from "./sessionText";
+import { createEditRecorder, EditsDoc, type EditRecorder, type RunEdits } from "./editLog";
+import {
+  createSubagentTool,
+  isSubagentDetails,
+  SUBAGENT_TOOL_NAME,
+  wrapUpReminder,
+} from "./subagents";
 import { loadWorkspaceResources } from "./workspaceResources";
 
 export type AgentSessionSnapshot = {
@@ -100,9 +111,17 @@ export type AgentSessionSnapshot = {
   contextTokens: number;
   commands: SlashCommand[];
   tasks: Task[];
+  edits: Record<string, RunEditSummary>;
   recovery?: RunRecovery;
   retry?: RunRetry;
   error?: string;
+};
+
+export type RevertResult = {
+  reverted: string[];
+  /** Files changed since the agent wrote them; nothing was reverted when this is not empty. */
+  conflicts: string[];
+  skipped: string[];
 };
 
 /** The session task list, stored with the conversation so it follows forks and restarts. */
@@ -149,6 +168,18 @@ export class AgentSession {
   /** User entries whose prompt Pi settled as aborted; their turns show as stopped. */
   #stopped = new Set<EntryId>();
   #wasRunning = false;
+  #editRecorder: EditRecorder;
+  /** File snapshots per run of the active conversation, from Pi's `acode.edits` document. */
+  #edits: Record<string, RunEdits> = {};
+  /** Line counts per run, computed when the snapshots change rather than on every publish. */
+  #editSummary: Record<string, RunEditSummary> = {};
+  /** Usage of every conversation in the chat, subagents included. */
+  #chatUsage?: { tokens: number; cost: number };
+  /** Live views of running subagents, for their progress line under the call. */
+  #children = new Map<
+    number,
+    { view: AttachedReplicatedState<ConversationView>; dispose: () => void }
+  >();
   #persistTasks: Promise<void> = Promise.resolve();
   #snapshot: AgentSessionSnapshot = {
     messages: [],
@@ -160,6 +191,7 @@ export class AgentSession {
     contextTokens: 0,
     commands: resourceSlashCommands({}),
     tasks: [],
+    edits: {},
   };
 
   constructor(options: {
@@ -180,6 +212,7 @@ export class AgentSession {
     this.#store = options.store;
     this.mutationGate = options.mutationGate;
     this.#env = new WorkspaceExecutionEnv(options.workspace);
+    this.#editRecorder = createEditRecorder((path) => this.#currentContent(path));
   }
 
   get title(): string {
@@ -455,6 +488,72 @@ export class AgentSession {
     this.#publish();
   }
 
+  /**
+   * Put back the files a run's `write` and `edit` calls changed. Files changed since the
+   * agent's last write are conflicts: nothing is reverted unless `force` is set. Moves,
+   * deletes, and terminal commands are not recorded and are not undone.
+   */
+  async revertRun(entryId: string, force = false): Promise<RevertResult> {
+    const conversation = this.#requireConversation();
+    this.#assertIdle("reverting changes");
+    await this.#refreshEdits();
+    const run = this.#edits[entryId];
+    if (!run || !Object.keys(run.files).length) throw new Error("That turn changed no files.");
+    if (run.revertedAt) throw new Error("Those changes were already reverted.");
+    const files = Object.entries(run.files);
+    const skipped = files.filter(([, file]) => file.skipped).map(([path]) => path);
+    const targets = files.filter(([, file]) => !file.skipped);
+    const conflicts: string[] = [];
+    for (const [path, file] of targets) {
+      const current = await this.#currentContent(path);
+      if (current !== file.after) conflicts.push(path);
+    }
+    if (conflicts.length && !force) return { reverted: [], conflicts, skipped };
+    const reverted: string[] = [];
+    for (const [path, file] of targets) {
+      const current = await this.#currentContent(path);
+      if (file.before === null) {
+        if (current !== null) await this.workspace.remove(path);
+      } else if (current !== file.before) await this.workspace.writeText(path, file.before);
+      reverted.push(path);
+    }
+    await conversation.commit(async (tx) => {
+      const doc = await tx.doc(EditsDoc, conversation.id);
+      const stored = doc.runs[entryId];
+      if (stored) stored.revertedAt = Date.now();
+    }, context);
+    // Tell the model, so it does not build on edits that are gone.
+    await conversation.submit(
+      {
+        type: "write",
+        entry: {
+          kind: REVERT_ENTRY_KIND,
+          model: [
+            {
+              role: "user",
+              content:
+                "<system-reminder>The user reverted the file changes the agent made for an earlier request. " +
+                `These files are back to their earlier content (or removed if they were new): ${reverted.join(", ")}.</system-reminder>`,
+              timestamp: Date.now(),
+            },
+          ],
+        },
+      },
+      context,
+    );
+    await this.#refreshEdits();
+    this.#publish();
+    return { reverted, conflicts: [], skipped };
+  }
+
+  /** Stop one running tool call, such as a subagent; the run continues with an aborted result. */
+  async stopTool(callId: string): Promise<void> {
+    const live = this.#view?.value.docs["pi.live"] as unknown as LiveState | undefined;
+    const slot = live?.tools?.find((item) => item.callId === callId);
+    if (!slot?.taskId || slot.status === "done") return;
+    await this.#requireHarness().abortTask(slot.taskId, context);
+  }
+
   updateTaskStatus(id: string, status: TaskStatus | "deleted"): void {
     this.#tasks.updateStatus(id, status);
   }
@@ -476,6 +575,8 @@ export class AgentSession {
     this.questionGate.cancel();
     this.#unsubscribeView?.();
     this.#view?.dispose();
+    for (const child of this.#children.values()) child.dispose();
+    this.#children.clear();
     for (const unsubscribe of this.#unsubscribers.splice(0)) unsubscribe();
     this.mutationGate.dispose();
     this.questionGate.dispose();
@@ -493,7 +594,7 @@ export class AgentSession {
     this.#conversation = conversation;
     if (this.#meta.conversationId !== conversation.id)
       await this.#saveMeta({ conversationId: conversation.id }, false);
-    await this.#loadTasks();
+    await Promise.all([this.#loadTasks(), this.#refreshEdits(), this.#refreshUsage()]);
     const view = await conversation.viewState(context);
     this.#view = view;
     this.#unsubscribeView = view.subscribe(() => this.#publish());
@@ -547,12 +648,14 @@ export class AgentSession {
   }
 
   #installExtensions(): void {
-    const tools = [
+    const pluginTools = this.#extensions.tools.map(withReadableErrors);
+    const tools: ToolRegistration[] = [
       ...createWorkspaceTools(this.workspace, {
         maxWalkFiles: () => this.#settings().maxWalkFiles,
         autoResizeImages: () => this.#settings().imageAutoResize,
         fileOperations: !this.#env.shell,
         bash: Boolean(this.#env.shell),
+        editRecorder: this.#editRecorder,
       }),
       ...[
         ...createTaskTools(this.#tasks),
@@ -563,6 +666,8 @@ export class AgentSession {
         ),
       ].map(withReadableErrors),
     ];
+    // A subagent picks from every tool its parent has, filtered by its profile.
+    tools.push(withReadableErrors(createSubagentTool(() => [...tools, ...pluginTools])));
     this.#registry.install(
       defineExtension({
         name: "acode",
@@ -575,32 +680,39 @@ export class AgentSession {
         }),
         hooks: [
           hook(ToolTask, {
-            beforeTool: async (call, _api, toolContext) => {
+            beforeTool: async (call, api, toolContext) => {
               const decision = await this.mutationGate.request(
                 call.name,
                 call.arguments,
                 this.workspace,
                 this.#settings().permissionMode,
                 toolContext.abortSignal,
+                api.conversationId === this.#conversation?.id ? undefined : "Subagent",
               );
               return decision.block
                 ? { block: decision.reason || "User denied this action." }
                 : undefined;
             },
-            afterTool: (call) => {
-              evaluateReminder(this.#cadence, call.name, this.#tasks.list());
+            afterTool: (call, _result, api) => {
+              // The task list belongs to the user's conversation, not to subagents.
+              if (api.conversationId === this.#conversation?.id)
+                evaluateReminder(this.#cadence, call.name, this.#tasks.list());
               return undefined;
             },
           }),
           hook(GenerationTask, {
-            beforeRequest: (request) => this.#beforeRequest(request.messages),
+            beforeRequest: (request, api) => {
+              if (api.conversationId === this.#conversation?.id)
+                return this.#beforeRequest(request.messages);
+              // Any other running conversation is a subagent: keep it within its budget.
+              const reminder = wrapUpReminder(request.messages);
+              return reminder ? { messages: [...request.messages, reminder] } : undefined;
+            },
           }),
         ],
       }),
     );
-    this.#registry.install(
-      defineExtension({ name: "plugins", tools: this.#extensions.tools.map(withReadableErrors) }),
-    );
+    this.#registry.install(defineExtension({ name: "plugins", tools: pluginTools }));
   }
 
   /** Each request starts a task-list turn and may carry a reminder the model sees only once. */
@@ -675,7 +787,7 @@ export class AgentSession {
     const paused = Boolean(this.#recovery);
     const running = Boolean(live?.run) && !paused;
     if (this.#wasRunning && !running)
-      void this.#refreshStopped().then(
+      void this.#refreshAfterRun().then(
         () => this.#publish(),
         () => undefined,
       );
@@ -693,12 +805,13 @@ export class AgentSession {
       ),
       isRunning: running || (!paused && Boolean(live?.compactions?.some((item) => item.blocking))),
       compacting,
-      usage: totalUsage(usage),
+      usage: this.#chatUsage ?? totalUsage(usage),
       contextTokens: estimateContextTokens(
         entries.flatMap((entry) => entry.model ?? []) as Message[],
       ).tokens,
       commands: resourceSlashCommands(this.#resources, settings),
       tasks: this.#tasks.list(),
+      edits: this.#editSummary,
       recovery: this.#recovery,
       retry:
         retry && live?.generation
@@ -719,6 +832,7 @@ export class AgentSession {
     streaming: AssistantMessage | undefined,
   ): ToolActivity[] {
     const slots = live?.tools ?? [];
+    this.#followChildren(slots);
     if (!slots.length) {
       this.#toolStarts.clear();
       return [];
@@ -732,7 +846,11 @@ export class AgentSession {
     return slots.map((slot) => {
       const startedAt = this.#toolStarts.get(slot.callId) ?? Date.now();
       this.#toolStarts.set(slot.callId, startedAt);
-      const summary = slot.output?.slice(-300);
+      const child =
+        slot.name === SUBAGENT_TOOL_NAME && isSubagentDetails(slot.details)
+          ? this.#children.get(slot.details.conversationId)
+          : undefined;
+      const summary = child?.view ? childProgress(child.view.value) : slot.output?.slice(-300);
       const failed = slot.diagnostics?.some((item) => item.severity === "error");
       return {
         id: slot.callId,
@@ -746,6 +864,67 @@ export class AgentSession {
         startedAt,
       };
     });
+  }
+
+  /** Watch running subagents' conversations so their progress shows under the call. */
+  #followChildren(slots: NonNullable<LiveState["tools"]>): void {
+    const running = new Set<number>();
+    for (const slot of slots) {
+      if (slot.name !== SUBAGENT_TOOL_NAME || slot.status === "done") continue;
+      if (!isSubagentDetails(slot.details)) continue;
+      const id = slot.details.conversationId;
+      running.add(id);
+      if (this.#children.has(id)) continue;
+      const placeholder = { view: undefined as never, dispose: () => undefined };
+      this.#children.set(id, placeholder);
+      void (async () => {
+        const conversation = await this.#harness?.conversation(id as ConversationId, context);
+        const view = await conversation?.viewState(context);
+        if (!view) return;
+        if (this.#children.get(id) !== placeholder) return view.dispose();
+        const unsubscribe = view.subscribe(() => this.#publish());
+        this.#children.set(id, {
+          view,
+          dispose: () => {
+            unsubscribe();
+            view.dispose();
+          },
+        });
+        this.#publish();
+      })().catch(() => this.#children.delete(id));
+    }
+    for (const [id, child] of this.#children) {
+      if (running.has(id)) continue;
+      child.dispose();
+      this.#children.delete(id);
+    }
+  }
+
+  /** What a finished run changed: stopped prompts, file snapshots, and chat usage. */
+  async #refreshAfterRun(): Promise<void> {
+    await Promise.all([this.#refreshStopped(), this.#refreshEdits(), this.#refreshUsage()]);
+  }
+
+  async #refreshEdits(): Promise<void> {
+    const harness = this.#harness;
+    const conversation = this.#conversation;
+    if (!harness || !conversation) return;
+    const doc = await harness.snapshot(EditsDoc, conversation.id, context);
+    this.#edits = JSON.parse(JSON.stringify(doc?.runs ?? {})) as Record<string, RunEdits>;
+    this.#editSummary = summarizeEdits(this.#edits);
+  }
+
+  async #refreshUsage(): Promise<void> {
+    const usage = await this.#harness?.usage(context);
+    if (usage) this.#chatUsage = totalUsage(usage);
+  }
+
+  /** A file's current content: `null` when it does not exist, `undefined` when unreadable. */
+  async #currentContent(path: string): Promise<string | null | undefined> {
+    const text = await this.#env.readTextFile(path, context);
+    if (text.ok) return text.value;
+    const exists = await this.#env.exists(path, context);
+    return exists.ok && !exists.value ? null : undefined;
   }
 
   /** Read Pi's submission records for prompts that ended aborted (Stop or Discard). */
@@ -973,4 +1152,69 @@ async function readSkillRelativeFile(
     return acode.fsOperation(acode.joinUrl(base, relativePath)).readFile("utf-8");
   }
   return workspace.readText([base, relativePath].filter(Boolean).join("/"));
+}
+
+function summarizeEdits(runs: Record<string, RunEdits>): Record<string, RunEditSummary> {
+  return Object.fromEntries(
+    Object.entries(runs).flatMap(([entryId, run]) => {
+      const files = Object.entries(run.files).map(([path, file]): RunEditFile => {
+        const counts = file.skipped
+          ? { added: 0, removed: 0 }
+          : lineCounts(file.before, file.after);
+        return {
+          path,
+          ...counts,
+          created: file.before === null && !file.skipped,
+          skipped: Boolean(file.skipped),
+        };
+      });
+      if (!files.length) return [];
+      const added = files.reduce((total, file) => total + file.added, 0);
+      const removed = files.reduce((total, file) => total + file.removed, 0);
+      return [[entryId, { files, added, removed, reverted: Boolean(run.revertedAt) }]];
+    }),
+  );
+}
+
+/** Added and removed lines between two versions of a file; `null` is an absent file. */
+function lineCounts(
+  before: string | null,
+  after: string | null,
+): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const part of diffLines(before ?? "", after ?? "")) {
+    if (part.added) added += part.count ?? 0;
+    else if (part.removed) removed += part.count ?? 0;
+  }
+  return { added, removed };
+}
+
+/** One line on what a running subagent is doing, from its live conversation view. */
+function childProgress(view: ConversationView | undefined): string | undefined {
+  if (!view) return undefined;
+  const live = view.docs["pi.live"] as unknown as LiveState | undefined;
+  const steps = view.entries.filter((entry) => entry.kind === "pi.tool-result").length;
+  const running = live?.tools?.find((slot) => slot.status !== "done");
+  let doing = live?.generation ? "Thinking" : "Starting";
+  if (running) {
+    const args = toolCallArgs(view, running.callId);
+    const target = ["path", "pattern", "query", "command", "url"]
+      .map((key) => args?.[key])
+      .find((value): value is string => typeof value === "string");
+    doing = target ? `${running.name} ${target.slice(0, 80)}` : running.name;
+  }
+  return steps ? `${doing} · ${steps} step${steps === 1 ? "" : "s"} done` : doing;
+}
+
+function toolCallArgs(view: ConversationView, callId: string): Record<string, unknown> | undefined {
+  for (let index = view.entries.length - 1; index >= 0; index -= 1) {
+    for (const message of view.entries[index]?.model ?? []) {
+      if (message.role !== "assistant") continue;
+      for (const part of message.content)
+        if (part.type === "toolCall" && part.id === callId)
+          return part.arguments as Record<string, unknown>;
+    }
+  }
+  return undefined;
 }

@@ -1,4 +1,5 @@
 import {
+  Bot,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -13,6 +14,7 @@ import {
   Pencil,
   Search,
   Sparkles,
+  Square,
   SquareTerminal,
   Trash2,
   Wrench,
@@ -45,7 +47,18 @@ import {
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
 const workRowOpen = new Map<string, boolean>();
 
-export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: WorkspaceInfo }) {
+/** Stops one running tool call (a subagent) without stopping the run. */
+type StopTool = (callId: string) => void;
+
+export function WorkLog({
+  turn,
+  workspace,
+  onStopTool,
+}: {
+  turn: ChatTurn;
+  workspace?: WorkspaceInfo;
+  onStopTool?: StopTool;
+}) {
   const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     if (turn.streaming) setExpanded(false);
@@ -64,6 +77,7 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
             turnId={turn.id}
             entry={group.entry}
             workspace={workspace}
+            onStopTool={onStopTool}
           />
         ) : (
           <WorkBurst
@@ -72,6 +86,7 @@ export function WorkLog({ turn, workspace }: { turn: ChatTurn; workspace?: Works
             entries={group.entries}
             workspace={workspace}
             live={turn.streaming}
+            onStopTool={onStopTool}
           />
         ),
       )}
@@ -134,11 +149,13 @@ function WorkBurst({
   entries,
   workspace,
   live,
+  onStopTool,
 }: {
   turnId: string;
   entries: WorkEntry[];
   workspace?: WorkspaceInfo;
   live?: boolean;
+  onStopTool?: StopTool;
 }) {
   const [showPrevious, setShowPrevious] = useState(false);
   const { featured, grouped } = splitWorkBurst(entries, Boolean(live));
@@ -147,11 +164,23 @@ function WorkBurst({
     <div class="work-burst">
       <Collapse open={showPrevious}>
         {grouped.map((entry) => (
-          <WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
+          <WorkRow
+            key={entry.id}
+            turnId={turnId}
+            entry={entry}
+            workspace={workspace}
+            onStopTool={onStopTool}
+          />
         ))}
       </Collapse>
       {featured.map((entry) => (
-        <WorkRow key={entry.id} turnId={turnId} entry={entry} workspace={workspace} />
+        <WorkRow
+          key={entry.id}
+          turnId={turnId}
+          entry={entry}
+          workspace={workspace}
+          onStopTool={onStopTool}
+        />
       ))}
       {grouped.length > 0 && (
         <button
@@ -178,10 +207,12 @@ function WorkContent({
   turnId,
   entry,
   workspace,
+  onStopTool,
 }: {
   turnId: string;
   entry: WorkEntry;
   workspace?: WorkspaceInfo;
+  onStopTool?: StopTool;
 }) {
   if (entry.type === "note")
     return (
@@ -189,10 +220,122 @@ function WorkContent({
         <Markdown text={entry.output ?? ""} workspace={workspace} />
       </div>
     );
-  return <WorkRow turnId={turnId} entry={entry} workspace={workspace} />;
+  return <WorkRow turnId={turnId} entry={entry} workspace={workspace} onStopTool={onStopTool} />;
 }
 
 function WorkRow({
+  turnId,
+  entry,
+  workspace,
+  onStopTool,
+}: {
+  turnId: string;
+  entry: WorkEntry;
+  workspace?: WorkspaceInfo;
+  onStopTool?: StopTool;
+}) {
+  if (entry.name === "subagent")
+    return <SubagentCard turnId={turnId} entry={entry} workspace={workspace} onStop={onStopTool} />;
+  return <ToolRow turnId={turnId} entry={entry} workspace={workspace} />;
+}
+
+/**
+ * A subagent call as a two-line row: its kind and task, then live progress or how it ended.
+ * Stop ends only this subagent. Tapping shows the full task and, once done, its report.
+ */
+function SubagentCard({
+  turnId,
+  entry,
+  workspace,
+  onStop,
+}: {
+  turnId: string;
+  entry: WorkEntry;
+  workspace?: WorkspaceInfo;
+  onStop?: StopTool;
+}) {
+  const key = `${turnId}:${entry.id}`;
+  const [open, setOpen] = useState(() => workRowOpen.get(key) ?? false);
+  const [stopping, setStopping] = useState(false);
+  const running = entry.status === "running";
+  const agent = entry.args?.agent === "general" ? "General" : "Explore";
+  const task = typeof entry.args?.task === "string" ? entry.args.task : (entry.detail ?? "");
+  const state = running ? "Working" : subagentState(entry);
+  const report = state === "Done" ? entry.output?.trim() : undefined;
+  // Pi wraps tool failures in a <harness> block; a stop needs no reason, a failure a short one.
+  const failure =
+    state === "Failed"
+      ? entry.output
+          ?.replace(/<\/?harness>/g, "")
+          .replace(/^\[error\]\s*/m, "")
+          .trim()
+      : undefined;
+  const meta = running ? entry.output || "Starting" : state;
+  const toggle = () =>
+    setOpen((current) => {
+      workRowOpen.set(key, !current);
+      return !current;
+    });
+  return (
+    <div class={`agent-run ${entry.status}`}>
+      <div class="agent-run-row">
+        <button type="button" class="agent-run-toggle" aria-expanded={open} onClick={toggle}>
+          <span class="agent-run-icon" aria-hidden="true">
+            {running ? (
+              <LoaderCircle class="work-spin" size={14} strokeWidth={2.4} />
+            ) : (
+              <Bot size={14} strokeWidth={2} />
+            )}
+          </span>
+          <span class="agent-run-text">
+            <span class="agent-run-title">
+              <span class="agent-run-kind">{agent}</span>
+              <span class="agent-run-task">{task.split("\n")[0]}</span>
+            </span>
+            <span class="agent-run-meta">{meta}</span>
+          </span>
+          <RotateIcon open={open} class="work-row-chevron">
+            <ChevronRight size={14} strokeWidth={2} />
+          </RotateIcon>
+        </button>
+        {running && onStop && (
+          <button
+            type="button"
+            class="agent-run-stop"
+            disabled={stopping}
+            onClick={() => {
+              setStopping(true);
+              onStop(entry.id);
+            }}
+          >
+            <Square size={11} strokeWidth={2.6} aria-hidden="true" />
+            {stopping ? "Stopping" : "Stop"}
+          </button>
+        )}
+      </div>
+      <Collapse open={open}>
+        <div class="agent-run-body">
+          <p class="agent-run-fulltask">{task}</p>
+          {report && (
+            <div class="agent-run-report">
+              <Markdown text={report} workspace={workspace} />
+            </div>
+          )}
+          {failure && <p class="agent-run-failure">{failure}</p>}
+        </div>
+      </Collapse>
+    </div>
+  );
+}
+
+function subagentState(entry: WorkEntry): string {
+  if (entry.status === "running") return "Working";
+  if (entry.status !== "error") return "Done";
+  // Pi's result for a stopped call says the tool was aborted.
+  return /\babort/i.test(entry.output ?? "") ? "Stopped" : "Failed";
+}
+
+function ToolRow({
   turnId,
   entry,
   workspace,

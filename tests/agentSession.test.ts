@@ -66,6 +66,10 @@ function environment() {
       files[path] = content;
       return "disk" as const;
     }),
+    remove: vi.fn(async (path: string) => {
+      delete files[path];
+      return { kind: "file", from: path };
+    }),
   } as unknown as AcodeWorkspace;
   const settings = {
     ...DEFAULT_SETTINGS,
@@ -324,4 +328,134 @@ test("deleting a chat removes its storage", async () => {
   expect(env.store.get("chat-delete")).toBeUndefined();
   const reopened = await env.open(env.newMeta("chat-delete"));
   expect(reopened.session.snapshot.messages).toEqual([]);
+});
+
+test("a subagent runs in its own child conversation and reports back", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-subagent"));
+  let childTools: string[] = [];
+  env.faux.setResponses([
+    fauxAssistantMessage(
+      [fauxToolCall("subagent", { task: "Find where alpha is defined.", agent: "explore" })],
+      { stopReason: "toolUse" },
+    ),
+    (context) => {
+      // Pi declares tools in positional system messages, not a separate tool list.
+      childTools = context.messages.flatMap((message) =>
+        message.role === "system"
+          ? ((message as { toolsAdded?: Array<{ name: string }> }).toolsAdded ?? []).map(
+              (tool) => tool.name,
+            )
+          : [],
+      );
+      return fauxAssistantMessage("alpha is in a.txt line 1");
+    },
+    fauxAssistantMessage("The subagent found it in a.txt."),
+  ]);
+
+  await session.prompt("where is alpha?");
+  const done = await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 4);
+  const result = done.messages.find((message) => message.role === "toolResult");
+  expect(result && "content" in result ? JSON.stringify(result.content) : "").toContain(
+    "alpha is in a.txt line 1",
+  );
+  // explore children read and search only; nobody delegates further or talks to the user.
+  expect(childTools).toEqual(expect.arrayContaining(["read", "grep", "glob", "list_dir"]));
+  for (const name of ["subagent", "write", "edit", "todo_write", "ask_user_question"])
+    expect(childTools).not.toContain(name);
+  // The child conversation is not one of the user's branches.
+  expect((await session.treeItems()).every((item) => !item.text.includes("alpha is in"))).toBe(
+    true,
+  );
+});
+
+test("reverts the files a turn changed, and asks before overwriting later changes", async () => {
+  const env = environment();
+  env.settings.permissionMode = "full-access";
+  const { session } = await env.open(env.newMeta("chat-revert"));
+  env.faux.setResponses([
+    fauxAssistantMessage(
+      [
+        fauxToolCall("write", { path: "new.txt", content: "created" }),
+        fauxToolCall("edit", { path: "a.txt", edits: [{ oldText: "alpha", newText: "beta" }] }),
+      ],
+      { stopReason: "toolUse" },
+    ),
+    fauxAssistantMessage("Done."),
+  ]);
+  await session.prompt("change things");
+  const done = await settle(
+    session,
+    (snapshot) => idle(snapshot) && Object.keys(snapshot.edits).length > 0,
+  );
+  expect(env.files).toMatchObject({ "a.txt": "beta\n", "new.txt": "created" });
+  const [entryId, summary] = Object.entries(done.edits)[0]!;
+  expect(summary).toEqual({
+    files: [
+      { path: "new.txt", added: 1, removed: 0, created: true, skipped: false },
+      { path: "a.txt", added: 1, removed: 1, created: false, skipped: false },
+    ],
+    added: 2,
+    removed: 1,
+    reverted: false,
+  });
+
+  env.files["a.txt"] = "beta changed by the user\n";
+  const blocked = await session.revertRun(entryId);
+  expect(blocked).toEqual({ reverted: [], conflicts: ["a.txt"], skipped: [] });
+  expect(env.files["a.txt"]).toBe("beta changed by the user\n");
+
+  const forced = await session.revertRun(entryId, true);
+  expect(forced.reverted.sort()).toEqual(["a.txt", "new.txt"]);
+  expect(env.files).toEqual({ "a.txt": "alpha\n" });
+  expect(session.snapshot.edits[entryId]?.reverted).toBe(true);
+  await expect(session.revertRun(entryId)).rejects.toThrow("already reverted");
+
+  // The model is told, but the note is not shown as a chat message.
+  let lastRequest = "";
+  env.faux.setResponses([
+    (context) => {
+      lastRequest = JSON.stringify(context.messages.at(-2));
+      return fauxAssistantMessage("ok");
+    },
+  ]);
+  await session.prompt("next");
+  await settle(session, (snapshot) =>
+    snapshot.messages.some((message) => JSON.stringify(message).includes('"ok"')),
+  );
+  expect(lastRequest).toContain("reverted the file changes");
+  expect(
+    session.snapshot.messages.some((message) => JSON.stringify(message).includes("reverted the")),
+  ).toBe(false);
+});
+
+test("stopping one subagent ends just that call and the run continues", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-subagent-stop"));
+  let childAsked = false;
+  env.faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("subagent", { task: "Search forever." })], {
+      stopReason: "toolUse",
+    }),
+    (_context, options) => {
+      childAsked = true;
+      return new Promise((_resolve, reject) =>
+        options?.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+      );
+    },
+    fauxAssistantMessage("Carried on without it."),
+  ]);
+  await session.prompt("delegate something");
+  // Stop once the child is waiting on its model, so the scripted replies stay in order.
+  await vi.waitFor(() => expect(childAsked).toBe(true));
+  const running = await settle(session, (snapshot) =>
+    snapshot.activities.some((item) => item.name === "subagent" && item.status === "running"),
+  );
+  await session.stopTool(running.activities.find((item) => item.name === "subagent")!.id);
+  const done = await settle(session, (snapshot) =>
+    snapshot.messages.some((message) => JSON.stringify(message).includes("Carried on")),
+  );
+  const result = done.messages.find((message) => message.role === "toolResult");
+  expect(result?.role === "toolResult" && result.isError).toBe(true);
+  expect(done.isRunning).toBe(false);
 });

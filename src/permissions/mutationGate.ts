@@ -9,28 +9,50 @@ export class MutationGate {
   readonly changes = new Signal<MutationRequest | undefined>();
   #pending?: MutationRequest;
   #sessionGrants = new Set<Category>();
+  #queue: Promise<void> = Promise.resolve();
 
   get pending(): MutationRequest | undefined {
     return this.#pending;
   }
 
-  async request(
+  /**
+   * Ask the user to approve a change. Requests wait their turn, so parallel subagents
+   * each get their own prompt instead of being denied. `source` labels who is asking.
+   */
+  request(
     toolName: string,
     args: Record<string, unknown>,
     workspace: AcodeWorkspace,
     mode: PermissionMode,
     signal?: AbortSignal,
+    source?: string,
+  ): Promise<{ block?: boolean; reason?: string }> {
+    const ask = () => this.#ask(toolName, args, workspace, mode, signal, source);
+    const next = this.#queue.then(ask, ask);
+    this.#queue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
+  async #ask(
+    toolName: string,
+    args: Record<string, unknown>,
+    workspace: AcodeWorkspace,
+    mode: PermissionMode,
+    signal: AbortSignal | undefined,
+    source: string | undefined,
   ): Promise<{ block?: boolean; reason?: string }> {
     const category = categoryOf(toolName);
     if (!category) return {};
     if (mode === "full-access") return {};
+    // Checked after waiting: an earlier "Allow this session" also covers queued requests.
     if (this.#sessionGrants.has(category) || (category === "edit" && mode === "allow-edits"))
       return {};
     const noun = NOUNS[category];
     if (signal?.aborted)
       return { block: true, reason: `${capitalize(noun)} was aborted before approval.` };
-    if (this.#pending)
-      return { block: true, reason: `Another ${noun} approval is already pending.` };
 
     const path = category === "shell" ? "." : String(args.path ?? args.source ?? "");
     const preview = await this.#buildPreview(toolName, args, workspace);
@@ -45,7 +67,9 @@ export class MutationGate {
         id,
         toolName,
         path,
-        title: approvalTitle(toolName, path),
+        title: source
+          ? `${source} · ${approvalTitle(toolName, path)}`
+          : approvalTitle(toolName, path),
         preview,
         resolve: finish,
       };

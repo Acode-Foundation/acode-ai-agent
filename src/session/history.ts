@@ -21,6 +21,9 @@ const SUMMARY_PREFIX =
 const SUMMARY_SUFFIX = "\n</summary>";
 const PAGE = 500;
 
+/** The note telling the model a run's file changes were reverted; not shown as a message. */
+export const REVERT_ENTRY_KIND = "acode.revert";
+
 /**
  * UI messages for the active transcript: model messages, with compactions and resets as
  * notices. `stopped` holds user entries whose prompt Pi settled as aborted; their turn
@@ -43,9 +46,13 @@ export function transcriptFromEntries(
     open = undefined;
   };
   for (const entry of entries) {
+    if (entry.kind === REVERT_ENTRY_KIND) continue;
     if (UserEntry.is(entry)) {
       closeTurn();
       open = entry.id;
+      const message = entry.model?.[0];
+      if (message?.role === "user") messages.push({ ...message, entryId: entry.id });
+      continue;
     }
     if (CompactionEntry.is(entry)) {
       messages.push({

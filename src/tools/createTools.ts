@@ -24,6 +24,7 @@ import { globMatcher } from "./glob";
 import { legacyEditArguments } from "./textEdits";
 import { assertTextFile, detectSupportedImageMimeType, isBinaryPath } from "./textFiles";
 import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "./truncate";
+import type { EditRecorder } from "../session/editLog";
 import type { WorkspaceExecutionEnv } from "./workspaceEnv";
 
 type ToolDetails = {
@@ -41,6 +42,8 @@ export type WorkspaceToolOptions = {
   fileOperations?: boolean;
   /** Offer Pi's `bash` tool; the workspace environment runs it in Acode Terminal. */
   bash?: boolean;
+  /** Records file content around `write` and `edit`, so a run can be reverted. */
+  editRecorder?: EditRecorder;
 };
 
 /**
@@ -440,7 +443,12 @@ export function createWorkspaceTools(
     execute: async (args, api, context) => {
       const path = workspace.sandbox.normalize(args.path);
       assertTextFile(path, args.content);
-      return noteBufferTarget(await piWrite.execute({ ...args, path }, api, context), api, path);
+      await options.editRecorder?.before(api, path, context);
+      try {
+        return noteBufferTarget(await piWrite.execute({ ...args, path }, api, context), api, path);
+      } finally {
+        await options.editRecorder?.after(api, path, context);
+      }
     },
   });
 
@@ -456,6 +464,7 @@ export function createWorkspaceTools(
         : (legacyEditArguments(args) as Parameters<typeof piEdit.execute>[0]),
     execute: async (args, api, context) => {
       const path = workspace.sandbox.normalize(args.path);
+      await options.editRecorder?.before(api, path, context);
       try {
         return noteBufferTarget(await piEdit.execute({ ...args, path }, api, context), api, path);
       } catch (error) {
@@ -464,6 +473,8 @@ export function createWorkspaceTools(
         if (cause instanceof FileError && cause.code !== "aborted")
           throw new Error(`Could not edit ${path}: ${describeError(cause)}`);
         throw error;
+      } finally {
+        await options.editRecorder?.after(api, path, context);
       }
     },
   });

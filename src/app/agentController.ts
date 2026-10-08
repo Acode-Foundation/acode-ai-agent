@@ -27,7 +27,7 @@ import { createModelCatalogStore } from "../platform/modelCatalogStore";
 import { ChatStore, createChatId, type ChatMeta } from "../session/chatStore";
 import { fromPiSessionJsonl } from "../session/history";
 import { ProviderRegistry } from "../providers/providerRegistry";
-import { AgentSession } from "../session/agentSession";
+import { AgentSession, type RevertResult } from "../session/agentSession";
 import { pickGlobalSkillsFolder } from "../session/workspaceResources";
 import {
   finalizeCustomEndpoint,
@@ -85,6 +85,7 @@ export class AgentController {
       chats: [],
       commands: BUILT_IN_SLASH_COMMANDS,
       tasks: [],
+      edits: {},
     };
     this.settings.subscribe((settings) => {
       this.providers.syncCustomEndpoints();
@@ -372,6 +373,18 @@ export class AgentController {
       title: picked.name.replace(/\.(?:jsonl?|txt)$/i, "") || "Imported session",
     });
     await this.#activeSession()?.importHistory(entries);
+  }
+
+  /** Put back the files one turn changed; see `AgentSession.revertRun`. */
+  async revertRun(entryId: string, force = false): Promise<RevertResult> {
+    const session = this.#activeSession();
+    if (!session) throw new Error("Open a session before reverting changes.");
+    return session.revertRun(entryId, force);
+  }
+
+  /** Stop one running tool call, such as a subagent, without stopping the run. */
+  async stopTool(callId: string): Promise<void> {
+    await this.#activeSession()?.stopTool(callId);
   }
 
   async abort(): Promise<RestoredPrompt[]> {
@@ -1023,6 +1036,7 @@ export class AgentController {
       contextTokens: snapshot?.contextTokens ?? 0,
       commands: snapshot?.commands ?? BUILT_IN_SLASH_COMMANDS,
       tasks: snapshot?.tasks ?? [],
+      edits: snapshot?.edits ?? {},
       recovery: snapshot?.recovery,
       retry: snapshot?.retry,
       model: this.#state.model,

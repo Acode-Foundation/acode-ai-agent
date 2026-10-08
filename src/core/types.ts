@@ -67,11 +67,30 @@ export type RunNotice = {
 
 /** What the chat UI renders: model messages from the active transcript, plus notices. */
 export type TranscriptMessage =
-  | UserMessage
+  | (UserMessage & { entryId?: number })
   | AssistantMessage
   | ToolResultMessage
   | CompactionNotice
   | RunNotice;
+
+/** One file a run changed, with line counts against its content before the run. */
+export type RunEditFile = {
+  path: string;
+  added: number;
+  removed: number;
+  /** Did not exist before the run; undo removes it. */
+  created: boolean;
+  /** Too large or unreadable when recorded; undo leaves it alone. */
+  skipped: boolean;
+};
+
+/** Files a run's `write` and `edit` calls changed, keyed in state by the run's user entry id. */
+export type RunEditSummary = {
+  files: RunEditFile[];
+  added: number;
+  removed: number;
+  reverted: boolean;
+};
 
 export type ChatSummary = {
   id: string;
@@ -167,6 +186,7 @@ export type PublicAgentState = {
   chats: ChatSummary[];
   commands: SlashCommand[];
   tasks: Task[];
+  edits: Record<string, RunEditSummary>;
   recovery?: RunRecovery;
   retry?: RunRetry;
   activeChatId?: string;

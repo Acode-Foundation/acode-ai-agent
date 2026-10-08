@@ -28,6 +28,8 @@ export type WorkEntry = {
 
 export type ChatTurn = {
   id: string;
+  /** Pi entry id of the turn's user message; keys the turn's recorded file edits. */
+  entryId?: number;
   user?: string;
   userParts?: UserPart[];
   work: WorkEntry[];
@@ -212,6 +214,12 @@ export function presentTool(
       return { kind: "think", label: "Reasoned", detail: undefined };
     case "todo_write":
       return { kind: "other", label: "Updated tasks", detail: todoWriteDetail(args, output) };
+    case "subagent":
+      return {
+        kind: "other",
+        label: args.agent === "general" ? "Delegated to a subagent" : "Explored with a subagent",
+        detail: inlinePreview(firstString(args, ["task"])),
+      };
     case "ask_user_question":
       return { kind: "other", label: "Asked you", detail: askDetail(args, output) };
     default:
@@ -410,6 +418,7 @@ function projectTurn(allMessages: AgentMessage[], streaming: boolean): ChatTurn 
   const visibleAnswer = answer.join("\n\n").trim() || undefined;
   return {
     id: user ? `user-${user.timestamp}` : `turn-${messages[0]?.timestamp ?? 0}`,
+    entryId: user && "entryId" in user ? user.entryId : undefined,
     user: user ? userText(user) : undefined,
     userParts: user ? userPartsFromMessage(user.content) : undefined,
     work,
