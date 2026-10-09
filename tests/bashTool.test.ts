@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { MutationGate } from "../src/permissions/mutationGate.ts";
-import { createWorkspaceTools } from "../src/tools/createTools.ts";
+import { createWorkspaceTools, DEFAULT_BASH_TIMEOUT_SECONDS } from "../src/tools/createTools.ts";
 import { resolveTerminalWorkingDirectory } from "../src/tools/terminalShell.ts";
 import { WorkspaceExecutionEnv } from "../src/tools/workspaceEnv.ts";
 import type { AcodeWorkspace } from "../src/workspace/acodeWorkspace.ts";
@@ -116,6 +116,23 @@ test("stops timed-out commands", async () => {
   expect(executor.stopped).toContain("process-timeout");
   expect(executor.stoppedService).toBe(1);
   vi.useRealTimers();
+});
+
+test("stops commands without a timeout after the default", async () => {
+  vi.useFakeTimers();
+  const executor = fakeExecutor();
+  executor.start = async () => "process-runaway";
+  vi.stubGlobal("Executor", executor);
+  const execution = bash("file:///data/user/0/com.foxdebug.acode/files/public", {
+    command: "find / -name '*.log'",
+  });
+  const rejected = expect(execution).rejects.toThrow(
+    `Command timed out after ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds`,
+  );
+  await vi.advanceTimersByTimeAsync(DEFAULT_BASH_TIMEOUT_SECONDS * 1_000);
+
+  await rejected;
+  expect(executor.stopped).toContain("process-runaway");
 });
 
 test("stops the executor service after an agent-started command when nothing else is running", async () => {

@@ -27,6 +27,9 @@ import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "./truncate";
 import type { EditRecorder } from "../session/editLog";
 import type { WorkspaceExecutionEnv } from "./workspaceEnv";
 
+/** Applied when the model gives `bash` no timeout. */
+export const DEFAULT_BASH_TIMEOUT_SECONDS = 120;
+
 type ToolDetails = {
   path?: string;
   operation: string;
@@ -480,6 +483,14 @@ export function createWorkspaceTools(
   });
 
   const bash = createBashTool();
+  const bashParameters = Type.Object({
+    command: Type.String({ description: "Bash command to execute" }),
+    timeout: Type.Optional(
+      Type.Number({
+        description: `Timeout in seconds (default ${DEFAULT_BASH_TIMEOUT_SECONDS}); raise it for builds, installs, and test runs`,
+      }),
+    ),
+  });
   const tools: ToolRegistration[] = [
     read,
     listDir,
@@ -494,8 +505,22 @@ export function createWorkspaceTools(
             // Acode Terminal streams output but cannot spill it to a file the agent could read.
             description:
               `${bash.description.replace(/ If truncated, full output is saved to a temp file\./, " If truncated, rerun with narrower output (grep, head, tail) to see the rest.")} ` +
-              "The working directory is the workspace inside Acode Terminal's Alpine Linux.",
+              "The working directory is the workspace inside Acode Terminal's Alpine Linux. " +
+              `Commands stop after ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds unless you pass a longer timeout.`,
+            parameters: bashParameters,
             executionMode: "sequential" as const,
+            // Pi's bash has no default timeout, and a runaway command (a `find` over the
+            // whole device) would otherwise hold the run until Android kills the app.
+            execute: (
+              args: { command: string; timeout?: number },
+              api: ToolExecutionApi,
+              context: Parameters<typeof bash.execute>[2],
+            ) =>
+              bash.execute(
+                { ...args, timeout: args.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS },
+                api,
+                context,
+              ),
           },
         ]
       : []),
