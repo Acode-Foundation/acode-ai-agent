@@ -147,6 +147,19 @@ test("runs a prompt through Pi and reopens the chat from IndexedDB", async () =>
   expect(reopened.session.snapshot.recovery).toBeUndefined();
 });
 
+test("names the chat when the prompt is sent, before the run settles", async () => {
+  const env = environment();
+  const meta = env.newMeta("chat-title");
+  await env.store.save(meta);
+  const { session } = await env.open(meta);
+  env.faux.setResponses([fauxAssistantMessage("late reply")]);
+
+  await session.prompt("  why does   the run stall?  ");
+  expect(env.store.get("chat-title")?.title).toBe("why does the run stall?");
+  expect(session.title).toBe("why does the run stall?");
+  await settle(session, idle);
+});
+
 test("runs Pi's read tool against the workspace", async () => {
   const env = environment();
   const { session } = await env.open(env.newMeta("chat-read"));

@@ -455,6 +455,11 @@ export class AgentSession {
       { type: "input", content, whenBusy: mode },
       context,
     );
+    // Name the chat now, so a run that fails, stalls, or is killed still has a title.
+    if (this.#meta.title === "New chat") {
+      const title = titleFromMessages([{ role: "user", content }]);
+      if (title !== "New chat") await this.#saveMeta({ title });
+    }
     this.#publish();
     void this.#followSubmission(submission);
   }
