@@ -15,7 +15,7 @@ If you already use Pi on a desktop, the same ideas apply here:
 - Project instructions from `AGENTS.md` (or `CLAUDE.md`)
 - Import / export of Pi CLI session files (JSONL)
 
-What Pi’s desktop CLI does with a real terminal, cwd, and Node is adapted for Acode: files go through `fsOperation` (local, SAF, FTP, SFTP), `bash` exists only on Terminal-backed folders, and OAuth uses device codes or a pasted browser callback instead of running a localhost server. Pi packages, tmux, and the Pi TUI are not part of this plugin.
+What Pi’s desktop CLI does with a real terminal, cwd, and Node is adapted for Acode: files go through `fsOperation` (local, SAF, FTP, SFTP), `bash` exists only on Terminal-backed folders, and OAuth opens a custom tab and uses device approval or an app callback instead of running a localhost server. Pi packages, tmux, and the Pi TUI are not part of this plugin.
 
 ## Requirements
 
@@ -129,7 +129,7 @@ OpenRouter, OpenAI, Anthropic, Google Gemini, xAI, Groq, DeepSeek, Cerebras, Fir
 | Codex          | ChatGPT Plus / Pro    |
 | GitHub Copilot | Copilot subscription  |
 | xAI            | Grok / X subscription |
-| Kimi Coding    | Kimi Code             |
+| Kimi Code      | Kimi Code             |
 
 Anthropic is API-key only. Claude Pro / Max sign-in was removed because Anthropic's policy does not allow third-party apps to use Claude subscription OAuth; use an Anthropic Console API key instead. If you connected Claude Pro / Max in an earlier version, add an API key to keep using Anthropic models.
 
@@ -139,7 +139,11 @@ Anthropic is API-key only. Claude Pro / Max sign-in was removed because Anthropi
 - **Provider access → Local endpoint** adds an OpenAI-compatible server, such as llama.cpp, vLLM, LM Studio or Ollama on your LAN. Set a base URL (e.g. `http://192.168.1.10:8080/v1`), list model ids or fetch them from `/models`, and mark whether the models accept images or reasoning. Up to 20 endpoints.
 - `/scoped-models` opens the same picker to choose which models this agent uses.
 
-Codex offers browser sign-in and device-code sign-in. Device-code sign-in connects automatically after approval; first enable device-code authorization in ChatGPT Settings → Security. For browser sign-in, complete ChatGPT sign-in in the browser, then copy the full `http://localhost:1455/auth/callback?...` address and paste it into Acode. The localhost page may show a connection error because Acode does not run a callback server; copying its address completes the sign-in. This browser OAuth flow does not require enabling device-code authorization in ChatGPT settings.
+OpenRouter sign-in opens a custom tab and returns through `https://acode.app/ai/oauth/openrouter`. Approval connects the account without pasting a code. PKCE and state protect the callback, and plugin secure storage allows a pending sign-in to finish after an app restart. The callback page returns through `acode://ai-agent/oauth/openrouter`.
+
+Codex starts device-code sign-in directly, which does not require pasting a return link. Browser sign-in is available under **Other sign-in options**. For device login, tap **Copy code & sign in**, paste the code on the provider page, and approve. Acode finishes connecting automatically. For Codex, first enable device-code authorization in ChatGPT Settings → Security. For browser sign-in, complete ChatGPT sign-in in the browser, then copy the full `http://localhost:1455/auth/callback?...` address and paste it into Acode. The localhost page may show a connection error because Acode does not run a callback server; copying its address completes the sign-in. This browser OAuth flow does not require enabling device-code authorization in ChatGPT settings.
+
+GitHub Copilot uses github.com by default; **Other sign-in options** supports an Enterprise domain. Kimi Code and xAI use the same device-code sign-in controls.
 
 ## What it can do
 

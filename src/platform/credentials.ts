@@ -5,13 +5,19 @@ import type {
   CredentialStore,
 } from "@earendil-works/pi-ai";
 
+import { Signal } from "../core/events";
+
+export type PendingSignIn = { state: string; verifier: string; expiresAt: number };
+
 const SECRET_PREFIX = "provider:";
 
 export class PortableCredentialStore implements CredentialStore {
+  readonly changes = new Signal<string>();
   #ctx: Acode.PluginContext | null;
   #memory = new Map<string, Credential>();
   #chains = new Map<string, Promise<unknown>>();
   #extraIds: () => readonly string[];
+  #pending = new Map<string, PendingSignIn>();
 
   constructor(ctx: Acode.PluginContext | null, extraIds: () => readonly string[] = () => []) {
     this.#ctx = ctx;
@@ -94,9 +100,45 @@ export class PortableCredentialStore implements CredentialStore {
       async () => {
         this.#memory.delete(providerId);
         if (this.#ctx) await this.#ctx.setSecret(`${SECRET_PREFIX}${providerId}`, "");
+        this.changes.emit(providerId);
       },
       options?.signal,
     );
+  }
+
+  pendingSignIn(providerId: string): Promise<PendingSignIn | undefined> {
+    return this.#enqueue(`pending:${providerId}`, () => this.#readPending(providerId));
+  }
+
+  savePendingSignIn(providerId: string, pending: PendingSignIn): Promise<void> {
+    return this.#enqueue(`pending:${providerId}`, async () => {
+      if (this.#ctx)
+        await this.#ctx.setSecret(`oauth-pending:${providerId}`, JSON.stringify(pending));
+      this.#pending.set(providerId, pending);
+    });
+  }
+
+  clearPendingSignIn(providerId: string, state?: string): Promise<void> {
+    return this.#enqueue(`pending:${providerId}`, async () => {
+      if (state && (await this.#readPending(providerId))?.state !== state) return;
+      if (this.#ctx) await this.#ctx.setSecret(`oauth-pending:${providerId}`, "");
+      this.#pending.delete(providerId);
+    });
+  }
+
+  async #readPending(providerId: string): Promise<PendingSignIn | undefined> {
+    if (!this.#ctx) return this.#pending.get(providerId);
+    const raw = await this.#ctx.getSecret(`oauth-pending:${providerId}`, "");
+    try {
+      const value = JSON.parse(raw) as PendingSignIn;
+      if (
+        /^[A-Za-z0-9_-]{43}$/.test(value.state) &&
+        /^[A-Za-z0-9_-]{43}$/.test(value.verifier) &&
+        Number.isFinite(value.expiresAt)
+      )
+        return value;
+    } catch {}
+    return undefined;
   }
 
   async setApiKey(providerId: string, key: string): Promise<void> {
@@ -113,6 +155,7 @@ export class PortableCredentialStore implements CredentialStore {
     if (this.#ctx) {
       await this.#ctx.setSecret(`${SECRET_PREFIX}${providerId}`, JSON.stringify(credential));
     }
+    this.changes.emit(providerId);
   }
 
   #enqueue<T>(providerId: string, task: () => Promise<T>, signal?: AbortSignal): Promise<T> {

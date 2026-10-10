@@ -19,6 +19,14 @@ function sdcard(): SDcard | undefined {
   }
 }
 
+export function isIOSHost(): boolean {
+  const native = globalThis as {
+    Bridge?: { platformId?: string };
+    cordova?: { platformId?: string };
+  };
+  return (native.Bridge ?? native.cordova)?.platformId === "ios";
+}
+
 export async function pickDeviceImage(autoResize = true): Promise<DraftImage | undefined> {
   const picked = await pickWithSDcard();
   if (!picked) return undefined;
@@ -74,7 +82,8 @@ function pickWithSDcard(): Promise<{ uri: string; name: string; mime?: string } 
       }
       reject(error instanceof Error ? error : new Error(String(error)));
     };
-    api.openDocumentFile(ok, fail, "image/*");
+    if (api.getImage) api.getImage(ok, fail, "image/*");
+    else api.openDocumentFile(ok, fail, "image/*");
   });
 }
 
@@ -84,7 +93,9 @@ function normalizePick(
   if (typeof value === "string") {
     if (!value) return undefined;
     return {
-      uri: value,
+      uri: value.startsWith("/")
+        ? `file://${encodeURI(value).replace(/#/g, "%23").replace(/\?/g, "%3F")}`
+        : value,
       name: fileNameFromUri(value),
       mime: mimeFromName(fileNameFromUri(value), "") || undefined,
     };

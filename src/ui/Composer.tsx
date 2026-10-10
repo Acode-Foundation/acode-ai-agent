@@ -1,4 +1,15 @@
-import { AtSign, Clipboard, ListPlus, Paperclip, Send, Settings, Square } from "lucide-preact";
+import {
+  AtSign,
+  ChevronRight,
+  Clipboard,
+  FolderOpen,
+  Image,
+  ListPlus,
+  Paperclip,
+  Send,
+  Settings,
+  Square,
+} from "lucide-preact";
 import { forwardRef } from "preact/compat";
 import {
   useCallback,
@@ -11,13 +22,19 @@ import {
 import type { AgentController } from "../app/agentController";
 import { PERMISSION_MODES, type PermissionMode } from "../core/schema";
 import type { QueuedPrompt } from "../core/types";
-import { openAcodeUri, pickDeviceImage, previewImageInAcode } from "../platform/deviceImage";
+import {
+  isIOSHost,
+  openAcodeUri,
+  pickDeviceImage,
+  previewImageInAcode,
+} from "../platform/deviceImage";
 import { pickAcodeFile } from "../platform/deviceFile";
-import { pickAcodeSelect } from "../platform/acodeSelect";
+import { Sheet } from "./Sheet";
 import { imageContentFromFile } from "../platform/promptImages";
 import { fileDir, fileName, type MentionFile } from "../workspace/fileMentions";
 import { createFileGlyph, createPasteGlyph, fileIconClass } from "./fileGlyph";
 import {
+  chipBesideCaret,
   clearBlankEditor,
   consumeMention,
   getEditorSelection,
@@ -83,6 +100,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
   const attachments = useRef(new Map<string, DraftImage | DraftFile>());
   const [empty, setEmpty] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [attachmentMenu, setAttachmentMenu] = useState(false);
   const [mention, setMention] = useState<{ query: string } | null>(null);
   const [commandQuery, setCommandQuery] = useState<string | null>(null);
   const [commandActive, setCommandActive] = useState(0);
@@ -303,11 +321,11 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
     }
   };
 
-  const pickFile = async () => {
+  const pickFile = async (source: "acode" | "media" = "acode") => {
     if (props.disabled || busy) return;
     setBusy(true);
     try {
-      const file = await pickAcodeFile(props.controller.settings.value.imageAutoResize);
+      const file = await pickAcodeFile(props.controller.settings.value.imageAutoResize, source);
       if (file && "content" in file) addDraftFile(file);
       else if (file) addDraftImages([file]);
     } catch (error) {
@@ -315,16 +333,6 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
     } finally {
       setBusy(false);
     }
-  };
-
-  const chooseAttachment = async () => {
-    if (props.disabled || busy) return;
-    const choice = await pickAcodeSelect("Attach", [
-      { value: "image", text: "Image", icon: "image" },
-      { value: "file", text: "File", icon: "document-text" },
-    ]);
-    if (choice === "image") await pickImage();
-    if (choice === "file") await pickFile();
   };
 
   const addFiles = async (files: File[]) => {
@@ -379,269 +387,311 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
   };
 
   return (
-    <footer class="composer">
-      <div class="composer-dock">
-        {commandQuery !== null && !props.disabled && (
-          <CommandMenu
-            query={commandQuery}
-            commands={commandHits}
-            active={commandActive}
-            onHover={setCommandActive}
-            onPick={insertCommand}
-          />
-        )}
-        {mention && !props.disabled && (
-          <MentionMenu
-            query={mention.query}
-            hits={hits}
-            active={active}
-            searching={searching}
-            onHover={setActive}
-            onPick={insertFile}
-          />
-        )}
-        {props.queued.length > 0 && (
-          <div class="queue-list" aria-label="Queued prompts">
-            {props.queued.map((item, index) => (
-              <span class={`queue-chip ${item.mode}`} key={`${item.mode}-${index}`}>
-                {item.mode === "followUp" ? "After" : "Steer"}{" "}
-                {item.text ||
-                  (item.images ? `${item.images} image${item.images === 1 ? "" : "s"}` : "")}
-              </span>
-            ))}
-          </div>
-        )}
-        <div class="composer-field">
-          {empty && (
-            <span class="composer-placeholder">
-              {props.disabled
-                ? (props.disabledReason ?? "Open a folder to begin")
-                : props.running
-                  ? "Steer now, or queue a follow-up…"
-                  : "Ask anything…  / commands  @ files"}
-            </span>
+    <>
+      <footer class="composer">
+        <div class="composer-dock">
+          {commandQuery !== null && !props.disabled && (
+            <CommandMenu
+              query={commandQuery}
+              commands={commandHits}
+              active={commandActive}
+              onHover={setCommandActive}
+              onPick={insertCommand}
+            />
           )}
-          <div
-            ref={editor}
-            class="composer-input"
-            contentEditable={!props.disabled}
-            role="textbox"
-            aria-multiline="true"
-            aria-label="Message"
-            inputMode="text"
-            enterkeyhint="enter"
-            spellcheck={false}
-            onInput={refresh}
-            onKeyUp={refresh}
-            onCompositionEnd={refresh}
-            onBeforeInput={(event) => {
-              const inputType = (event as unknown as { inputType?: string }).inputType;
-              if (inputType !== "deleteContentBackward" && inputType !== "deleteContentForward")
-                return;
-              if (
-                tryDeleteChip(
-                  editor.current,
-                  attachments.current,
-                  inputType === "deleteContentForward" ? "forward" : "backward",
-                )
-              ) {
-                event.preventDefault();
-                refresh();
-              }
-            }}
-            onTouchStart={() => props.onFocusComposer()}
-            onFocus={(event) => {
-              if (editor.current && isBlankEditor(editor.current)) clearBlankEditor(editor.current);
-              props.onFocusComposer();
-              keepPagePinned(event.currentTarget);
-            }}
-            onPaste={(event) => {
-              const files = [...(event.clipboardData?.files ?? [])].filter((file) =>
-                file.type.startsWith("image/"),
-              );
-              const raw = event.clipboardData?.getData("text/plain") ?? "";
-              if (!files.length && !raw) return;
-              event.preventDefault();
-              if (raw) {
-                const text = normalizePastedText(raw);
-                if (isLargePaste(text)) {
-                  const current = editor.current
-                    ? readDraft(editor.current, attachments.current)
-                    : { files: [] as DraftFile[] };
-                  addDraftFile(draftFileFromPaste(text, current.files));
-                } else if (text) {
-                  insertText(editor.current, text);
-                }
-              }
-              if (files.length) void addFiles(files);
-              refresh();
-            }}
-            onDragOver={(event) => {
-              if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
-            }}
-            onDrop={(event) => {
-              const files = [...(event.dataTransfer?.files ?? [])];
-              if (!files.length) return;
-              event.preventDefault();
-              void addFiles(files);
-            }}
-            onKeyDown={(event) => {
-              if (event.isComposing || event.keyCode === 229) return;
-              if (commandQuery !== null) {
-                if (event.key === "ArrowDown" && commandHits.length) {
-                  event.preventDefault();
-                  setCommandActive((index) => (index + 1) % commandHits.length);
+          {mention && !props.disabled && (
+            <MentionMenu
+              query={mention.query}
+              hits={hits}
+              active={active}
+              searching={searching}
+              onHover={setActive}
+              onPick={insertFile}
+            />
+          )}
+          {props.queued.length > 0 && (
+            <div class="queue-list" aria-label="Queued prompts">
+              {props.queued.map((item, index) => (
+                <span class={`queue-chip ${item.mode}`} key={`${item.mode}-${index}`}>
+                  {item.mode === "followUp" ? "After" : "Steer"}{" "}
+                  {item.text ||
+                    (item.images ? `${item.images} image${item.images === 1 ? "" : "s"}` : "")}
+                </span>
+              ))}
+            </div>
+          )}
+          <div class="composer-field">
+            {empty && (
+              <span class="composer-placeholder">
+                {props.disabled
+                  ? (props.disabledReason ?? "Open a folder to begin")
+                  : props.running
+                    ? "Steer now, or queue a follow-up…"
+                    : "Ask anything…  / commands  @ files"}
+              </span>
+            )}
+            <div
+              ref={editor}
+              class="composer-input"
+              contentEditable={!props.disabled}
+              role="textbox"
+              aria-multiline="true"
+              aria-label="Message"
+              inputMode="text"
+              enterkeyhint="enter"
+              spellcheck={false}
+              onInput={refresh}
+              onKeyUp={refresh}
+              onCompositionEnd={refresh}
+              onBeforeInput={(event) => {
+                const inputType = (event as unknown as { inputType?: string }).inputType;
+                if (inputType !== "deleteContentBackward" && inputType !== "deleteContentForward")
                   return;
-                }
-                if (event.key === "ArrowUp" && commandHits.length) {
-                  event.preventDefault();
-                  setCommandActive(
-                    (index) => (index - 1 + commandHits.length) % commandHits.length,
-                  );
-                  return;
-                }
-                if ((event.key === "Enter" || event.key === "Tab") && commandHits[commandActive]) {
-                  event.preventDefault();
-                  insertCommand(commandHits[commandActive]!);
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setCommandQuery(null);
-                  return;
-                }
-              }
-              if (mention && (hits.length || searching)) {
-                if (event.key === "ArrowDown" && hits.length) {
-                  event.preventDefault();
-                  setActive((index) => (index + 1) % hits.length);
-                  return;
-                }
-                if (event.key === "ArrowUp" && hits.length) {
-                  event.preventDefault();
-                  setActive((index) => (index - 1 + hits.length) % hits.length);
-                  return;
-                }
-                if ((event.key === "Enter" || event.key === "Tab") && hits[active]) {
-                  event.preventDefault();
-                  insertFile(hits[active]!);
-                  return;
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setMention(null);
-                  return;
-                }
-              }
-              if (event.key === "Backspace" || event.key === "Delete") {
                 if (
                   tryDeleteChip(
                     editor.current,
                     attachments.current,
-                    event.key === "Delete" ? "forward" : "backward",
+                    inputType === "deleteContentForward" ? "forward" : "backward",
                   )
                 ) {
                   event.preventDefault();
                   refresh();
-                  return;
                 }
-              }
-              if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSend) {
+              }}
+              onTouchStart={() => props.onFocusComposer()}
+              onFocus={(event) => {
+                if (editor.current && isBlankEditor(editor.current))
+                  clearBlankEditor(editor.current);
+                props.onFocusComposer();
+                keepPagePinned(event.currentTarget);
+              }}
+              onPaste={(event) => {
+                const files = [...(event.clipboardData?.files ?? [])].filter((file) =>
+                  file.type.startsWith("image/"),
+                );
+                const raw = event.clipboardData?.getData("text/plain") ?? "";
+                if (!files.length && !raw) return;
                 event.preventDefault();
-                void submit(event.shiftKey ? "followUp" : "steer");
-              }
-            }}
-          />
-        </div>
-        {visionHint && (
-          <p class="composer-hint">
-            This model is not marked for image input. Switch to a vision model if needed.
-          </p>
-        )}
-        <div class="composer-toolbar">
-          <button
-            class="composer-tool"
-            type="button"
-            disabled={props.disabled || busy}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => void chooseAttachment()}
-            aria-label="Attach"
-          >
-            <Paperclip size={16} strokeWidth={2} aria-hidden="true" />
-          </button>
-          <button
-            class="composer-tool"
-            type="button"
-            disabled={props.disabled}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={startMention}
-            aria-label="Mention a file"
-          >
-            <AtSign size={16} strokeWidth={2} aria-hidden="true" />
-          </button>
-          <button
-            class="config-chip"
-            type="button"
-            onClick={props.onOpenConfig}
-            aria-label="Session configuration"
-          >
-            <Settings size={16} strokeWidth={2} aria-hidden="true" />
-            <span class="mode">
-              {PERMISSION_MODES.find((mode) => mode.id === props.permissionMode)?.label ?? "Ask"}
-            </span>
-            {effortLabel && (
+                if (raw) {
+                  const text = normalizePastedText(raw);
+                  if (isLargePaste(text)) {
+                    const current = editor.current
+                      ? readDraft(editor.current, attachments.current)
+                      : { files: [] as DraftFile[] };
+                    addDraftFile(draftFileFromPaste(text, current.files));
+                  } else if (text) {
+                    insertText(editor.current, text);
+                  }
+                }
+                if (files.length) void addFiles(files);
+                refresh();
+              }}
+              onDragOver={(event) => {
+                if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                const files = [...(event.dataTransfer?.files ?? [])];
+                if (!files.length) return;
+                event.preventDefault();
+                void addFiles(files);
+              }}
+              onKeyDown={(event) => {
+                if (event.isComposing || event.keyCode === 229) return;
+                if (commandQuery !== null) {
+                  if (event.key === "ArrowDown" && commandHits.length) {
+                    event.preventDefault();
+                    setCommandActive((index) => (index + 1) % commandHits.length);
+                    return;
+                  }
+                  if (event.key === "ArrowUp" && commandHits.length) {
+                    event.preventDefault();
+                    setCommandActive(
+                      (index) => (index - 1 + commandHits.length) % commandHits.length,
+                    );
+                    return;
+                  }
+                  if (
+                    (event.key === "Enter" || event.key === "Tab") &&
+                    commandHits[commandActive]
+                  ) {
+                    event.preventDefault();
+                    insertCommand(commandHits[commandActive]!);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setCommandQuery(null);
+                    return;
+                  }
+                }
+                if (mention && (hits.length || searching)) {
+                  if (event.key === "ArrowDown" && hits.length) {
+                    event.preventDefault();
+                    setActive((index) => (index + 1) % hits.length);
+                    return;
+                  }
+                  if (event.key === "ArrowUp" && hits.length) {
+                    event.preventDefault();
+                    setActive((index) => (index - 1 + hits.length) % hits.length);
+                    return;
+                  }
+                  if ((event.key === "Enter" || event.key === "Tab") && hits[active]) {
+                    event.preventDefault();
+                    insertFile(hits[active]!);
+                    return;
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setMention(null);
+                    return;
+                  }
+                }
+                if (event.key === "Backspace" || event.key === "Delete") {
+                  if (
+                    tryDeleteChip(
+                      editor.current,
+                      attachments.current,
+                      event.key === "Delete" ? "forward" : "backward",
+                    )
+                  ) {
+                    event.preventDefault();
+                    refresh();
+                    return;
+                  }
+                }
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && canSend) {
+                  event.preventDefault();
+                  void submit(event.shiftKey ? "followUp" : "steer");
+                }
+              }}
+            />
+          </div>
+          {visionHint && (
+            <p class="composer-hint">
+              This model is not marked for image input. Switch to a vision model if needed.
+            </p>
+          )}
+          <div class="composer-toolbar">
+            <button
+              class="composer-tool"
+              type="button"
+              disabled={props.disabled || busy}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setAttachmentMenu(true)}
+              aria-label="Attach"
+            >
+              <Paperclip size={16} strokeWidth={2} aria-hidden="true" />
+            </button>
+            <button
+              class="composer-tool"
+              type="button"
+              disabled={props.disabled}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={startMention}
+              aria-label="Mention a file"
+            >
+              <AtSign size={16} strokeWidth={2} aria-hidden="true" />
+            </button>
+            <button
+              class="config-chip"
+              type="button"
+              onClick={props.onOpenConfig}
+              aria-label="Session configuration"
+            >
+              <Settings size={16} strokeWidth={2} aria-hidden="true" />
+              <span class="mode">
+                {PERMISSION_MODES.find((mode) => mode.id === props.permissionMode)?.label ?? "Ask"}
+              </span>
+              {effortLabel && (
+                <>
+                  <span class="sep">·</span>
+                  <span class="effort">{effortLabel}</span>
+                </>
+              )}
+              <span class="sep">·</span>
+              <span class="model">{props.modelName}</span>
+            </button>
+            {props.contextWindow ? (
+              <span
+                class={`context-meter${used >= 90 ? " danger" : used >= 70 ? " warn" : ""}`}
+                style={{ "--used": `${used}%` } as Record<string, string>}
+                title={`${formatTokens(props.contextTokens)} of ${formatTokens(props.contextWindow)}`}
+                aria-label="Context window"
+              />
+            ) : null}
+            {showStop ? (
+              <button
+                class="composer-action stop"
+                type="button"
+                onClick={props.onStop}
+                aria-label="Stop generation"
+              >
+                <Square size={16} strokeWidth={2.4} aria-hidden="true" />
+              </button>
+            ) : (
               <>
-                <span class="sep">·</span>
-                <span class="effort">{effortLabel}</span>
+                {props.running && (
+                  <button
+                    class="composer-action follow"
+                    type="button"
+                    onClick={() => void submit("followUp")}
+                    disabled={!canSend}
+                    aria-label="Queue follow-up"
+                  >
+                    <ListPlus size={16} strokeWidth={2} aria-hidden="true" />
+                  </button>
+                )}
+                <button
+                  class="composer-action send"
+                  type="button"
+                  onClick={() => void submit("steer")}
+                  disabled={!canSend}
+                  aria-label={props.running ? "Steer agent" : "Send"}
+                >
+                  <Send size={16} strokeWidth={2} aria-hidden="true" />
+                </button>
               </>
             )}
-            <span class="sep">·</span>
-            <span class="model">{props.modelName}</span>
-          </button>
-          {props.contextWindow ? (
-            <span
-              class={`context-meter${used >= 90 ? " danger" : used >= 70 ? " warn" : ""}`}
-              style={{ "--used": `${used}%` } as Record<string, string>}
-              title={`${formatTokens(props.contextTokens)} of ${formatTokens(props.contextWindow)}`}
-              aria-label="Context window"
-            />
-          ) : null}
-          {showStop ? (
-            <button
-              class="composer-action stop"
-              type="button"
-              onClick={props.onStop}
-              aria-label="Stop generation"
-            >
-              <Square size={16} strokeWidth={2.4} aria-hidden="true" />
-            </button>
-          ) : (
+          </div>
+        </div>
+      </footer>
+      {attachmentMenu && (
+        <Sheet class="attachment-sources" onClose={() => setAttachmentMenu(false)}>
+          {(close) => (
             <>
-              {props.running && (
-                <button
-                  class="composer-action follow"
-                  type="button"
-                  onClick={() => void submit("followUp")}
-                  disabled={!canSend}
-                  aria-label="Queue follow-up"
-                >
-                  <ListPlus size={16} strokeWidth={2} aria-hidden="true" />
-                </button>
-              )}
+              <header class="sheet-header">
+                <h2>Attach</h2>
+              </header>
               <button
-                class="composer-action send"
                 type="button"
-                onClick={() => void submit("steer")}
-                disabled={!canSend}
-                aria-label={props.running ? "Steer agent" : "Send"}
+                class="config-nav"
+                onClick={() => {
+                  // Open media immediately in this gesture, before the sheet's exit animation.
+                  void (isIOSHost() ? pickFile("media") : pickImage());
+                  close();
+                }}
               >
-                <Send size={16} strokeWidth={2} aria-hidden="true" />
+                <Image size={20} aria-hidden="true" />
+                <b>{isIOSHost() ? "Photos or camera" : "Photo Library"}</b>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="config-nav"
+                onClick={() => {
+                  void pickFile();
+                  close();
+                }}
+              >
+                <FolderOpen size={20} aria-hidden="true" />
+                <b>Acode files</b>
+                <ChevronRight size={18} aria-hidden="true" />
               </button>
             </>
           )}
-        </div>
-      </div>
-    </footer>
+        </Sheet>
+      )}
+    </>
   );
 });
 
@@ -1112,55 +1162,6 @@ function tryDeleteChip(
   if (!chip) return false;
   removeChipElement(chip, store);
   return true;
-}
-
-function chipBesideCaret(root: HTMLElement, direction: "backward" | "forward"): HTMLElement | null {
-  const selection = getEditorSelection(root);
-  if (!selection?.anchorNode || !root.contains(selection.anchorNode)) {
-    const chips = [...root.querySelectorAll<HTMLElement>("[data-chip]")];
-    return direction === "backward" ? (chips.at(-1) ?? null) : (chips[0] ?? null);
-  }
-  const { anchorNode, anchorOffset } = selection;
-  if (anchorNode instanceof HTMLElement && anchorNode.dataset.chip) return anchorNode;
-  if (anchorNode.nodeType === Node.TEXT_NODE) {
-    const atEdge =
-      direction === "backward"
-        ? anchorOffset === 0
-        : anchorOffset === (anchorNode.textContent?.length ?? 0);
-    const onlySpace = /^[\u00a0\s]*$/.test(anchorNode.textContent ?? "");
-    if (atEdge || onlySpace) {
-      const sibling = adjacentElement(anchorNode, direction);
-      if (sibling?.dataset.chip) return sibling;
-    }
-  }
-  if (anchorNode === root || (anchorNode instanceof HTMLElement && !anchorNode.dataset.chip)) {
-    const index = direction === "backward" ? anchorOffset - 1 : anchorOffset;
-    const child = anchorNode.childNodes[index];
-    if (child instanceof HTMLElement && child.dataset.chip) return child;
-    if (child?.nodeType === Node.TEXT_NODE) {
-      const sibling = adjacentElement(child, direction);
-      if (sibling?.dataset.chip) return sibling;
-    }
-  }
-  return null;
-}
-
-function adjacentElement(node: Node, direction: "backward" | "forward"): HTMLElement | null {
-  let current: Node | null = node;
-  while (current) {
-    const sibling: ChildNode | null =
-      direction === "backward" ? current.previousSibling : current.nextSibling;
-    if (sibling instanceof HTMLElement) return sibling;
-    if (sibling?.nodeType === Node.TEXT_NODE && /^[\u00a0\s]*$/.test(sibling.textContent ?? "")) {
-      current = sibling;
-      continue;
-    }
-    if (sibling) return sibling instanceof HTMLElement ? sibling : null;
-    current = current.parentNode;
-    if (current instanceof HTMLElement && current.classList.contains("composer-input")) return null;
-    if (current instanceof HTMLElement && current.dataset.chip) return current;
-  }
-  return null;
 }
 
 function removeChipElement(chip: HTMLElement, store: Map<string, DraftImage | DraftFile>): void {

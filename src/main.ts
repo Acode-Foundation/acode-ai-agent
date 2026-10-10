@@ -13,6 +13,7 @@ import {
 import { createHomeProject } from "./platform/randomProject";
 import { installNativeFetch, uninstallNativeFetch } from "./platform/nativeHttp";
 import { setPluginBaseUrl } from "./platform/pluginAssets";
+import { AGENT_ICON_CLASS, installPluginIcon } from "./platform/pluginIcon";
 import { mountApp, unmountApp } from "./ui/mount";
 import { mountSidebar, unmountSidebar } from "./ui/sidebar/mountSidebar";
 import styles from "./ui/styles.css";
@@ -46,6 +47,7 @@ class AcodeAiAgentPlugin {
   #sidebarContainer: HTMLElement | null = null;
   #sidebarApps: Acode.SidebarApps | null = null;
   #disposeHostMenus: (() => void) | null = null;
+  #disposeIcon: (() => void) | null = null;
 
   async init(
     baseUrl: string,
@@ -54,6 +56,7 @@ class AcodeAiAgentPlugin {
   ): Promise<void> {
     installNativeFetch();
     setPluginBaseUrl(baseUrl);
+    this.#disposeIcon = installPluginIcon();
     const controller = new AgentController(options.ctx);
     this.#controller = controller;
     this.#registerCommands();
@@ -78,6 +81,8 @@ class AcodeAiAgentPlugin {
     this.#disposeHostMenus = null;
     this.#removeSidebar();
     await this.#closeTabs();
+    this.#disposeIcon?.();
+    this.#disposeIcon = null;
     await this.#controller?.dispose();
     this.#controller = null;
     uninstallNativeFetch();
@@ -119,7 +124,7 @@ class AcodeAiAgentPlugin {
       render: true,
       type: "page",
       content: root,
-      tabIcon: "icon brain",
+      tabIcon: `icon ${AGENT_ICON_CLASS}`,
       hideQuickTools: true,
       stylesheets: [styles],
     };
@@ -284,7 +289,7 @@ class AcodeAiAgentPlugin {
     }
     this.#sidebarApps = sidebarApps;
     sidebarApps.add(
-      "icon brain",
+      AGENT_ICON_CLASS,
       SIDEBAR_ID,
       "AI Agent",
       (container) => {

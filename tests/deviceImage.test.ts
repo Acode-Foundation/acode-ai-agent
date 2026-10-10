@@ -1,0 +1,71 @@
+import { afterEach, expect, test, vi } from "vitest";
+
+vi.mock("../src/platform/promptImages", () => ({
+  imageContentFromBytes: vi.fn(async () => ({
+    type: "image",
+    data: "fixture",
+    mimeType: "image/jpeg",
+  })),
+  mimeFromName: (name: string) => (name.endsWith(".png") ? "image/png" : "image/jpeg"),
+}));
+import { imageContentFromBytes } from "../src/platform/promptImages";
+import { isIOSHost, pickDeviceImage } from "../src/platform/deviceImage";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
+
+function fileReader() {
+  const readFile = vi.fn(async () => new Uint8Array([1, 2, 3]).buffer);
+  const fsOperation = vi.fn(() => ({ readFile }));
+  vi.stubGlobal("acode", { fsOperation });
+  return fsOperation;
+}
+
+test("Photo Library uses the gallery API and keeps the selected image and resize setting", async () => {
+  const fs = fileReader();
+  const getImage = vi.fn((success) => success("file:///cache/photo.jpg"));
+  const openDocumentFile = vi.fn();
+  vi.stubGlobal("sdcard", { getImage, openDocumentFile });
+  const image = await pickDeviceImage(false);
+  expect(getImage).toHaveBeenCalledWith(expect.any(Function), expect.any(Function), "image/*");
+  expect(openDocumentFile).not.toHaveBeenCalled();
+  expect(fs).toHaveBeenCalledWith("file:///cache/photo.jpg");
+  expect(image).toMatchObject({
+    name: "photo.jpg",
+    uri: "file:///cache/photo.jpg",
+    data: "fixture",
+  });
+  expect(imageContentFromBytes).toHaveBeenCalledWith(
+    new Uint8Array([1, 2, 3]),
+    "photo.jpg",
+    "image/jpeg",
+    false,
+  );
+});
+
+test("cancelling the gallery creates no attachment", async () => {
+  const fs = fileReader();
+  vi.stubGlobal("Bridge", {
+    platformId: "ios",
+  });
+  vi.stubGlobal("sdcard", {
+    openDocumentFile: vi.fn(),
+    getImage: (ok: unknown, fail: (e: string) => void) => fail("Operation cancelled"),
+  });
+  expect(await pickDeviceImage()).toBeUndefined();
+  expect(fs).not.toHaveBeenCalled();
+});
+
+test("hosts without the gallery API retain image file picking", async () => {
+  vi.stubGlobal("Bridge", { platformId: "android" });
+  expect(isIOSHost()).toBe(false);
+  const fs = fileReader();
+  vi.stubGlobal("sdcard", {
+    openDocumentFile: (ok: (e: unknown) => void) =>
+      ok({ uri: "content://images/1", filename: "picked.png", type: "image/png" }),
+  });
+  expect(await pickDeviceImage()).toMatchObject({ name: "picked.png", uri: "content://images/1" });
+  expect(fs).toHaveBeenCalledWith("content://images/1");
+});

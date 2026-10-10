@@ -433,33 +433,6 @@
   font-size: 9px;
 }
 
-.as-notice {
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
-  left: 7px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 14px;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 8px;
-  border: 1px solid var(--as-border) !important;
-  border-radius: 5px;
-  background: var(--as-surface);
-  box-shadow: 0 5px 18px rgb(0 0 0 / 28%);
-  cursor: pointer;
-  text-align: left;
-}
-.as-notice span {
-  font-size: 9px;
-}
-.as-notice.error {
-  border-color: var(--as-danger) !important;
-  color: var(--as-danger);
-}
-.as-notice.success {
-  border-color: var(--as-accent) !important;
-}
 .as-spin {
   animation: as-spin 0.85s linear infinite;
 }

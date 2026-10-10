@@ -94,6 +94,7 @@ const buildConfig = {
   outdir: "dist",
   loader: {
     ".css": "text",
+    ".svg": "text",
   },
   plugins: [portableNodeGuard, minifiedCssText, zipPlugin],
 };

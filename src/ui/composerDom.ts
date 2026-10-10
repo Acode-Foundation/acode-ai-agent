@@ -144,6 +144,59 @@ export function consumeMention(root: HTMLElement): boolean {
   return true;
 }
 
+export function chipBesideCaret(
+  root: HTMLElement,
+  direction: "backward" | "forward",
+): HTMLElement | null {
+  const selection = getEditorSelection(root);
+  if (!selection?.isCollapsed || !selection.anchorNode || !root.contains(selection.anchorNode))
+    return null;
+  const { anchorNode, anchorOffset } = selection;
+  if (anchorNode instanceof HTMLElement && anchorNode.dataset.chip) return anchorNode;
+  if (anchorNode.nodeType === Node.TEXT_NODE) {
+    const atEdge =
+      direction === "backward"
+        ? anchorOffset === 0
+        : anchorOffset === (anchorNode.textContent?.length ?? 0);
+    const onlySpace = /^\u00a0?$/.test(anchorNode.textContent ?? "");
+    if (atEdge || onlySpace) {
+      const sibling = adjacentElement(root, anchorNode, direction);
+      if (sibling?.dataset.chip) return sibling;
+    }
+  }
+  if (anchorNode === root || (anchorNode instanceof HTMLElement && !anchorNode.dataset.chip)) {
+    const index = direction === "backward" ? anchorOffset - 1 : anchorOffset;
+    const child = anchorNode.childNodes[index];
+    if (child instanceof HTMLElement && child.dataset.chip) return child;
+    if (child?.nodeType === Node.TEXT_NODE && /^\u00a0?$/.test(child.textContent ?? "")) {
+      const sibling = adjacentElement(root, child, direction);
+      if (sibling?.dataset.chip) return sibling;
+    }
+  }
+  return null;
+}
+
+function adjacentElement(
+  root: HTMLElement,
+  node: Node,
+  direction: "backward" | "forward",
+): HTMLElement | null {
+  let current: Node | null = node;
+  while (current && current !== root) {
+    const sibling: ChildNode | null =
+      direction === "backward" ? current.previousSibling : current.nextSibling;
+    if (sibling instanceof HTMLElement) return sibling;
+    if (sibling?.nodeType === Node.TEXT_NODE && /^\u00a0?$/.test(sibling.textContent ?? "")) {
+      current = sibling;
+      continue;
+    }
+    if (sibling) return sibling instanceof HTMLElement ? sibling : null;
+    current = current.parentNode;
+    if (current instanceof HTMLElement && current.dataset.chip) return current;
+  }
+  return null;
+}
+
 function isSelectableRoot(
   node: Node,
 ): node is SelectableRoot & { getSelection(): Selection | null } {

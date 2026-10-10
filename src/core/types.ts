@@ -193,6 +193,7 @@ export type PublicAgentState = {
   authFlow?: {
     providerId: ProviderId;
     status: "waiting" | "connected" | "error";
+    browserReturned?: boolean;
     userCode?: string;
     verificationUri?: string;
     message?: string;

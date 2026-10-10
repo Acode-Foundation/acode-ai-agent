@@ -135,7 +135,7 @@ test("device sign-in completes after approval without a pasted callback", async 
     });
     await vi.runAllTimersAsync();
     expect((await login).accountId).toBe("account");
-    expect(events).toEqual(["device_code"]);
+    expect(events).toEqual(["device_code", "progress"]);
   } finally {
     vi.useRealTimers();
   }

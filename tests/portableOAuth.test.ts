@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
 import {
-  // portableAnthropicOAuth,
   portableCodexOAuth,
   portableGitHubCopilotOAuth,
   portableKimiOAuth,
@@ -75,41 +74,6 @@ test("Codex refresh keeps a non-rotated refresh token", async () => {
     restore();
   }
 });
-
-// Claude Pro / Max sign-in disabled per Anthropic policy.
-/*
-test("Anthropic portable login uses the manual callback code flow", async () => {
-  const events: unknown[] = [];
-  const restore = stubFetch({
-    access_token: "claude-access",
-    refresh_token: "claude-refresh",
-    expires_in: 3600,
-  });
-  try {
-    const credential = await portableAnthropicOAuth.login({
-      prompt: async (prompt) => {
-        expect(prompt.type).toBe("manual_code");
-        return "authorization-code";
-      },
-      notify: (event) => events.push(event),
-    });
-    expect(events).toEqual([
-      expect.objectContaining({
-        type: "auth_url",
-        url: expect.stringContaining("claude.ai/oauth/authorize"),
-      }),
-    ]);
-    expect(credential).toMatchObject({
-      type: "oauth",
-      access: "claude-access",
-      refresh: "claude-refresh",
-    });
-    expect(await portableAnthropicOAuth.toAuth(credential)).toEqual({ apiKey: "claude-access" });
-  } finally {
-    restore();
-  }
-});
-*/
 
 test("Kimi subscription refresh derives a bearer header", async () => {
   const restore = stubFetch({
@@ -200,10 +164,10 @@ test("advertises every portable subscription sign-in", () => {
     ]),
   );
   expect(labels).toMatchObject({
-    "github-copilot": "Connect GitHub Copilot",
-    "kimi-coding": "Connect Kimi Code",
+    "github-copilot": "Sign in with GitHub Copilot",
+    "kimi-coding": "Sign in with Kimi Code",
     "openai-codex": "Sign in with ChatGPT",
-    xai: "Connect Grok / X subscription",
+    xai: "Sign in with Grok",
   });
   expect(labels).not.toHaveProperty("anthropic");
 });

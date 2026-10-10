@@ -21,7 +21,7 @@ import type { Task, TaskStatus } from "../tasks/types";
 import { openAcodeUri } from "../platform/deviceImage";
 import { collectPromptImages } from "../platform/promptImages";
 import { MutationGate } from "../permissions/mutationGate";
-import { openAuthTab } from "../platform/authTab";
+import { closeAuthTab, openAuthTab } from "../platform/authTab";
 import { PortableCredentialStore } from "../platform/credentials";
 import { createModelCatalogStore } from "../platform/modelCatalogStore";
 import { ChatStore, createChatId, type ChatMeta } from "../session/chatStore";
@@ -59,6 +59,7 @@ export class AgentController {
   #workspaceSelection: Promise<void> = Promise.resolve();
   #chatSelection: Promise<void> = Promise.resolve();
   #authAbort?: AbortController;
+  #authTabAbort?: AbortController;
   #authPrompt?: { resolve(value: string): void; reject(error: Error): void };
   #state: PublicAgentState;
 
@@ -139,6 +140,26 @@ export class AgentController {
   }
 
   async initialize(): Promise<void> {
+    const pending = await this.credentials.pendingSignIn("openrouter");
+    if (pending && pending.expiresAt > Date.now()) {
+      await new Promise<void>((resolve) => {
+        const unsubscribe = this.changes.subscribe((state) => {
+          if (state.authFlow?.verificationUri) {
+            unsubscribe();
+            resolve();
+          }
+        });
+        void this.loginSubscription("openrouter", true)
+          .catch((error) => {
+            this.#state.error = error instanceof Error ? error.message : String(error);
+            this.#emit();
+          })
+          .finally(() => {
+            unsubscribe();
+            resolve();
+          });
+      });
+    } else if (pending) await this.credentials.clearPendingSignIn("openrouter", pending.state);
     await this.#sessionStore.hydrate();
     try {
       await this.providers.restoreCatalogs();
@@ -652,21 +673,39 @@ export class AgentController {
     this.#emit();
   }
 
-  async loginSubscription(providerId: ProviderId): Promise<void> {
+  async loginSubscription(
+    providerId: ProviderId,
+    resumePending = false,
+    advanced = false,
+  ): Promise<void> {
+    closeAuthTab();
+    this.#authTabAbort?.abort();
     this.#authAbort?.abort();
     const abort = new AbortController();
     this.#authAbort = abort;
     this.#state.authFlow = { providerId, status: "waiting", message: "Preparing secure sign-in…" };
     this.#emit();
     try {
+      if (providerId === "openrouter" && !resumePending)
+        await this.credentials.clearPendingSignIn(providerId);
+      abort.signal.throwIfAborted();
       await this.providers.models.login(providerId, "oauth", {
         signal: abort.signal,
-        prompt: (prompt) => this.#requestAuthPrompt(providerId, prompt, abort.signal),
+        prompt: (prompt) => {
+          if (!advanced) {
+            if (providerId === "openai-codex" && prompt.type === "select")
+              return Promise.resolve("device");
+            if (providerId === "github-copilot" && prompt.type === "text")
+              return Promise.resolve("");
+          }
+          return this.#requestAuthPrompt(providerId, prompt, abort.signal);
+        },
         notify: (event) => {
-          if (this.#authAbort === abort) this.#onAuthEvent(providerId, event);
+          if (this.#authAbort === abort) this.#onAuthEvent(providerId, event, !resumePending);
         },
       });
       if (abort.signal.aborted) return;
+      closeAuthTab();
       this.#state.authFlow = {
         providerId,
         status: "waiting",
@@ -690,7 +729,11 @@ export class AgentController {
       this.#emit();
       throw error;
     } finally {
-      if (this.#authAbort === abort) this.#authAbort = undefined;
+      if (this.#authAbort === abort) {
+        closeAuthTab();
+        this.#authTabAbort?.abort();
+        this.#authAbort = undefined;
+      }
     }
   }
 
@@ -701,6 +744,8 @@ export class AgentController {
   }
 
   cancelSubscriptionLogin(): void {
+    closeAuthTab();
+    this.#authTabAbort?.abort();
     this.#authAbort?.abort();
     this.#authAbort = undefined;
     if (this.#state.authFlow?.status === "waiting") this.#state.authFlow = undefined;
@@ -708,9 +753,30 @@ export class AgentController {
   }
 
   async openSignIn(): Promise<void> {
-    const url = this.#state.authFlow?.verificationUri;
-    if (!url) throw new Error("No sign-in page is ready yet.");
-    await openAuthTab(url);
+    const flow = this.#state.authFlow;
+    const login = this.#authAbort;
+    if (!flow?.verificationUri || !login) throw new Error("No sign-in page is ready yet.");
+    this.#authTabAbort?.abort();
+    const tab = new AbortController();
+    this.#authTabAbort = tab;
+    const update = (message?: string) => {
+      if (this.#authTabAbort !== tab || this.#authAbort !== login) return;
+      if (this.#state.authFlow?.status !== "waiting") return;
+      this.#state.authFlow = {
+        ...this.#state.authFlow,
+        browserReturned: true,
+        ...(message ? { message } : {}),
+      };
+      this.#emit();
+    };
+    this.#state.authFlow = { ...flow, browserReturned: false };
+    this.#emit();
+    try {
+      await openAuthTab(flow.verificationUri, { signal: tab.signal, onReturn: () => update() });
+    } catch (error) {
+      update(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   async removeCredential(providerId: ProviderId): Promise<void> {
@@ -774,57 +840,49 @@ export class AgentController {
   }
 
   async dispose(): Promise<void> {
+    closeAuthTab();
+    this.#authTabAbort?.abort();
     this.#authAbort?.abort();
     for (const unsubscribe of this.#hostUnsubscribers.splice(0)) unsubscribe();
     await this.#disposeAllSessions();
     this.changes.clear();
   }
 
-  #onAuthEvent(providerId: ProviderId, event: AuthEvent): void {
+  #onAuthEvent(providerId: ProviderId, event: AuthEvent, openBrowser = true): void {
     if (event.type === "device_code") {
       this.#state.authFlow = {
         providerId,
         status: "waiting",
+        browserReturned: true,
         userCode: event.userCode,
         verificationUri: event.verificationUri,
         message:
           providerId === "openai-codex"
-            ? "Enter this code in ChatGPT and approve. Acode will connect automatically. If approval is disabled, enable device-code authorization in ChatGPT Settings → Security, then retry."
-            : "Open the provider page and enter this one-time code. Acode never sees your password.",
+            ? "Enter this code in ChatGPT to approve. Enable device-code login in ChatGPT Settings → Security if needed."
+            : "Enter this code on the provider page. Acode connects automatically after approval.",
       };
       this.#emit();
-      void openAuthTab(event.verificationUri).catch((error) => {
-        if (this.#state.authFlow?.providerId !== providerId) return;
-        this.#state.authFlow = {
-          ...this.#state.authFlow,
-          message: error instanceof Error ? error.message : String(error),
-        };
-        this.#emit();
-      });
       return;
     }
     if (event.type === "auth_url") {
       this.#state.authFlow = {
         providerId,
         status: "waiting",
+        browserReturned: !openBrowser,
         verificationUri: event.url,
         message: event.instructions ?? "Complete sign-in in your browser.",
       };
       this.#emit();
-      void openAuthTab(event.url).catch((error) => {
-        if (this.#state.authFlow?.providerId !== providerId) return;
-        this.#state.authFlow = {
-          ...this.#state.authFlow,
-          message: error instanceof Error ? error.message : String(error),
-        };
-        this.#emit();
-      });
+      if (openBrowser) void this.openSignIn().catch(() => undefined);
       return;
     }
-    const message = event.type === "progress" ? event.message : event.message;
-    const prompt =
-      this.#state.authFlow?.providerId === providerId ? this.#state.authFlow.prompt : undefined;
-    this.#state.authFlow = { providerId, status: "waiting", message, prompt };
+    const message = event.message;
+    const flow = this.#state.authFlow?.providerId === providerId ? this.#state.authFlow : undefined;
+    if (event.type === "progress" && (providerId === "openrouter" || flow?.userCode)) {
+      closeAuthTab();
+      this.#authTabAbort?.abort();
+      this.#state.authFlow = { providerId, status: "waiting", message };
+    } else this.#state.authFlow = { ...flow, providerId, status: "waiting", message };
     this.#emit();
   }
 
@@ -841,11 +899,16 @@ export class AgentController {
         settled = true;
         loginSignal.removeEventListener("abort", onAbort);
         prompt.signal?.removeEventListener("abort", onAbort);
-        if (this.#authPrompt === pending) this.#authPrompt = undefined;
+        if (this.#authPrompt === pending) {
+          this.#authPrompt = undefined;
+          closeAuthTab();
+          this.#authTabAbort?.abort();
+        }
         if (this.#state.authFlow?.providerId === providerId) {
           this.#state.authFlow = {
             ...this.#state.authFlow,
             prompt: undefined,
+            browserReturned: false,
             message: "Finishing secure sign-in…",
           };
           this.#emit();
@@ -860,6 +923,7 @@ export class AgentController {
       };
       this.#authPrompt = pending;
       this.#state.authFlow = {
+        browserReturned: this.#state.authFlow?.browserReturned,
         providerId,
         status: "waiting",
         verificationUri:
