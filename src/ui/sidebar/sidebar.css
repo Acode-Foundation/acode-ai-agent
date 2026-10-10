@@ -108,12 +108,17 @@
 }
 
 .as-scroll {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   max-height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
-  padding: 8px 8px 58px;
+  padding: 8px;
+}
+.as-scroll > * {
+  flex: none;
 }
 .as-section {
   border-bottom: 1px solid var(--as-border);
@@ -276,8 +281,19 @@
   margin-top: 1px;
   border-bottom: 0;
 }
+.as-scroll > .as-session-section.expanded {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  height: 0;
+  min-height: 240px;
+}
 .as-session-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   padding-bottom: 6px;
 }
 .as-session-tools {
@@ -356,7 +372,8 @@
 }
 
 .as-session-list {
-  max-height: min(52vh, 440px);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }

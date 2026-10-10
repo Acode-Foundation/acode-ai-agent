@@ -4126,6 +4126,7 @@ button.tree-gutter {
 button.project-select,
 label.project-select {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -4194,6 +4195,7 @@ label.project-select:hover {
   cursor: pointer;
 }
 .chat-list {
+  flex: 1;
   min-height: 0;
   overflow: auto;
   display: grid;
