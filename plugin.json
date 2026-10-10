@@ -16,7 +16,29 @@
   "permissions": [],
   "author": {
     "name": "Acode Foundation",
-    "email": "",
+    "email": "contact@acode.app",
     "github": "Acode-Foundation"
-  }
+  },
+  "contributors": [
+    {
+      "name": "Raunak Raj",
+      "github": "bajrangCoder",
+      "role": "Core developer"
+    },
+    {
+      "name": "Ajit Kumar",
+      "github": "deadlyjack",
+      "role": "Contributor"
+    },
+    {
+      "name": "Marko Marić",
+      "github": "mmaric27",
+      "role": "Contributor"
+    },
+    {
+      "name": "xaniexane",
+      "github": "xaniexane",
+      "role": "Contributor"
+    }
+  ]
 }
