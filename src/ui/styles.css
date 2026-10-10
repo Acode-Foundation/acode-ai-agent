@@ -54,7 +54,7 @@
   min-width: 0;
   overflow: hidden;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
 }
 .agent-dock {
   display: flex;
@@ -71,6 +71,17 @@
   flex: none;
 }
 
+.agent-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px 36px;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.chat-trigger,
 .model-trigger {
   min-width: 0;
   height: 32px;
@@ -88,15 +99,22 @@
   font-weight: 600;
   cursor: pointer;
 }
+.chat-trigger:hover,
 .model-trigger:hover,
 .icon-button:hover {
   background: var(--surface);
 }
+.bg-run,
 .run-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--accent);
+}
+.bg-run {
+  position: absolute;
+  top: 6px;
+  right: 6px;
 }
 .provider-setup {
   display: flex;

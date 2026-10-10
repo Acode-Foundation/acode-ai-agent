@@ -28,7 +28,8 @@ import {
   pickDeviceImage,
   previewImageInAcode,
 } from "../platform/deviceImage";
-import { pickAcodeFile } from "../platform/deviceFile";
+import { attachmentFromMediaFile, pickAcodeFile } from "../platform/deviceFile";
+import { pickMediaFile } from "../platform/mediaPicker";
 import { Sheet } from "./Sheet";
 import { imageContentFromFile } from "../platform/promptImages";
 import { fileDir, fileName, type MentionFile } from "../workspace/fileMentions";
@@ -321,13 +322,33 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
     }
   };
 
-  const pickFile = async (source: "acode" | "media" = "acode") => {
+  const addAttachment = (file: DraftFile | DraftImage | undefined) => {
+    if (file && "content" in file) addDraftFile(file);
+    else if (file) addDraftImages([file]);
+  };
+
+  const pickFile = async () => {
     if (props.disabled || busy) return;
     setBusy(true);
     try {
-      const file = await pickAcodeFile(props.controller.settings.value.imageAutoResize, source);
-      if (file && "content" in file) addDraftFile(file);
-      else if (file) addDraftImages([file]);
+      addAttachment(await pickAcodeFile(props.controller.settings.value.imageAutoResize));
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickMedia = async () => {
+    if (props.disabled || busy) return;
+    try {
+      // Stay enabled while the chooser is open: some WebViews report no dismissal for minutes.
+      const file = await pickMediaFile();
+      if (!file) return;
+      setBusy(true);
+      addAttachment(
+        await attachmentFromMediaFile(file, props.controller.settings.value.imageAutoResize),
+      );
     } catch (error) {
       props.onToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -669,7 +690,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
                 class="config-nav"
                 onClick={() => {
                   // Open media immediately in this gesture, before the sheet's exit animation.
-                  void (isIOSHost() ? pickFile("media") : pickImage());
+                  void (isIOSHost() ? pickMedia() : pickImage());
                   close();
                 }}
               >

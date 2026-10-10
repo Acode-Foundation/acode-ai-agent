@@ -23,6 +23,7 @@ import { collectPromptImages } from "../platform/promptImages";
 import { MutationGate } from "../permissions/mutationGate";
 import { closeAuthTab, openAuthTab } from "../platform/authTab";
 import { PortableCredentialStore } from "../platform/credentials";
+import { SIGN_IN_SUSPENDED } from "../providers/portableOAuth";
 import { createModelCatalogStore } from "../platform/modelCatalogStore";
 import { ChatStore, createChatId, type ChatMeta } from "../session/chatStore";
 import { fromPiSessionJsonl } from "../session/history";
@@ -60,6 +61,7 @@ export class AgentController {
   #chatSelection: Promise<void> = Promise.resolve();
   #authAbort?: AbortController;
   #authTabAbort?: AbortController;
+  #startup?: Promise<void>;
   #authPrompt?: { resolve(value: string): void; reject(error: Error): void };
   #state: PublicAgentState;
 
@@ -140,6 +142,18 @@ export class AgentController {
   }
 
   async initialize(): Promise<void> {
+    let started!: () => void;
+    this.#startup = new Promise((resolve) => {
+      started = resolve;
+    });
+    try {
+      await this.#initialize();
+    } finally {
+      started();
+    }
+  }
+
+  async #initialize(): Promise<void> {
     const pending = await this.credentials.pendingSignIn("openrouter");
     if (pending && pending.expiresAt > Date.now()) {
       await new Promise<void>((resolve) => {
@@ -151,9 +165,9 @@ export class AgentController {
           resolve();
         }
         const unsubscribe = this.changes.subscribe((state) => {
-          if (state.authFlow?.verificationUri) {
-            finish();
-          }
+          const flow = state.authFlow;
+          // Ready once the callback listener is live, or once the flow has moved past waiting.
+          if (!flow || flow.verificationUri || flow.status !== "waiting") finish();
         });
         void this.loginSubscription("openrouter", true)
           // loginSubscription already exposes failures in the provider sign-in UI.
@@ -695,10 +709,8 @@ export class AgentController {
         prompt: (prompt) => {
           if (prompt.type === "manual_code")
             return Promise.reject(new Error("Use automatic sign-in or an API key instead."));
-          if (!advanced) {
-            if (providerId === "github-copilot" && prompt.type === "text")
-              return Promise.resolve("");
-          }
+          if (!advanced && providerId === "github-copilot" && prompt.type === "text")
+            return Promise.resolve("");
           return this.#requestAuthPrompt(providerId, prompt, abort.signal);
         },
         notify: (event) => {
@@ -713,6 +725,9 @@ export class AgentController {
         message: "Signed in. Loading your models…",
       };
       this.#emit();
+      // A sign-in resumed during startup must not select models until the workspace is restored.
+      await this.#startup;
+      if (abort.signal.aborted) return;
       await this.selectProvider(providerId);
       if (abort.signal.aborted) return;
       this.#state.authFlow = {
@@ -844,7 +859,8 @@ export class AgentController {
   async dispose(): Promise<void> {
     closeAuthTab();
     this.#authTabAbort?.abort();
-    this.#authAbort?.abort();
+    // Keep a pending browser sign-in so the next plugin load can still receive its callback.
+    this.#authAbort?.abort(SIGN_IN_SUSPENDED);
     for (const unsubscribe of this.#hostUnsubscribers.splice(0)) unsubscribe();
     await this.#disposeAllSessions();
     this.changes.clear();

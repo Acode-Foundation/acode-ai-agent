@@ -1,3 +1,7 @@
+const RETURN_GRACE_MS = 1_000;
+// Photos from iCloud or HEIC conversion can report the selection well after the app regains focus.
+const LATE_SELECTION_MS = 60 * 1_000;
+
 /** Keep the click synchronous so iOS preserves the user's gesture and opens its media chooser. */
 export function pickMediaFile(): Promise<File | undefined> {
   return new Promise((resolve, reject) => {
@@ -31,7 +35,11 @@ export function pickMediaFile(): Promise<File | undefined> {
     }
     const returned = () => {
       // Focus can precede change when the native chooser hands a selected file back.
-      if (!settled && returnTimer === undefined) returnTimer = setTimeout(selected, 1_000);
+      if (settled || returnTimer !== undefined) return;
+      returnTimer = setTimeout(() => {
+        if (input.files?.length) selected();
+        else returnTimer = setTimeout(selected, LATE_SELECTION_MS);
+      }, RETURN_GRACE_MS);
     };
     const visibilityChanged = () => {
       if (document.visibilityState === "visible") returned();

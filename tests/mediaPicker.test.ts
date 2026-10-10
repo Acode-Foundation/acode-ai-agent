@@ -67,6 +67,8 @@ test.each(["focus", "resume", "visibilitychange"])(
     const picked = pickMediaFile();
     (event === "focus" ? window : document).dispatchEvent(new Event(event));
     await vi.advanceTimersByTimeAsync(1_000);
+    expect(input.remove).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(await picked).toBeUndefined();
     expect(input.remove).toHaveBeenCalledTimes(1);
     window.dispatchEvent(new Event("focus"));
@@ -87,6 +89,28 @@ test("return focus allows a delayed selection and ignores visibility loss", asyn
   input.files = [image];
   input.dispatchEvent(new Event("change"));
   expect(await picked).toBe(image);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("return focus resolves a file that is already selected without waiting for change", async () => {
+  const picked = pickMediaFile();
+  window.dispatchEvent(new Event("focus"));
+  const image = { name: "photo.jpg" };
+  input.files = [image];
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(await picked).toBe(image);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a selection reported long after return focus is still attached", async () => {
+  const picked = pickMediaFile();
+  window.dispatchEvent(new Event("focus"));
+  await vi.advanceTimersByTimeAsync(5_000);
+  const image = { name: "icloud.jpg" };
+  input.files = [image];
+  input.dispatchEvent(new Event("change"));
+  expect(await picked).toBe(image);
+  expect(input.remove).toHaveBeenCalledTimes(1);
   expect(vi.getTimerCount()).toBe(0);
 });
 

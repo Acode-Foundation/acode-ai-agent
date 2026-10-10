@@ -114,7 +114,7 @@ export class PortableCredentialStore implements CredentialStore {
     return this.#enqueue(`pending:${providerId}`, async () => {
       if (this.#ctx)
         await this.#ctx.setSecret(`oauth-pending:${providerId}`, JSON.stringify(pending));
-      this.#pending.set(providerId, pending);
+      else this.#pending.set(providerId, pending);
     });
   }
 
@@ -122,7 +122,7 @@ export class PortableCredentialStore implements CredentialStore {
     return this.#enqueue(`pending:${providerId}`, async () => {
       if (state && (await this.#readPending(providerId))?.state !== state) return;
       if (this.#ctx) await this.#ctx.setSecret(`oauth-pending:${providerId}`, "");
-      this.#pending.delete(providerId);
+      else this.#pending.delete(providerId);
     });
   }
 

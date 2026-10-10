@@ -207,6 +207,30 @@ test("startup waits for the recovered callback listener before continuing plugin
   controller.cancelSubscriptionLogin();
 });
 
+test("a recovered sign-in that completes during startup waits before selecting models", async () => {
+  await controller.credentials.savePendingSignIn("openrouter", {
+    state: "s".repeat(43),
+    verifier: "v".repeat(43),
+    expiresAt: Date.now() + 60_000,
+  });
+  login.mockResolvedValueOnce(undefined);
+  let failHydrate!: (error: Error) => void;
+  hydrate.mockImplementationOnce(
+    () =>
+      new Promise<void>((_, reject) => {
+        failHydrate = reject;
+      }),
+  );
+  const initialized = controller.initialize();
+  await vi.waitFor(() => expect(hydrate).toHaveBeenCalledTimes(1));
+  expect(controller.state.authFlow?.status).toBe("connecting");
+  expect(controller.selectProvider).not.toHaveBeenCalled();
+  failHydrate(new Error("Startup checkpoint"));
+  await expect(initialized).rejects.toThrow("Startup checkpoint");
+  await vi.waitFor(() => expect(controller.state.authFlow?.status).toBe("connected"));
+  expect(controller.selectProvider).toHaveBeenCalledWith("openrouter");
+});
+
 test("startup proceeds when the recovered sign-in never becomes ready", async () => {
   vi.useFakeTimers();
   await controller.credentials.savePendingSignIn("openrouter", {

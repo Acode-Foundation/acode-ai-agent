@@ -38,6 +38,9 @@ const CODEX_ACCOUNT_CLAIM = "https://api.openai.com/auth";
 
 type Json = Record<string, unknown>;
 
+/** Abort reason that stops a browser sign-in but keeps its pending state for the next load. */
+export const SIGN_IN_SUSPENDED = new DOMException("Sign-in suspended", "AbortError");
+
 export const portableGitHubCopilotOAuth: OAuthAuth = {
   name: "GitHub Copilot",
   loginLabel: "Sign in with GitHub Copilot",
@@ -287,25 +290,13 @@ async function loginOpenRouter(
 ): Promise<OAuthCredential> {
   interaction.signal?.throwIfAborted();
   const saved = await credentials?.pendingSignIn("openrouter");
-  const pkce =
-    saved && saved.expiresAt > Date.now()
-      ? {
-          verifier: saved.verifier,
-          challenge: base64Url(
-            new Uint8Array(
-              await crypto.subtle.digest("SHA-256", new TextEncoder().encode(saved.verifier)),
-            ),
-          ),
-        }
-      : await generatePkce();
-  const pending =
-    saved && saved.expiresAt > Date.now()
-      ? saved
-      : {
-          state: base64Url(crypto.getRandomValues(new Uint8Array(32))),
-          verifier: pkce.verifier,
-          expiresAt: Date.now() + 10 * 60 * 1000,
-        };
+  const resumed = saved && saved.expiresAt > Date.now() ? saved : undefined;
+  const pkce = resumed ? await pkceFromVerifier(resumed.verifier) : await generatePkce();
+  const pending = resumed ?? {
+    state: base64Url(crypto.getRandomValues(new Uint8Array(32))),
+    verifier: pkce.verifier,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  };
   try {
     await credentials?.savePendingSignIn("openrouter", pending);
     interaction.signal?.throwIfAborted();
@@ -349,7 +340,8 @@ async function loginOpenRouter(
       expires: Number.MAX_SAFE_INTEGER,
     };
   } finally {
-    await credentials?.clearPendingSignIn("openrouter", pending.state);
+    if (interaction.signal?.reason !== SIGN_IN_SUSPENDED)
+      await credentials?.clearPendingSignIn("openrouter", pending.state);
   }
 }
 
@@ -641,8 +633,12 @@ function normalizeDomain(value: string): string | undefined {
 }
 
 async function generatePkce(): Promise<{ verifier: string; challenge: string }> {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  const verifier = base64Url(bytes);
+  return pkceFromVerifier(base64Url(crypto.getRandomValues(new Uint8Array(32))));
+}
+
+async function pkceFromVerifier(
+  verifier: string,
+): Promise<{ verifier: string; challenge: string }> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   return { verifier, challenge: base64Url(new Uint8Array(digest)) };
 }

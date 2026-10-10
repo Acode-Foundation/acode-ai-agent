@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Ellipsis,
   Folder,
   Plus,
   Trash2,
@@ -248,6 +249,37 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
 
   return (
     <div class="agent-shell" ref={shellRef}>
+      <header class="agent-header">
+        <button class="chat-trigger" type="button" onClick={() => setChatsOpen(true)}>
+          <span>
+            {state.chats.find((chat) => chat.id === state.activeChatId)?.title ?? "New chat"}
+          </span>
+          {state.chats.some((chat) => chat.running && chat.id !== state.activeChatId) && (
+            <i class="bg-run" />
+          )}
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          onClick={() =>
+            void controller
+              .newConversation()
+              .catch((error) => showToast(error instanceof Error ? error.message : String(error)))
+          }
+          aria-label="New chat"
+        >
+          <Plus size={18} strokeWidth={2} />
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Provider access"
+        >
+          <Ellipsis size={18} strokeWidth={2} />
+        </button>
+      </header>
+
       <main class="conversation" ref={scrollRef}>
         {turns.length === 0 ? (
           <EmptyState
@@ -983,12 +1015,15 @@ function SettingsSheet({
                           onSubmit={(value) => controller.submitSubscriptionPrompt(value)}
                         />
                       )}
-                      {authFlow.status === "waiting" && (
+                      {signingIn && (
                         <button
                           type="button"
                           onClick={() => {
                             const flow = controller.state.authFlow;
-                            if (flow?.providerId === providerId && flow.status === "waiting")
+                            if (
+                              flow?.providerId === providerId &&
+                              (flow.status === "waiting" || flow.status === "connecting")
+                            )
                               controller.cancelSubscriptionLogin();
                           }}
                         >

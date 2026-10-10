@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-vi.mock("../src/platform/mediaPicker", () => ({ pickMediaFile: vi.fn() }));
 vi.mock("../src/platform/promptImages", async (original) => ({
   ...(await original<typeof import("../src/platform/promptImages")>()),
   imageContentFromBytes: vi.fn(async () => ({
@@ -9,9 +8,8 @@ vi.mock("../src/platform/promptImages", async (original) => ({
     mimeType: "image/jpeg",
   })),
 }));
-import { pickMediaFile } from "../src/platform/mediaPicker";
 import { imageContentFromBytes } from "../src/platform/promptImages";
-import { pickAcodeFile } from "../src/platform/deviceFile";
+import { attachmentFromMediaFile, pickAcodeFile } from "../src/platform/deviceFile";
 
 beforeEach(() => {
   vi.stubGlobal("Bridge", { platformId: "ios" });
@@ -27,10 +25,8 @@ afterEach(() => {
 });
 
 test("iOS media selection turns a photo into an image attachment with the resize setting", async () => {
-  vi.mocked(pickMediaFile).mockResolvedValue(
-    new File([new Uint8Array([1, 2, 3])], "photo.jpg", { type: "image/jpeg" }),
-  );
-  expect(await pickAcodeFile(false, "media")).toMatchObject({
+  const photo = new File([new Uint8Array([1, 2, 3])], "photo.jpg", { type: "image/jpeg" });
+  expect(await attachmentFromMediaFile(photo, false)).toMatchObject({
     name: "photo.jpg",
     type: "image",
     data: "fixture",
@@ -46,21 +42,13 @@ test("iOS media selection turns a photo into an image attachment with the resize
 });
 
 test("Choose File from the media chooser retains text attachments", async () => {
-  vi.mocked(pickMediaFile).mockResolvedValue(
-    new File(["hello"], "notes.txt", { type: "text/plain" }),
-  );
-  expect(await pickAcodeFile(true, "media")).toMatchObject({
+  const notes = new File(["hello"], "notes.txt", { type: "text/plain" });
+  expect(await attachmentFromMediaFile(notes)).toMatchObject({
     name: "notes.txt",
     content: "hello",
     encoding: "text",
     truncated: false,
   });
-});
-
-test("cancelling the media selector returns no attachment", async () => {
-  vi.mocked(pickMediaFile).mockResolvedValue(undefined);
-  expect(await pickAcodeFile(true, "media")).toBeUndefined();
-  expect(acode.require).not.toHaveBeenCalled();
 });
 
 test.each(["ios", "android"])(
@@ -78,6 +66,5 @@ test.each(["ios", "android"])(
       content: "hello",
     });
     expect(browser).toHaveBeenCalledWith("file", "Choose a file to attach", true);
-    expect(pickMediaFile).not.toHaveBeenCalled();
   },
 );

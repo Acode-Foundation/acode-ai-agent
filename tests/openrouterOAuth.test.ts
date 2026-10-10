@@ -3,6 +3,7 @@ import { PortableCredentialStore } from "../src/platform/credentials";
 import {
   createPortableOpenRouterOAuth,
   portableOpenRouterOAuth,
+  SIGN_IN_SUSPENDED,
 } from "../src/providers/portableOAuth";
 import { OPENROUTER_CALLBACK_URL, waitForOpenRouterCallback } from "../src/platform/oauthCallback";
 
@@ -249,3 +250,19 @@ test.each(["cancel", "exchange-failure"])(
     if (scenario === "cancel") expect(fetch).not.toHaveBeenCalled();
   },
 );
+
+test("suspending for a plugin reload keeps the saved verifier for the next load", async () => {
+  host();
+  const credentials = new PortableCredentialStore(null);
+  const abort = new AbortController();
+  const result = createPortableOpenRouterOAuth(credentials).login({
+    signal: abort.signal,
+    prompt: vi.fn(),
+    notify(event) {
+      if (event.type === "auth_url") abort.abort(SIGN_IN_SUSPENDED);
+    },
+  });
+  await expect(result).rejects.toThrow();
+  expect((await credentials.pendingSignIn("openrouter"))?.state).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  expect(handlers.size).toBe(0);
+});

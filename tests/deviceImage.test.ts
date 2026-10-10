@@ -125,3 +125,27 @@ test("an extensionless gallery image remains readable when metadata fails", asyn
     data: btoa(String.fromCharCode(...bytes)),
   });
 });
+
+test("a generic gallery content type falls back to the image bytes", async () => {
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+  const original = await vi.importActual<typeof import("../src/platform/promptImages")>(
+    "../src/platform/promptImages",
+  );
+  vi.mocked(imageContentFromBytes).mockImplementationOnce(original.imageContentFromBytes);
+  const uri = "content://media/external/images/media/12345";
+  vi.stubGlobal("sdcard", {
+    openDocumentFile: vi.fn(),
+    getImage: (ok: (uri: string) => void) => ok(uri),
+  });
+  vi.stubGlobal("acode", {
+    fsOperation: () => ({
+      stat: async () => ({ name: "12345", type: "application/octet-stream" }),
+      readFile: async () => bytes.buffer,
+    }),
+  });
+  expect(await pickDeviceImage(false)).toMatchObject({
+    uri,
+    name: "12345",
+    mimeType: "image/jpeg",
+  });
+});

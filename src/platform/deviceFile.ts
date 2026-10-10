@@ -1,27 +1,28 @@
 import { fileName, isImagePath } from "../workspace/fileMentions";
 import type { DraftFile, DraftImage } from "../ui/composerDraft";
 import { bytesToBase64, imageContentFromBytes } from "./promptImages";
-import { pickMediaFile } from "./mediaPicker";
 
 const MAX_FILE_CHARS = 256 * 1024;
 const MAX_BINARY_BYTES = 64 * 1024;
 
+/** Converts a file returned by the system media chooser into a draft attachment. */
+export async function attachmentFromMediaFile(
+  file: File,
+  autoResize = true,
+): Promise<DraftFile | DraftImage> {
+  return attachmentFromBytes(
+    new Uint8Array(await file.arrayBuffer()),
+    file.name || "file",
+    undefined,
+    autoResize,
+    file.type,
+  );
+}
+
 export async function pickAcodeFile(
   autoResize = true,
-  source: "acode" | "media" = "acode",
 ): Promise<DraftFile | DraftImage | undefined> {
   try {
-    if (source === "media") {
-      const file = await pickMediaFile();
-      if (!file) return undefined;
-      return attachmentFromBytes(
-        new Uint8Array(await file.arrayBuffer()),
-        file.name || "file",
-        undefined,
-        autoResize,
-        file.type,
-      );
-    }
     const browser = acode.require("fileBrowser") as FileBrowser | undefined;
     if (typeof browser !== "function") throw new Error("Acode's file picker is unavailable.");
     const picked = await browser("file", "Choose a file to attach", true);
