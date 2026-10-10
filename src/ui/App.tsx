@@ -367,41 +367,43 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
       </main>
 
       <div class="agent-dock">
-        {connected === false && (
-          <div class="provider-setup">
-            <AgentIcon size={22} />
-            <div>
-              <b>Connect to {providerName}</b>
-              <span>
-                {provider?.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
-              </span>
+        <div class="agent-dock-panels">
+          {connected === false && (
+            <div class="provider-setup">
+              <AgentIcon size={22} />
+              <div>
+                <b>Connect to {providerName}</b>
+                <span>
+                  {provider?.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
+                </span>
+              </div>
+              <button type="button" onClick={() => setSettingsOpen(true)}>
+                Configure
+              </button>
             </div>
-            <button type="button" onClick={() => setSettingsOpen(true)}>
-              Configure
-            </button>
-          </div>
-        )}
-        {state.questionnaire && (
-          <AskCard
-            prompt={state.questionnaire}
-            onSubmit={(answers) => controller.answerQuestionnaire(answers)}
-            onSkip={() => controller.skipQuestionnaire()}
-          />
-        )}
-        {state.approval && !state.questionnaire && (
-          <ApprovalPanel
-            approval={state.approval}
-            onApprove={(decision) => controller.approve(decision)}
-          />
-        )}
-        {state.tasks.length > 0 && !state.questionnaire && dismissedTray !== trayKey && (
-          <TaskTray
-            tasks={state.tasks}
-            running={running}
-            onOpen={() => setTasksOpen(true)}
-            onDismiss={() => setDismissedTray(trayKey)}
-          />
-        )}
+          )}
+          {state.questionnaire && (
+            <AskCard
+              prompt={state.questionnaire}
+              onSubmit={(answers) => controller.answerQuestionnaire(answers)}
+              onSkip={() => controller.skipQuestionnaire()}
+            />
+          )}
+          {state.approval && !state.questionnaire && (
+            <ApprovalPanel
+              approval={state.approval}
+              onApprove={(decision) => controller.approve(decision)}
+            />
+          )}
+          {state.tasks.length > 0 && !state.questionnaire && dismissedTray !== trayKey && (
+            <TaskTray
+              tasks={state.tasks}
+              running={running}
+              onOpen={() => setTasksOpen(true)}
+              onDismiss={() => setDismissedTray(trayKey)}
+            />
+          )}
+        </div>
 
         <Composer
           ref={composerRef}
