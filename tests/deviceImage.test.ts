@@ -1,12 +1,12 @@
 import { afterEach, expect, test, vi } from "vitest";
 
-vi.mock("../src/platform/promptImages", () => ({
+vi.mock("../src/platform/promptImages", async (original) => ({
+  ...(await original<typeof import("../src/platform/promptImages")>()),
   imageContentFromBytes: vi.fn(async () => ({
     type: "image",
     data: "fixture",
     mimeType: "image/jpeg",
   })),
-  mimeFromName: (name: string) => (name.endsWith(".png") ? "image/png" : "image/jpeg"),
 }));
 import { imageContentFromBytes } from "../src/platform/promptImages";
 import { isIOSHost, pickDeviceImage } from "../src/platform/deviceImage";
@@ -56,6 +56,35 @@ test("cancelling the gallery creates no attachment", async () => {
   });
   expect(await pickDeviceImage()).toBeUndefined();
   expect(fs).not.toHaveBeenCalled();
+});
+
+test("Android gallery uses metadata instead of an extensionless content URI", async () => {
+  const name = "photo";
+  const type = "image/jpeg";
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+  const original = await vi.importActual<typeof import("../src/platform/promptImages")>(
+    "../src/platform/promptImages",
+  );
+  vi.mocked(imageContentFromBytes).mockImplementationOnce(original.imageContentFromBytes);
+  const uri = "content://media/external/images/media/12345";
+  const stat = vi.fn(async () => ({ name, type }));
+  const readFile = vi.fn(async () => bytes.buffer);
+  vi.stubGlobal("Bridge", { platformId: "android" });
+  vi.stubGlobal("sdcard", {
+    openDocumentFile: vi.fn(),
+    getImage: (ok: (uri: string) => void) => ok(uri),
+  });
+  const fsOperation = vi.fn(() => ({ stat, readFile }));
+  vi.stubGlobal("acode", { fsOperation });
+  expect(await pickDeviceImage(false)).toMatchObject({
+    name,
+    uri,
+    type: "image",
+    mimeType: type,
+    data: btoa(String.fromCharCode(...bytes)),
+  });
+  expect(stat).toHaveBeenCalledOnce();
+  expect(fsOperation).toHaveBeenCalledWith(uri);
 });
 
 test("hosts without the gallery API retain image file picking", async () => {

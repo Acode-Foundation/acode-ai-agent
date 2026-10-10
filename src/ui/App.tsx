@@ -794,6 +794,9 @@ function SettingsSheet({
     (endpoint) => endpoint.id === providerId,
   );
   const authFlow = state.authFlow?.providerId === providerId ? state.authFlow : undefined;
+  const signingIn = authFlow?.status === "waiting" || authFlow?.status === "connecting";
+  const canContinueSignIn =
+    authFlow?.status === "waiting" && authFlow.browserReturned && Boolean(authFlow.verificationUri);
   const authPromptKey = `${providerId}:${authFlow?.prompt?.type ?? ""}:${authFlow?.prompt?.message ?? ""}`;
   useEffect(() => setAuthPromptValue(""), [authPromptKey]);
   useBackAction(
@@ -852,16 +855,19 @@ function SettingsSheet({
               }}
             />
 
-            <div class={`credential${connected ? " connected" : ""}`}>
-              <p class={connected ? "ok" : ""} role="status">
-                {connected === undefined
-                  ? "Checking connection…"
-                  : connected
-                    ? `${provider.name} is connected`
-                    : `Connect to ${provider.name}`}
-              </p>
+            <div class={`credential${connected && !signingIn ? " connected" : ""}`}>
+              {!signingIn && (
+                <p class={connected ? "ok" : ""} role="status">
+                  {connected === undefined
+                    ? "Checking connection…"
+                    : connected
+                      ? `${provider.name} is connected`
+                      : `Connect to ${provider.name}`}
+                </p>
+              )}
               {provider.apiKey &&
                 connected === false &&
+                !signingIn &&
                 (!provider.subscriptionLabel || showKey) && (
                   <>
                     <div class="key-input">
@@ -908,13 +914,14 @@ function SettingsSheet({
                     )}
                   </>
                 )}
-              {provider.subscriptionLabel && connected === false && (
+              {provider.subscriptionLabel && (connected === false || signingIn) && !showKey && (
                 <div class="subscription">
                   <button
                     type="button"
-                    disabled={authFlow?.status === "waiting" && !authFlow.browserReturned}
+                    aria-live="polite"
+                    disabled={signingIn && !canContinueSignIn}
                     onClick={() => {
-                      if (authFlow?.status === "waiting" && authFlow.browserReturned) {
+                      if (canContinueSignIn) {
                         void (async () => {
                           if (authFlow.userCode) await copyText(authFlow.userCode);
                           await controller.openSignIn();
@@ -935,15 +942,17 @@ function SettingsSheet({
                         );
                     }}
                   >
-                    {authFlow?.status === "waiting" && !authFlow.browserReturned
-                      ? "Waiting…"
-                      : authFlow?.status === "waiting" && authFlow.verificationUri
-                        ? authFlow.userCode
-                          ? "Copy code & sign in"
-                          : "Continue sign-in"
-                        : provider.subscriptionLabel}
+                    {authFlow?.status === "connecting"
+                      ? "Connecting…"
+                      : authFlow?.status === "waiting" && !canContinueSignIn
+                        ? "Authenticating…"
+                        : canContinueSignIn
+                          ? authFlow.userCode
+                            ? "Copy code & sign in"
+                            : "Continue sign-in"
+                          : provider.subscriptionLabel}
                   </button>
-                  {authFlow?.status !== "waiting" &&
+                  {!signingIn &&
                     (providerId === "openai-codex" || providerId === "github-copilot") && (
                       <button
                         type="button"
@@ -976,7 +985,9 @@ function SettingsSheet({
                           </p>
                         </div>
                       ) : (
-                        <p role="status">{authFlow.message}</p>
+                        (authFlow.prompt || authFlow.verificationUri || !signingIn) && (
+                          <p role="status">{authFlow.message}</p>
+                        )
                       )}
                       {authFlow.prompt && (
                         <SubscriptionPrompt
@@ -987,7 +998,14 @@ function SettingsSheet({
                         />
                       )}
                       {authFlow.status === "waiting" && (
-                        <button type="button" onClick={() => controller.cancelSubscriptionLogin()}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const flow = controller.state.authFlow;
+                            if (flow?.providerId === providerId && flow.status === "waiting")
+                              controller.cancelSubscriptionLogin();
+                          }}
+                        >
                           Cancel
                         </button>
                       )}
@@ -998,12 +1016,12 @@ function SettingsSheet({
               {provider.apiKey &&
                 provider.subscriptionLabel &&
                 connected === false &&
-                authFlow?.status !== "waiting" && (
+                !signingIn && (
                   <button class="text-button" type="button" onClick={() => setShowKey(!showKey)}>
                     {showKey ? "Use account sign-in" : "Use API key instead"}
                   </button>
                 )}
-              {connected && (
+              {connected && !signingIn && (
                 <button
                   class="text-button"
                   type="button"

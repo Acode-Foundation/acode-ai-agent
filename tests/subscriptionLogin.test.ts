@@ -269,12 +269,33 @@ test.each(["openai-codex", "github-copilot", "xai", "kimi-coding"])(
     expect(controller.state.authFlow?.browserReturned).toBe(false);
     notify({ type: "progress", message: "Finishing secure sign-in…" });
     expect(closedIds).toHaveLength(1);
+    expect(controller.state.authFlow?.status).toBe("connecting");
     expect(controller.state.authFlow?.verificationUri).toBeUndefined();
     finish();
     await result;
     expect(controller.state.authFlow?.status).toBe("connected");
   },
 );
+
+test("received credentials stay in the connecting phase until model loading completes", async () => {
+  let finish!: () => void;
+  vi.mocked(controller.selectProvider).mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  login.mockResolvedValue({ type: "oauth", access: "fixture-token" });
+  const result = controller.loginSubscription("openrouter");
+  await vi.waitFor(() => expect(controller.selectProvider).toHaveBeenCalled());
+  expect(controller.state.authFlow).toMatchObject({
+    status: "connecting",
+    message: "Signed in. Loading your models…",
+  });
+  finish();
+  await result;
+  expect(controller.state.authFlow?.status).toBe("connected");
+});
 
 test.each(["cancel", "dispose"])(
   "%s closes its auth browser before aborting listeners",

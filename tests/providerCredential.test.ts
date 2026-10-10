@@ -1,6 +1,21 @@
 import { expect, test, vi } from "vitest";
+import { useState } from "preact/hooks";
+import type { AgentController } from "../src/app/agentController";
 import { PortableCredentialStore } from "../src/platform/credentials";
-import { watchProviderCredential } from "../src/ui/useProviderCredential";
+import { useProviderCredential, watchProviderCredential } from "../src/ui/useProviderCredential";
+
+vi.mock("preact/hooks", () => ({ useState: vi.fn(), useEffect: vi.fn() }));
+
+test("successful sign-in bridges a delayed credential read only for its provider", () => {
+  vi.mocked(useState).mockReturnValue([{ providerId: "openrouter", connected: false }, vi.fn()]);
+  const controller = {
+    state: { authFlow: { providerId: "openrouter", status: "connected" } },
+  } as AgentController;
+  expect(useProviderCredential(controller, "openrouter", [])).toBe(true);
+  expect(useProviderCredential(controller, "github-copilot", [])).toBeUndefined();
+  controller.state.authFlow = undefined;
+  expect(useProviderCredential(controller, "openrouter", [])).toBe(false);
+});
 
 test("updates provider setup after API-key save, OAuth sign-in, and disconnect", async () => {
   const credentials = new PortableCredentialStore(null);

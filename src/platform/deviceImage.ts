@@ -30,6 +30,12 @@ export function isIOSHost(): boolean {
 export async function pickDeviceImage(autoResize = true): Promise<DraftImage | undefined> {
   const picked = await pickWithSDcard();
   if (!picked) return undefined;
+  if (!picked.mime) {
+    // Android gallery URIs can end in a numeric ID instead of the image's filename.
+    const stat = (await acode.fsOperation(picked.uri).stat()) as Acode.Stat & { type?: string };
+    picked.name = stat.name || picked.name;
+    picked.mime = stat.type || mimeFromName(picked.name, "") || undefined;
+  }
   const bytes = await readPickedBytes(picked.uri);
   const image = await imageContentFromBytes(bytes, picked.name, picked.mime, autoResize);
   return { ...image, id: newId(), name: picked.name, uri: picked.uri };

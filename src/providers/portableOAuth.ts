@@ -1,6 +1,6 @@
 import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
-import { OPENROUTER_CALLBACK_URL, waitForOpenRouterCallback } from "../platform/oauthCallback";
 import type { PortableCredentialStore } from "../platform/credentials";
+import { OPENROUTER_CALLBACK_URL, waitForOpenRouterCallback } from "../platform/oauthCallback";
 import { sanitizeModelId } from "./customModels";
 
 const OAUTH_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -333,6 +333,7 @@ export const portableCodexOAuth: OAuthAuth = {
       throw new Error("ChatGPT authorization was denied or failed. Start sign-in again.");
     const code = callback.searchParams.get("code");
     if (!code) throw new Error("Codex sign-in did not return an authorization code.");
+    interaction.notify({ type: "progress", message: "Finishing secure sign-in…" });
     const token = await exchangeCodexToken(
       {
         grant_type: "authorization_code",
@@ -396,13 +397,15 @@ async function loginOpenRouter(
   try {
     await credentials?.savePendingSignIn("openrouter", pending);
     interaction.signal?.throwIfAborted();
+    // OpenRouter omits echoed state on denial, so retain it in the callback URL.
+    const callbackUrl = new URL(OPENROUTER_CALLBACK_URL);
+    callbackUrl.searchParams.set("state", pending.state);
     const authUrl = new URL(OPENROUTER_AUTHORIZE_URL);
     authUrl.search = new URLSearchParams({
-      callback_url: OPENROUTER_CALLBACK_URL,
+      callback_url: callbackUrl.href,
       code_challenge: pkce.challenge,
       code_challenge_method: "S256",
       key_label: "Acode AI Agent",
-      state: pending.state,
     }).toString();
     const code = await waitForOpenRouterCallback(
       pending.state,

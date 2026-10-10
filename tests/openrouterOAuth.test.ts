@@ -62,11 +62,13 @@ test.each(["acode://ai-agent/oauth/openrouter", OPENROUTER_CALLBACK_URL])(
       notify(event) {
         if (event.type !== "auth_url") return;
         authorize = new URL(event.url);
-        expect(authorize.searchParams.get("callback_url")).toBe(OPENROUTER_CALLBACK_URL);
-        expect(authorize.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        const returnUrl = new URL(authorize.searchParams.get("callback_url")!);
+        expect(returnUrl.origin + returnUrl.pathname).toBe(OPENROUTER_CALLBACK_URL);
+        expect(returnUrl.searchParams.get("state")).toMatch(/^[A-Za-z0-9_-]{43}$/);
+        expect(authorize.searchParams.has("state")).toBe(false);
         expect(handlers.size).toBe(1);
         const callback = new URL(redirect);
-        callback.searchParams.set("state", authorize.searchParams.get("state")!);
+        callback.search = returnUrl.search;
         callback.searchParams.set("code", "approved+code&value");
         const eventResult = deliver(callback);
         expect(eventResult.preventDefault).toHaveBeenCalled();
@@ -105,7 +107,8 @@ test("a cold restart recovers PKCE from plugin secrets and clears it after excha
     prompt: vi.fn(),
     notify(event) {
       if (event.type !== "auth_url") return;
-      expect(new URL(event.url).searchParams.get("state")).toBe(pending.state);
+      const returnUrl = new URL(new URL(event.url).searchParams.get("callback_url")!);
+      expect(returnUrl.searchParams.get("state")).toBe(pending.state);
       const callback = new URL("acode://ai-agent/oauth/openrouter");
       callback.search = new URLSearchParams({ code: "approved", state: pending.state }).toString();
       deliver(callback, true);
@@ -133,6 +136,44 @@ test("stale, duplicate-state and foreign callbacks cannot finish the active logi
   expect(handlers.size).toBe(1);
   signal.abort();
   await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+  expect(handlers.size).toBe(0);
+});
+
+test("OpenRouter denial retains callback-URL state and clears the pending sign-in", async () => {
+  host();
+  vi.useFakeTimers();
+  const credentials = new PortableCredentialStore(null);
+  await credentials.savePendingSignIn("openrouter", {
+    state: "s".repeat(43),
+    verifier: "v".repeat(43),
+    expiresAt: Date.now() + 100,
+  });
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  let ready!: () => void;
+  const notified = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const result = createPortableOpenRouterOAuth(credentials).login({
+    prompt: vi.fn(),
+    notify(event) {
+      if (event.type !== "auth_url") return;
+      // OpenRouter adds the error to the callback URL without echoing OAuth state.
+      const returnUrl = new URL(new URL(event.url).searchParams.get("callback_url")!);
+      returnUrl.searchParams.set("error", "access_denied");
+      const callback = new URL("acode://ai-agent/oauth/openrouter");
+      callback.search = returnUrl.search;
+      deliver(callback);
+      ready();
+    },
+  });
+  const check = expect(result).rejects.toThrow(/authorization was denied/);
+  await notified;
+  await vi.advanceTimersByTimeAsync(100);
+  await check;
+  expect(fetch).not.toHaveBeenCalled();
+  expect(await credentials.pendingSignIn("openrouter")).toBeUndefined();
+  expect(await credentials.read("openrouter")).toBeUndefined();
   expect(handlers.size).toBe(0);
 });
 
@@ -182,7 +223,8 @@ test.each(["cancel", "exchange-failure"])(
         if (event.type !== "auth_url") return;
         if (scenario === "cancel") abort.abort();
         else {
-          const state = new URL(event.url).searchParams.get("state")!;
+          const returnUrl = new URL(new URL(event.url).searchParams.get("callback_url")!);
+          const state = returnUrl.searchParams.get("state")!;
           deliver(new URL(`acode://ai-agent/oauth/openrouter?state=${state}&code=approved`));
         }
       },

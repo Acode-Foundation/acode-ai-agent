@@ -45,5 +45,8 @@ export function useProviderCredential(
       }),
     [controller, providerId, endpoints],
   );
+  // Login completes after persistence; the async secret read can still contain the old result.
+  const authFlow = controller.state.authFlow;
+  if (authFlow?.providerId === providerId && authFlow.status === "connected") return true;
   return result?.providerId === providerId ? result.connected : undefined;
 }

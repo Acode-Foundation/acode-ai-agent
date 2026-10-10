@@ -708,7 +708,7 @@ export class AgentController {
       closeAuthTab();
       this.#state.authFlow = {
         providerId,
-        status: "waiting",
+        status: "connecting",
         message: "Signed in. Loading your models…",
       };
       this.#emit();
@@ -748,7 +748,8 @@ export class AgentController {
     this.#authTabAbort?.abort();
     this.#authAbort?.abort();
     this.#authAbort = undefined;
-    if (this.#state.authFlow?.status === "waiting") this.#state.authFlow = undefined;
+    if (this.#state.authFlow?.status === "waiting" || this.#state.authFlow?.status === "connecting")
+      this.#state.authFlow = undefined;
     this.#emit();
   }
 
@@ -878,10 +879,10 @@ export class AgentController {
     }
     const message = event.message;
     const flow = this.#state.authFlow?.providerId === providerId ? this.#state.authFlow : undefined;
-    if (event.type === "progress" && (providerId === "openrouter" || flow?.userCode)) {
+    if (event.type === "progress") {
       closeAuthTab();
       this.#authTabAbort?.abort();
-      this.#state.authFlow = { providerId, status: "waiting", message };
+      this.#state.authFlow = { providerId, status: "connecting", message };
     } else this.#state.authFlow = { ...flow, providerId, status: "waiting", message };
     this.#emit();
   }

@@ -6,6 +6,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 test("Codex browser login exchanges a state-validated callback with matching PKCE", async () => {
   let authorize: URL;
+  const events: string[] = [];
   const access = `header.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "account-123" } })).toString("base64url")}.signature`;
   const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     if (input.includes("/codex/models?"))
@@ -27,6 +28,11 @@ test("Codex browser login exchanges a state-validated callback with matching PKC
   vi.stubGlobal("fetch", fetchMock);
   const credential = await portableCodexOAuth.login({
     notify(event) {
+      events.push(event.type);
+      if (event.type === "progress") {
+        expect(event.message).toBe("Finishing secure sign-in…");
+        return;
+      }
       expect(event.type).toBe("auth_url");
       if (event.type !== "auth_url") throw new Error("Expected browser login");
       authorize = new URL(event.url);
@@ -47,6 +53,7 @@ test("Codex browser login exchanges a state-validated callback with matching PKC
       return ` ${callbackUri}?code=test-code&state=${authorize.searchParams.get("state")} `;
     },
   });
+  expect(events).toEqual(["auth_url", "progress"]);
   expect(credential).toMatchObject({
     access,
     refresh: "refresh",
