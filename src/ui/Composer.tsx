@@ -444,7 +444,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
               onKeyUp={refresh}
               onCompositionEnd={refresh}
               onBeforeInput={(event) => {
-                const inputType = (event as unknown as { inputType?: string }).inputType;
+                const input = event as unknown as InputEvent;
+                const inputType = input.inputType;
                 if (inputType !== "deleteContentBackward" && inputType !== "deleteContentForward")
                   return;
                 if (
@@ -452,6 +453,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
                     editor.current,
                     attachments.current,
                     inputType === "deleteContentForward" ? "forward" : "backward",
+                    input.getTargetRanges?.()[0],
                   )
                 ) {
                   event.preventDefault();
@@ -1156,9 +1158,10 @@ function tryDeleteChip(
   root: HTMLElement | null,
   store: Map<string, DraftImage | DraftFile>,
   direction: "backward" | "forward",
+  targetRange?: StaticRange,
 ): boolean {
   if (!root) return false;
-  const chip = chipBesideCaret(root, direction);
+  const chip = chipBesideCaret(root, direction, targetRange);
   if (!chip) return false;
   removeChipElement(chip, store);
   return true;
@@ -1168,17 +1171,12 @@ function removeChipElement(chip: HTMLElement, store: Map<string, DraftImage | Dr
   const id = chip.dataset.id;
   if (id) store.delete(id);
   const next = chip.nextSibling;
-  const prev = chip.previousSibling;
+  const parent = chip.parentElement;
+  const index = parent ? [...parent.childNodes].indexOf(chip) : 0;
   if (next?.nodeType === Node.TEXT_NODE && /^[\u00a0\s]?$/.test(next.textContent ?? ""))
     next.remove();
-  const parent = chip.parentElement;
   chip.remove();
-  if (parent)
-    setCaret(
-      parent.closest(".composer-input") ?? parent,
-      prev ?? parent,
-      prev?.nodeType === Node.TEXT_NODE ? (prev.textContent?.length ?? 0) : 0,
-    );
+  if (parent) setCaret(parent.closest(".composer-input") ?? parent, parent, index);
 }
 
 function keepPagePinned(from: HTMLElement) {

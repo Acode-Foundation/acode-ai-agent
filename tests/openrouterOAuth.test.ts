@@ -36,6 +36,18 @@ function deliver(url: URL, legacy = false) {
   return event;
 }
 
+test("a missing callback bridge offers an API key without requesting a return URL", async () => {
+  const credentials = new PortableCredentialStore(null);
+  const prompt = vi.fn();
+  const notify = vi.fn();
+  await expect(
+    createPortableOpenRouterOAuth(credentials).login({ prompt, notify }),
+  ).rejects.toThrow(/use an API key/);
+  expect(prompt).not.toHaveBeenCalled();
+  expect(notify).not.toHaveBeenCalled();
+  expect(await credentials.pendingSignIn("openrouter")).toBeUndefined();
+});
+
 test.each(["acode://ai-agent/oauth/openrouter", OPENROUTER_CALLBACK_URL])(
   "OpenRouter completes automatically via %s with matched state and PKCE",
   async (redirect) => {
@@ -70,7 +82,8 @@ test.each(["acode://ai-agent/oauth/openrouter", OPENROUTER_CALLBACK_URL])(
         const callback = new URL(redirect);
         callback.search = returnUrl.search;
         callback.searchParams.set("code", "approved+code&value");
-        const eventResult = deliver(callback);
+        // The shipped host splits acode:// into module/action/value and has no url field.
+        const eventResult = deliver(callback, redirect.startsWith("acode://"));
         expect(eventResult.preventDefault).toHaveBeenCalled();
         deliver(callback);
       },

@@ -954,42 +954,26 @@ function SettingsSheet({
                             : "Continue sign-in"
                           : provider.subscriptionLabel}
                   </button>
-                  {!signingIn &&
-                    (providerId === "openai-codex" || providerId === "github-copilot") && (
-                      <button
-                        type="button"
-                        class="text-button"
-                        onClick={() => {
-                          void controller
-                            .loginSubscription(providerId, false, true)
-                            .catch((error) =>
-                              onToast(error instanceof Error ? error.message : String(error)),
-                            );
-                        }}
-                      >
-                        Other sign-in options
-                      </button>
-                    )}
+                  {!signingIn && providerId === "github-copilot" && (
+                    <button
+                      type="button"
+                      class="text-button"
+                      onClick={() => {
+                        void controller
+                          .loginSubscription(providerId, false, true)
+                          .catch((error) =>
+                            onToast(error instanceof Error ? error.message : String(error)),
+                          );
+                      }}
+                    >
+                      Other sign-in options
+                    </button>
+                  )}
                   {authFlow && (
                     <div class={`device ${authFlow.status}`}>
                       {authFlow.userCode && <code>{authFlow.userCode}</code>}
-                      {providerId === "openai-codex" && authFlow.prompt?.type === "manual_code" ? (
-                        <div class="auth-walkthrough">
-                          <b>Finish connecting ChatGPT</b>
-                          <ol>
-                            <li>Complete sign-in in your browser.</li>
-                            <li>On the final page, copy the full link from the address bar.</li>
-                            <li>Return here, paste the link below, and connect.</li>
-                          </ol>
-                          <p>
-                            The final page may say “localhost can’t be reached”. Your sign-in is
-                            still valid; the link completes the connection.
-                          </p>
-                        </div>
-                      ) : (
-                        (authFlow.prompt || authFlow.verificationUri || !signingIn) && (
-                          <p role="status">{authFlow.message}</p>
-                        )
+                      {(authFlow.prompt || authFlow.verificationUri || !signingIn) && (
+                        <p role="status">{authFlow.message}</p>
                       )}
                       {authFlow.prompt && (
                         <SubscriptionPrompt
@@ -1104,7 +1088,7 @@ function SubscriptionPrompt({
       </div>
     );
   }
-  const required = prompt.type === "manual_code" || prompt.type === "secret";
+  const required = prompt.type === "secret";
   return (
     <form
       class="auth-prompt-input"
@@ -1117,7 +1101,7 @@ function SubscriptionPrompt({
         type={prompt.type === "secret" ? "password" : "text"}
         value={value}
         placeholder={prompt.placeholder}
-        aria-label={prompt.type === "manual_code" ? "Sign-in return link or code" : prompt.message}
+        aria-label={prompt.message}
         autoComplete="off"
         spellcheck={false}
         autoCapitalize="none"
@@ -1125,7 +1109,7 @@ function SubscriptionPrompt({
         onInput={(event) => onValue(event.currentTarget.value)}
       />
       <button type="submit" disabled={required && !value.trim()}>
-        {prompt.type === "manual_code" ? "Connect account" : "Continue"}
+        Continue
       </button>
     </form>
   );

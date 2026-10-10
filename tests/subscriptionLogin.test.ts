@@ -62,13 +62,14 @@ afterEach(async () => {
   vi.restoreAllMocks();
   login.mockReset();
   hydrate.mockReset();
+  vi.useRealTimers();
 });
 
-test("closing a custom tab restores sign-in without invalidating the manual return code", async () => {
+test("closing a custom tab preserves a pending sign-in prompt", async () => {
   let submitted: string | undefined;
   login.mockImplementation(async (provider: string, kind: string, options: LoginOptions) => {
     options.notify({ type: "auth_url", url: "https://auth.example.test/?verifier=original" });
-    submitted = await options.prompt({ type: "manual_code", message: "Paste the return URL" });
+    submitted = await options.prompt({ type: "text", message: "Fixture prompt" });
     options.notify({ type: "progress", message: "Exchanging code" });
   });
   const result = controller.loginSubscription("openrouter");
@@ -77,7 +78,7 @@ test("closing a custom tab restores sign-in without invalidating the manual retu
   tabs[0].success({ type: "closed" });
   expect(controller.state.authFlow).toMatchObject({
     browserReturned: true,
-    prompt: { type: "manual_code" },
+    prompt: { type: "text" },
   });
   await controller.openSignIn();
   expect(tabs[1].url).toBe(tabs[0].url);
@@ -85,9 +86,9 @@ test("closing a custom tab restores sign-in without invalidating the manual retu
   expect(controller.state.authFlow?.browserReturned).toBe(false);
   document.dispatchEvent(new Event("resume"));
   expect(controller.state.authFlow?.browserReturned).toBe(true);
-  controller.submitSubscriptionPrompt("https://callback.example.test/?code=approved");
+  controller.submitSubscriptionPrompt("fixture-answer");
   await result;
-  expect(submitted).toBe("https://callback.example.test/?code=approved");
+  expect(submitted).toBe("fixture-answer");
   expect(controller.state.authFlow?.status).toBe("connected");
   expect(closedIds.at(-1)).toMatch(/^\d+:\d+$/);
   tabs[1].success({ type: "closed" });
@@ -97,7 +98,7 @@ test("closing a custom tab restores sign-in without invalidating the manual retu
 test("a stale tab cannot restore a replacement sign-in or overwrite its error", async () => {
   login.mockImplementation(async (provider: string, kind: string, options: LoginOptions) => {
     options.notify({ type: "auth_url", url: `https://auth.example.test/?attempt=${tabs.length}` });
-    await options.prompt({ type: "manual_code", message: "Return code" });
+    await options.prompt({ type: "text", message: "Fixture prompt" });
   });
   const first = controller.loginSubscription("openrouter");
   await vi.waitFor(() => expect(tabs).toHaveLength(1));
@@ -110,7 +111,7 @@ test("a stale tab cannot restore a replacement sign-in or overwrite its error", 
   document.dispatchEvent(new Event("resume"));
   expect(controller.state.authFlow).toMatchObject({
     browserReturned: true,
-    message: "Return code",
+    message: "Fixture prompt",
   });
   controller.cancelSubscriptionLogin();
   await second;
@@ -119,19 +120,13 @@ test("a stale tab cannot restore a replacement sign-in or overwrite its error", 
   expect(controller.state.authFlow).toBeUndefined();
 });
 
-test("a manual callback closes its auth browser before aborting lifecycle listeners", async () => {
-  login.mockImplementation(async (provider: string, kind: string, options: LoginOptions) => {
-    options.notify({ type: "auth_url", url: "https://auth.example.test/" });
-    await options.prompt({ type: "manual_code", message: "Return code" });
+test("callback URL prompts are rejected without showing an input", async () => {
+  login.mockImplementation(async (_id: string, _kind: string, options: LoginOptions) => {
+    await options.prompt({ type: "manual_code", message: "Paste callback URL" });
   });
-  const result = controller.loginSubscription("openai-codex");
-  await vi.waitFor(() => expect(tabs).toHaveLength(1));
-  controller.submitSubscriptionPrompt("fixture-code");
-  await result;
-  expect(tabs).toHaveLength(1);
-  expect(closedIds).toHaveLength(1);
-  expect(closedIds[0]).toMatch(/^\d+:\d+$/);
-  expect(controller.state.authFlow?.status).toBe("connected");
+  await expect(controller.loginSubscription("openrouter")).rejects.toThrow(/automatic sign-in/);
+  expect(controller.state.authFlow).toMatchObject({ status: "error" });
+  expect(controller.state.authFlow?.prompt).toBeUndefined();
 });
 
 test("device-code polling retains its code and sign-in page after app resume", async () => {
@@ -171,12 +166,12 @@ test("a browser launch failure restores the button and preserves the pending pro
   });
   login.mockImplementation(async (provider: string, kind: string, options: LoginOptions) => {
     options.notify({ type: "auth_url", url: "https://auth.example.test/" });
-    await options.prompt({ type: "manual_code", message: "Return code" });
+    await options.prompt({ type: "text", message: "Fixture prompt" });
   });
   const result = controller.loginSubscription("openrouter");
   await vi.waitFor(() => expect(controller.state.authFlow?.browserReturned).toBe(true));
   expect(controller.state.authFlow?.message).toBe("A browser cannot be opened right now");
-  expect(controller.state.authFlow?.prompt?.type).toBe("manual_code");
+  expect(controller.state.authFlow?.prompt?.type).toBe("text");
   controller.cancelSubscriptionLogin();
   await result;
 });
@@ -194,7 +189,7 @@ test("startup waits for the recovered callback listener before continuing plugin
       ready = resolve;
     });
     options.notify({ type: "auth_url", url: "https://auth.example.test/restored" });
-    await options.prompt({ type: "manual_code", message: "Fixture checkpoint" });
+    await options.prompt({ type: "text", message: "Fixture checkpoint" });
   });
   hydrate.mockRejectedValueOnce(new Error("Startup checkpoint"));
   const initialized = controller.initialize();
@@ -212,25 +207,53 @@ test("startup waits for the recovered callback listener before continuing plugin
   controller.cancelSubscriptionLogin();
 });
 
-test.each([
-  ["openai-codex", "select", "device"],
-  ["github-copilot", "text", ""],
-] as const)(
-  "%s starts its standard login without a setup prompt",
-  async (provider, type, expected) => {
-    let answer: string | undefined;
-    login.mockImplementation(async (id: string, kind: string, options: LoginOptions) => {
-      answer = await options.prompt(
-        type === "select"
-          ? { type, message: "Method", options: [{ id: "device", label: "Device" }] }
-          : { type, message: "Enterprise domain" },
-      );
-    });
-    await controller.loginSubscription(provider);
-    expect(answer).toBe(expected);
-    expect(controller.state.authFlow?.status).toBe("connected");
-  },
-);
+test("startup proceeds when the recovered sign-in never becomes ready", async () => {
+  vi.useFakeTimers();
+  await controller.credentials.savePendingSignIn("openrouter", {
+    state: "s".repeat(43),
+    verifier: "v".repeat(43),
+    expiresAt: Date.now() + 60_000,
+  });
+  login.mockImplementation(
+    (_provider: string, _kind: string, options: LoginOptions) =>
+      new Promise<void>((resolve) => options.signal.addEventListener("abort", () => resolve())),
+  );
+  hydrate.mockRejectedValueOnce(new Error("Startup checkpoint"));
+  const initialized = controller.initialize();
+  const checkpoint = expect(initialized).rejects.toThrow("Startup checkpoint");
+  await vi.waitFor(() => expect(login).toHaveBeenCalledTimes(1));
+  expect(hydrate).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1_000);
+  await checkpoint;
+  expect(hydrate).toHaveBeenCalledTimes(1);
+  controller.cancelSubscriptionLogin();
+});
+
+test("failed background sign-in stays in the provider UI without a global error", async () => {
+  await controller.credentials.savePendingSignIn("openrouter", {
+    state: "s".repeat(43),
+    verifier: "v".repeat(43),
+    expiresAt: Date.now() + 60_000,
+  });
+  login.mockRejectedValueOnce(new Error("Sign-in unavailable"));
+  hydrate.mockRejectedValueOnce(new Error("Startup checkpoint"));
+  await expect(controller.initialize()).rejects.toThrow("Startup checkpoint");
+  expect(controller.state.authFlow).toMatchObject({
+    status: "error",
+    message: "Sign-in unavailable",
+  });
+  expect(controller.state.error).toBeUndefined();
+});
+
+test("Copilot starts standard login without an Enterprise domain prompt", async () => {
+  let answer: string | undefined;
+  login.mockImplementation(async (_id: string, _kind: string, options: LoginOptions) => {
+    answer = await options.prompt({ type: "text", message: "Enterprise domain" });
+  });
+  await controller.loginSubscription("github-copilot");
+  expect(answer).toBe("");
+  expect(controller.state.authFlow?.status).toBe("connected");
+});
 
 test("advanced Copilot login keeps the optional Enterprise domain", async () => {
   let answer: string | undefined;

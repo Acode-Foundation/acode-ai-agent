@@ -147,12 +147,26 @@ export function consumeMention(root: HTMLElement): boolean {
 export function chipBesideCaret(
   root: HTMLElement,
   direction: "backward" | "forward",
+  targetRange?: StaticRange,
 ): HTMLElement | null {
   const selection = getEditorSelection(root);
-  if (!selection?.isCollapsed || !selection.anchorNode || !root.contains(selection.anchorNode))
-    return null;
-  const { anchorNode, anchorOffset } = selection;
-  if (anchorNode instanceof HTMLElement && anchorNode.dataset.chip) return anchorNode;
+  if (!selection?.isCollapsed) return null;
+  // beforeinput exposes the real deletion boundary even when a shadow selection is retargeted.
+  const anchorNode = targetRange
+    ? direction === "backward"
+      ? targetRange.endContainer
+      : targetRange.startContainer
+    : selection.anchorNode;
+  const anchorOffset = targetRange
+    ? direction === "backward"
+      ? targetRange.endOffset
+      : targetRange.startOffset
+    : selection.anchorOffset;
+  if (!anchorNode || !root.contains(anchorNode)) return null;
+  const chip = (
+    anchorNode instanceof HTMLElement ? anchorNode : anchorNode.parentElement
+  )?.closest<HTMLElement>("[data-chip]");
+  if (chip && root.contains(chip)) return chip;
   if (anchorNode.nodeType === Node.TEXT_NODE) {
     const atEdge =
       direction === "backward"

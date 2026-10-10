@@ -28,9 +28,7 @@ const XAI_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_AUTH_BASE = "https://auth.openai.com";
-const CODEX_AUTHORIZE_URL = `${CODEX_AUTH_BASE}/oauth/authorize`;
 const CODEX_TOKEN_URL = `${CODEX_AUTH_BASE}/oauth/token`;
-const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models?client_version=0.83.0";
 const CODEX_DEVICE_URL = `${CODEX_AUTH_BASE}/api/accounts/deviceauth/usercode`;
 const CODEX_DEVICE_TOKEN_URL = `${CODEX_AUTH_BASE}/api/accounts/deviceauth/token`;
@@ -259,93 +257,7 @@ export const portableXaiOAuth: OAuthAuth = {
 export const portableCodexOAuth: OAuthAuth = {
   name: "OpenAI (ChatGPT subscription)",
   loginLabel: "Sign in with ChatGPT",
-  async login(interaction) {
-    interaction.signal?.throwIfAborted();
-    const method = await interaction.prompt({
-      type: "select",
-      message: "Connect your ChatGPT subscription",
-      options: [
-        {
-          id: "device",
-          label: "Connect automatically with a device code",
-          description:
-            "No return link to paste. Enable device-code authorization in ChatGPT → Settings → Security first.",
-        },
-        {
-          id: "browser",
-          label: "Use browser sign-in instead",
-          description:
-            "Fallback for accounts without device-code authorization. Requires pasting the return link.",
-        },
-      ],
-      signal: interaction.signal,
-    });
-    interaction.signal?.throwIfAborted();
-    if (method === "device") return loginCodexDevice(interaction);
-    if (method !== "browser") throw new Error("Choose a ChatGPT sign-in method.");
-    interaction.signal?.throwIfAborted();
-    // Match Pi's browser OAuth flow without importing its Node callback server.
-    const { verifier, challenge } = await generatePkce();
-    const state = base64Url(crypto.getRandomValues(new Uint8Array(16)));
-    const authUrl = new URL(CODEX_AUTHORIZE_URL);
-    authUrl.search = new URLSearchParams({
-      response_type: "code",
-      client_id: CODEX_CLIENT_ID,
-      redirect_uri: CODEX_REDIRECT_URI,
-      scope: "openid profile email offline_access",
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-      state,
-      id_token_add_organizations: "true",
-      codex_cli_simplified_flow: "true",
-      originator: "pi",
-    }).toString();
-    interaction.signal?.throwIfAborted();
-    interaction.notify({
-      type: "auth_url",
-      url: authUrl.href,
-      instructions:
-        "Sign in with ChatGPT. When the browser reaches localhost (it may show a connection error), copy the full address and paste it in Acode.",
-    });
-    const input = await interaction.prompt({
-      type: "manual_code",
-      message:
-        "After signing in, copy the full localhost URL from the browser address bar, even if the page cannot load, and paste it here.",
-      placeholder: `${CODEX_REDIRECT_URI}?code=…&state=…`,
-      signal: interaction.signal,
-    });
-    interaction.signal?.throwIfAborted();
-    let callback: URL;
-    try {
-      callback = new URL(input.trim());
-    } catch {
-      throw new Error("Paste the full localhost callback URL from the ChatGPT sign-in page.");
-    }
-    if (
-      callback.origin !== new URL(CODEX_REDIRECT_URI).origin ||
-      callback.pathname !== "/auth/callback"
-    ) {
-      throw new Error("Expected the ChatGPT localhost sign-in callback URL.");
-    }
-    if (callback.searchParams.get("state") !== state)
-      throw new Error("Codex OAuth state mismatch. Start sign-in again.");
-    if (callback.searchParams.has("error"))
-      throw new Error("ChatGPT authorization was denied or failed. Start sign-in again.");
-    const code = callback.searchParams.get("code");
-    if (!code) throw new Error("Codex sign-in did not return an authorization code.");
-    interaction.notify({ type: "progress", message: "Finishing secure sign-in…" });
-    const token = await exchangeCodexToken(
-      {
-        grant_type: "authorization_code",
-        client_id: CODEX_CLIENT_ID,
-        code,
-        code_verifier: verifier,
-        redirect_uri: CODEX_REDIRECT_URI,
-      },
-      interaction.signal,
-    );
-    return codexCredential(token, undefined, interaction.signal);
-  },
+  login: loginCodexDevice,
   async refresh(credential, signal) {
     const token = await exchangeCodexToken(
       {
@@ -444,6 +356,7 @@ async function loginOpenRouter(
 async function loginCodexDevice(
   interaction: Parameters<OAuthAuth["login"]>[0],
 ): Promise<OAuthCredential> {
+  interaction.signal?.throwIfAborted();
   const device = await postJson(
     CODEX_DEVICE_URL,
     { client_id: CODEX_CLIENT_ID },
@@ -493,7 +406,7 @@ async function loginCodexDevice(
       if (error === "access_denied" || error === "authorization_denied")
         return {
           error:
-            "ChatGPT authorization was denied. Enable device-code authorization in ChatGPT Settings → Security, or choose browser sign-in.",
+            "ChatGPT authorization was denied. Enable device-code authorization in ChatGPT Settings → Security and try again.",
         };
       if (error === "slow_down") return { slowDown: true };
       return { error: `Codex device authorization failed (HTTP ${response.status}).` };

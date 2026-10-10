@@ -8,26 +8,44 @@ export function pickMediaFile(): Promise<File | undefined> {
     input.setAttribute("aria-hidden", "true");
     input.style.cssText =
       "position:fixed;left:-10000px;width:1px;height:1px;opacity:0;pointer-events:none";
+    let settled = false;
+    let returnTimer: ReturnType<typeof setTimeout> | undefined;
+    // Older WebViews may omit cancel; also bound hosts that emit no return event at all.
+    const timeout = setTimeout(selected, 10 * 60 * 1_000);
     const cleanup = () => {
+      clearTimeout(timeout);
+      clearTimeout(returnTimer);
       input.removeEventListener("change", selected);
-      input.removeEventListener("cancel", cancelled);
+      input.removeEventListener("cancel", selected);
+      window.removeEventListener("focus", returned);
+      document.removeEventListener("resume", returned);
+      document.removeEventListener("visibilitychange", visibilityChanged);
       input.remove();
     };
-    const selected = () => {
+    function selected() {
+      if (settled) return;
+      settled = true;
       const file = input.files?.[0];
       cleanup();
       resolve(file);
+    }
+    const returned = () => {
+      // Focus can precede change when the native chooser hands a selected file back.
+      if (!settled && returnTimer === undefined) returnTimer = setTimeout(selected, 1_000);
     };
-    const cancelled = () => {
-      cleanup();
-      resolve(undefined);
+    const visibilityChanged = () => {
+      if (document.visibilityState === "visible") returned();
     };
     input.addEventListener("change", selected);
-    input.addEventListener("cancel", cancelled);
-    document.body.append(input);
+    input.addEventListener("cancel", selected);
+    window.addEventListener("focus", returned);
+    document.addEventListener("resume", returned);
+    document.addEventListener("visibilitychange", visibilityChanged);
     try {
+      document.body.append(input);
       input.click();
     } catch (error) {
+      settled = true;
       cleanup();
       reject(error);
     }

@@ -30,9 +30,15 @@ class TreeNode {
     const siblings = this.parentNode?.childNodes ?? [];
     return siblings[siblings.indexOf(this) + 1] ?? null;
   }
+  get parentElement(): ElementNode | null {
+    return this.parentNode instanceof ElementNode ? this.parentNode : null;
+  }
 }
 class ElementNode extends TreeNode {
   dataset: Record<string, string> = {};
+  closest(): ElementNode | null {
+    return this.dataset.chip ? this : (this.parentElement?.closest() ?? null);
+  }
 }
 class DocumentNode {
   getSelection() {
@@ -128,4 +134,28 @@ test("walking adjacent nodes stops at typed text", () => {
   root.append(gap);
   caret(gap, 1);
   expect(beside()).toBeNull();
+});
+
+test("Backspace treats an image label's caret as part of the atomic chip", () => {
+  const { image, caret, beside } = fixture();
+  const label = new ElementNode();
+  const text = new TreeNode(3, "image.png");
+  label.append(text);
+  image.append(label);
+  caret(text, text.textContent.length);
+  expect(beside()).toBe(image);
+});
+
+test("mobile deletion uses its target range when the shadow caret is retargeted", () => {
+  const { root, image, typed, caret } = fixture("\u00a0");
+  caret(new ElementNode(), 0);
+  const range = {
+    startContainer: root,
+    startOffset: 0,
+    endContainer: typed,
+    endOffset: 1,
+  } as unknown as StaticRange;
+  expect(chipBesideCaret(root as unknown as HTMLElement, "backward", range)).toBe(image);
+  typed.textContent = "@";
+  expect(chipBesideCaret(root as unknown as HTMLElement, "backward", range)).toBeNull();
 });

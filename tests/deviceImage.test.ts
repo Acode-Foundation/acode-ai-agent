@@ -98,3 +98,30 @@ test("hosts without the gallery API retain image file picking", async () => {
   expect(await pickDeviceImage()).toMatchObject({ name: "picked.png", uri: "content://images/1" });
   expect(fs).toHaveBeenCalledWith("content://images/1");
 });
+
+test("an extensionless gallery image remains readable when metadata fails", async () => {
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff]);
+  const original = await vi.importActual<typeof import("../src/platform/promptImages")>(
+    "../src/platform/promptImages",
+  );
+  vi.mocked(imageContentFromBytes).mockImplementationOnce(original.imageContentFromBytes);
+  const uri = "content://media/external/images/media/12345";
+  vi.stubGlobal("sdcard", {
+    openDocumentFile: vi.fn(),
+    getImage: (ok: (uri: string) => void) => ok(uri),
+  });
+  vi.stubGlobal("acode", {
+    fsOperation: () => ({
+      stat: async () => {
+        throw new Error("Metadata unavailable");
+      },
+      readFile: async () => bytes.buffer,
+    }),
+  });
+  expect(await pickDeviceImage(false)).toMatchObject({
+    uri,
+    name: "12345",
+    mimeType: "image/jpeg",
+    data: btoa(String.fromCharCode(...bytes)),
+  });
+});

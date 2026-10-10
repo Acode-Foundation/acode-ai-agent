@@ -1,4 +1,5 @@
 import { ACTION_ICONS, actionsFor, type AgentActionId } from "../app/agentActions";
+import { AGENT_ICON_CLASS } from "./pluginIcon";
 
 /** Editor text captured when a menu opens, before any dialog can move the selection. */
 export type EditorCapture = {
@@ -122,7 +123,7 @@ function addSelectionMenuItem(
 ): SelectionMenuSlot {
   const slot: SelectionMenuSlot = {};
   const icon = document.createElement("span");
-  icon.className = "icon brain";
+  icon.className = `icon ${AGENT_ICON_CLASS}`;
   icon.title = MENU_TITLE;
   icon.setAttribute("aria-label", MENU_TITLE);
   (selectionMenu.add as SelectionMenuAdd)(

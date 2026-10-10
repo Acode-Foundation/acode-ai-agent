@@ -143,21 +143,22 @@ export class AgentController {
     const pending = await this.credentials.pendingSignIn("openrouter");
     if (pending && pending.expiresAt > Date.now()) {
       await new Promise<void>((resolve) => {
+        // Give the recovered listener a head start without holding up the workspace indefinitely.
+        const timer = setTimeout(finish, 1_000);
+        function finish() {
+          clearTimeout(timer);
+          unsubscribe();
+          resolve();
+        }
         const unsubscribe = this.changes.subscribe((state) => {
           if (state.authFlow?.verificationUri) {
-            unsubscribe();
-            resolve();
+            finish();
           }
         });
         void this.loginSubscription("openrouter", true)
-          .catch((error) => {
-            this.#state.error = error instanceof Error ? error.message : String(error);
-            this.#emit();
-          })
-          .finally(() => {
-            unsubscribe();
-            resolve();
-          });
+          // loginSubscription already exposes failures in the provider sign-in UI.
+          .catch(() => undefined)
+          .finally(finish);
       });
     } else if (pending) await this.credentials.clearPendingSignIn("openrouter", pending.state);
     await this.#sessionStore.hydrate();
@@ -692,9 +693,9 @@ export class AgentController {
       await this.providers.models.login(providerId, "oauth", {
         signal: abort.signal,
         prompt: (prompt) => {
+          if (prompt.type === "manual_code")
+            return Promise.reject(new Error("Use automatic sign-in or an API key instead."));
           if (!advanced) {
-            if (providerId === "openai-codex" && prompt.type === "select")
-              return Promise.resolve("device");
             if (providerId === "github-copilot" && prompt.type === "text")
               return Promise.resolve("");
           }

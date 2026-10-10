@@ -1,5 +1,6 @@
 import { fileName } from "../workspace/fileMentions";
 import { imageContentFromBytes, mimeFromName } from "./promptImages";
+import { detectSupportedImageMimeType } from "../tools/textFiles";
 import type { DraftImage } from "../ui/composerDraft";
 
 type DocumentPick = {
@@ -32,11 +33,16 @@ export async function pickDeviceImage(autoResize = true): Promise<DraftImage | u
   if (!picked) return undefined;
   if (!picked.mime) {
     // Android gallery URIs can end in a numeric ID instead of the image's filename.
-    const stat = (await acode.fsOperation(picked.uri).stat()) as Acode.Stat & { type?: string };
-    picked.name = stat.name || picked.name;
-    picked.mime = stat.type || mimeFromName(picked.name, "") || undefined;
+    try {
+      const stat = (await acode.fsOperation(picked.uri).stat()) as Acode.Stat & { type?: string };
+      picked.name = stat.name || picked.name;
+      picked.mime = stat.type || mimeFromName(picked.name, "") || undefined;
+    } catch {
+      // Some gallery providers allow reading the image but do not expose metadata.
+    }
   }
   const bytes = await readPickedBytes(picked.uri);
+  picked.mime ||= detectSupportedImageMimeType(bytes);
   const image = await imageContentFromBytes(bytes, picked.name, picked.mime, autoResize);
   return { ...image, id: newId(), name: picked.name, uri: picked.uri };
 }

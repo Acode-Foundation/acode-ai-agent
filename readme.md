@@ -141,7 +141,7 @@ Anthropic is API-key only. Claude Pro / Max sign-in was removed because Anthropi
 
 OpenRouter sign-in opens a custom tab and returns through `https://acode.app/ai/oauth/openrouter`. Approval connects the account without pasting a code. PKCE and state protect the callback, and plugin secure storage allows a pending sign-in to finish after an app restart. The callback page returns through `acode://ai-agent/oauth/openrouter`.
 
-Codex starts device-code sign-in directly, which does not require pasting a return link. Browser sign-in is available under **Other sign-in options**. For device login, tap **Copy code & sign in**, paste the code on the provider page, and approve. Acode finishes connecting automatically. For Codex, first enable device-code authorization in ChatGPT Settings → Security. For browser sign-in, complete ChatGPT sign-in in the browser, then copy the full `http://localhost:1455/auth/callback?...` address and paste it into Acode. The localhost page may show a connection error because Acode does not run a callback server; copying its address completes the sign-in. This browser OAuth flow does not require enabling device-code authorization in ChatGPT settings.
+Codex uses automatic device-code sign-in. Tap **Copy code & sign in**, paste the code on the provider page, and approve. Acode finishes connecting automatically. Enable device-code authorization in ChatGPT Settings → Security first. OAuth callback addresses are fixed in code; no provider asks you to enter or paste a callback URL.
 
 GitHub Copilot uses github.com by default; **Other sign-in options** supports an Enterprise domain. Kimi Code and xAI use the same device-code sign-in controls.
 
