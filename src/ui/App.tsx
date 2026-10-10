@@ -33,11 +33,12 @@ import { providerDescriptors } from "../providers/providerRegistry";
 import { thinkingLevelsFor } from "../providers/thinkingLevels";
 import { backActionId, useBackAction } from "./actionStack";
 import { Collapse } from "./Collapse";
+import { Combobox } from "./Combobox";
 import { Composer, UserMessage, type ComposerHandle } from "./Composer";
-import { CopyButton } from "./CopyButton";
+import { CopyButton, copyText } from "./CopyButton";
 import { MessageMeta } from "./MessageMeta";
 import { ErrorNotice } from "./ErrorNotice";
-import { fadeInUp, fadeSlide, playMotion } from "./motion";
+import { fadeInUp, fadeSlide } from "./motion";
 import { Markdown } from "./markdown";
 import { Sheet } from "./Sheet";
 import { TreeSheet } from "./TreeSheet";
@@ -54,6 +55,9 @@ import { pickAcodeSelect } from "../platform/acodeSelect";
 import { modelAcceptsImages } from "../platform/promptImages";
 import { draftFromParts, promptTextFromDraft, type ComposerDraft } from "./composerDraft";
 import { parseSlashCommand } from "../core/slashCommands";
+import { showToast } from "../platform/toast";
+import { useProviderCredential } from "./useProviderCredential";
+import { AgentIcon } from "./AgentIcon";
 
 type Props = {
   controller: AgentController;
@@ -77,7 +81,6 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
   } | null>(null);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [dismissedTray, setDismissedTray] = useState("");
-  const [toast, setToast] = useState("");
   const [resuming, setResuming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
@@ -94,6 +97,13 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     }
     if (state.activeChatId) onActiveChatChange?.(state.activeChatId);
   }, [state.activeChatId, onActiveChatChange]);
+  const connected = useProviderCredential(
+    controller,
+    state.settings.providerId,
+    state.settings.customEndpoints,
+  );
+  const provider = controller.listProviders().find((item) => item.id === state.settings.providerId);
+  const providerName = provider?.name ?? state.settings.providerId;
   const running = state.status === "running";
   const waitingOnAsk = Boolean(state.questionnaire);
   const workingLabel = state.retry
@@ -146,13 +156,13 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           if (result.action === "tree" || result.action === "fork") setTreeMode(result.action);
           if (result.action === "tasks") setTasksOpen(true);
           if (result.panel) setCommandPanel(result.panel);
-          if (result.message) setToast(result.message);
+          if (result.message) showToast(result.message);
           return;
         }
         await controller.send(promptTextFromDraft(draft), mode, draft.images);
       } catch (error) {
         composerRef.current?.restore(draft);
-        setToast(error instanceof Error ? error.message : String(error));
+        showToast(error instanceof Error ? error.message : String(error));
         throw error;
       }
     },
@@ -216,11 +226,11 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
         const skipped = result.skipped.length
           ? ` ${result.skipped.length} too large to restore.`
           : "";
-        setToast(
+        showToast(
           `Undid changes to ${result.reverted.length} file${result.reverted.length === 1 ? "" : "s"}.${skipped}`,
         );
       } catch (error) {
-        setToast(error instanceof Error ? error.message : String(error));
+        showToast(error instanceof Error ? error.message : String(error));
       }
     },
     [controller, state.edits],
@@ -231,7 +241,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     try {
       await controller.resume();
     } catch (error) {
-      setToast(error instanceof Error ? error.message : String(error));
+      showToast(error instanceof Error ? error.message : String(error));
     } finally {
       setResuming(false);
     }
@@ -252,7 +262,9 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           class="icon-button"
           type="button"
           onClick={() =>
-            void controller.newConversation().catch((error) => setToast(String(error)))
+            void controller
+              .newConversation()
+              .catch((error) => showToast(error instanceof Error ? error.message : String(error)))
           }
           aria-label="New chat"
         >
@@ -273,7 +285,6 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           <EmptyState
             hasWorkspace={Boolean(state.workspace)}
             onPrompt={(value) => composerRef.current?.setText(value)}
-            onSettings={() => setSettingsOpen(true)}
           />
         ) : (
           <div class="thread">
@@ -288,13 +299,13 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                         void controller
                           .openWorkspaceFile(path)
                           .catch((error) =>
-                            setToast(error instanceof Error ? error.message : String(error)),
+                            showToast(error instanceof Error ? error.message : String(error)),
                           )
                       }
                       onPreviewImage={(image) => {
                         void previewImageInAcode({ ...image, name: image.name || "image" }).catch(
                           (error) => {
-                            setToast(error instanceof Error ? error.message : String(error));
+                            showToast(error instanceof Error ? error.message : String(error));
                           },
                         );
                       }}
@@ -318,7 +329,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                     void controller
                       .stopTool(callId)
                       .catch((error: unknown) =>
-                        setToast(error instanceof Error ? error.message : String(error)),
+                        showToast(error instanceof Error ? error.message : String(error)),
                       )
                   }
                 />
@@ -388,27 +399,43 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
       </main>
 
       <div class="agent-dock">
-        {state.questionnaire && (
-          <AskCard
-            prompt={state.questionnaire}
-            onSubmit={(answers) => controller.answerQuestionnaire(answers)}
-            onSkip={() => controller.skipQuestionnaire()}
-          />
-        )}
-        {state.approval && !state.questionnaire && (
-          <ApprovalPanel
-            approval={state.approval}
-            onApprove={(decision) => controller.approve(decision)}
-          />
-        )}
-        {state.tasks.length > 0 && !state.questionnaire && dismissedTray !== trayKey && (
-          <TaskTray
-            tasks={state.tasks}
-            running={running}
-            onOpen={() => setTasksOpen(true)}
-            onDismiss={() => setDismissedTray(trayKey)}
-          />
-        )}
+        <div class="agent-dock-panels">
+          {connected === false && (
+            <div class="provider-setup">
+              <AgentIcon size={22} />
+              <div>
+                <b>Connect to {providerName}</b>
+                <span>
+                  {provider?.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
+                </span>
+              </div>
+              <button type="button" onClick={() => setSettingsOpen(true)}>
+                Configure
+              </button>
+            </div>
+          )}
+          {state.questionnaire && (
+            <AskCard
+              prompt={state.questionnaire}
+              onSubmit={(answers) => controller.answerQuestionnaire(answers)}
+              onSkip={() => controller.skipQuestionnaire()}
+            />
+          )}
+          {state.approval && !state.questionnaire && (
+            <ApprovalPanel
+              approval={state.approval}
+              onApprove={(decision) => controller.approve(decision)}
+            />
+          )}
+          {state.tasks.length > 0 && !state.questionnaire && dismissedTray !== trayKey && (
+            <TaskTray
+              tasks={state.tasks}
+              running={running}
+              onOpen={() => setTasksOpen(true)}
+              onDismiss={() => setDismissedTray(trayKey)}
+            />
+          )}
+        </div>
 
         <Composer
           ref={composerRef}
@@ -435,7 +462,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           onFocusComposer={captureThread}
           onSubmit={send}
           onStop={() => void stop()}
-          onToast={setToast}
+          onToast={showToast}
           onPreviewAttachment={setPreview}
         />
       </div>
@@ -445,7 +472,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           controller={controller}
           state={state}
           onClose={() => setChatsOpen(false)}
-          onError={setToast}
+          onError={showToast}
         />
       )}
       {tasksOpen && (
@@ -453,7 +480,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           controller={controller}
           tasks={state.tasks}
           onClose={() => setTasksOpen(false)}
-          onToast={setToast}
+          onToast={showToast}
         />
       )}
       {settingsOpen && (
@@ -465,7 +492,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
             setSettingsOpen(false);
             setPiSettingsOpen(true);
           }}
-          onToast={setToast}
+          onToast={showToast}
         />
       )}
       {piSettingsOpen && (
@@ -478,7 +505,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
             setSettingsOpen(true);
           }}
           onPanel={setCommandPanel}
-          onToast={setToast}
+          onToast={showToast}
         />
       )}
       {configView && (
@@ -497,7 +524,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
         <CommandResultSheet
           panel={commandPanel}
           onClose={() => setCommandPanel(null)}
-          onToast={setToast}
+          onToast={showToast}
         />
       )}
       {treeMode && (
@@ -505,12 +532,11 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           controller={controller}
           mode={treeMode}
           onClose={() => setTreeMode(null)}
-          onError={setToast}
+          onError={showToast}
           onRestorePrompt={(text) => composerRef.current?.setText(text)}
         />
       )}
       {preview && <AttachmentPreviewSheet file={preview} onClose={() => setPreview(null)} />}
-      {toast && <Toast message={toast} onDone={() => setToast("")} />}
     </div>
   );
 }
@@ -557,15 +583,11 @@ function ChatSheet({
     <Sheet class="chats" onClose={onClose}>
       {(close) => (
         <>
-          <div class="sheet-handle" />
           <header class="sheet-header chats-header">
             <h2>Sessions{chats.length > 0 && <small>{chats.length}</small>}</h2>
             <div class="sheet-header-actions">
               <button type="button" onClick={() => startNew(close)} aria-label="New session">
                 <Plus size={16} strokeWidth={2} />
-              </button>
-              <button type="button" onClick={close} aria-label="Close">
-                <X size={16} strokeWidth={2} />
               </button>
             </div>
           </header>
@@ -731,11 +753,9 @@ function ProjectFilter({
 function EmptyState({
   hasWorkspace,
   onPrompt,
-  onSettings,
 }: {
   hasWorkspace: boolean;
   onPrompt: (value: string) => void;
-  onSettings: () => void;
 }) {
   const suggestions = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -769,9 +789,6 @@ function EmptyState({
           >
             Review the open file
           </button>
-          <button type="button" onClick={onSettings}>
-            Add a provider key
-          </button>
         </div>
       )}
     </section>
@@ -798,17 +815,22 @@ function SettingsSheet({
       : providers[0]!.id,
   );
   const [key, setKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
   const [authPromptValue, setAuthPromptValue] = useState("");
-  const [connected, setConnected] = useState(false);
+  const connected = useProviderCredential(controller, providerId, state.settings.customEndpoints);
   const [endpointView, setEndpointView] = useState<{ endpoint?: CustomEndpoint } | null>(null);
   useEffect(() => {
-    void controller.hasCredential(providerId).then(setConnected);
-  }, [controller, providerId, state.authFlow?.status]);
+    setKey("");
+    setShowKey(false);
+  }, [providerId, connected]);
   const provider = providers.find((item) => item.id === providerId) ?? providers[0]!;
   const selectedEndpoint = state.settings.customEndpoints.find(
     (endpoint) => endpoint.id === providerId,
   );
   const authFlow = state.authFlow?.providerId === providerId ? state.authFlow : undefined;
+  const signingIn = authFlow?.status === "waiting" || authFlow?.status === "connecting";
+  const canContinueSignIn =
+    authFlow?.status === "waiting" && authFlow.browserReturned && Boolean(authFlow.verificationUri);
   const authPromptKey = `${providerId}:${authFlow?.prompt?.type ?? ""}:${authFlow?.prompt?.message ?? ""}`;
   useEffect(() => setAuthPromptValue(""), [authPromptKey]);
   useBackAction(
@@ -817,7 +839,7 @@ function SettingsSheet({
     Boolean(endpointView),
   );
   return (
-    <Sheet onClose={onClose}>
+    <Sheet class="provider-access" onClose={onClose}>
       {(close) =>
         endpointView ? (
           <>
@@ -831,9 +853,6 @@ function SettingsSheet({
                 <ChevronLeft size={20} strokeWidth={2} />
               </button>
               <h2>{endpointView.endpoint ? "Edit endpoint" : "Local endpoint"}</h2>
-              <button type="button" onClick={close} aria-label="Close">
-                <X size={16} strokeWidth={2} />
-              </button>
             </header>
             <EndpointForm
               controller={controller}
@@ -855,110 +874,137 @@ function SettingsSheet({
           <>
             <header class="sheet-header">
               <h2>Provider access</h2>
-              <button type="button" onClick={close} aria-label="Close">
-                <X size={16} strokeWidth={2} />
-              </button>
             </header>
 
-            <label class="field-label">Provider</label>
-            <div class="provider-list">
-              {providers.map((item) => (
-                <button
-                  class={providerId === item.id ? "selected" : ""}
-                  type="button"
-                  key={item.id}
-                  onClick={() => setProviderId(item.id)}
-                >
-                  {item.name}
-                </button>
-              ))}
-              <button type="button" onClick={() => setEndpointView({})}>
-                Custom
-              </button>
-            </div>
+            <Combobox
+              label="Provider"
+              value={providerId}
+              options={[
+                ...providers.map((item) => ({ value: item.id, label: item.name })),
+                { value: "", label: "Add custom endpoint…" },
+              ]}
+              onChange={(next) => {
+                if (next) setProviderId(next);
+                else setEndpointView({});
+              }}
+            />
 
-            <div class="credential">
-              <p class={connected ? "ok" : ""}>
-                {connected ? `${provider.name} is connected` : `Add a ${provider.name} credential`}
-              </p>
-              {provider.apiKey && (
-                <>
-                  <div class="key-input">
-                    <input
-                      type="password"
-                      value={key}
-                      placeholder={connected ? "Replacement key" : provider.keyPlaceholder}
-                      onInput={(event) => setKey(event.currentTarget.value)}
-                    />
-                    <button
-                      type="button"
-                      disabled={!key.trim()}
-                      onClick={() =>
-                        void controller
-                          .saveApiKey(providerId, key)
-                          .then(async () => {
-                            setKey("");
-                            setConnected(await controller.hasCredential(providerId));
-                            await controller.selectProvider(providerId);
-                            onToast("Credential saved");
-                          })
-                          .catch((error) => onToast(String(error)))
-                      }
-                    >
-                      Save
-                    </button>
-                  </div>
-                  {provider.keyUrl && (
-                    <a
-                      href={provider.keyUrl}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        void openCustomTab(provider.keyUrl!).catch((error) =>
-                          onToast(error instanceof Error ? error.message : String(error)),
-                        );
-                      }}
-                    >
-                      Get an API key
-                    </a>
-                  )}
-                </>
+            <div class={`credential${connected && !signingIn ? " connected" : ""}`}>
+              {!signingIn && (
+                <p class={connected ? "ok" : ""} role="status">
+                  {connected === undefined
+                    ? "Checking connection…"
+                    : connected
+                      ? `${provider.name} is connected`
+                      : `Connect to ${provider.name}`}
+                </p>
               )}
-              {provider.subscriptionLabel && (
+              {provider.apiKey &&
+                connected === false &&
+                !signingIn &&
+                (!provider.subscriptionLabel || showKey) && (
+                  <>
+                    <div class="key-input">
+                      <input
+                        type="password"
+                        aria-label={`${provider.name} API key`}
+                        autoComplete="off"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellcheck={false}
+                        value={key}
+                        placeholder={provider.keyPlaceholder}
+                        onInput={(event) => setKey(event.currentTarget.value)}
+                      />
+                      <button
+                        type="button"
+                        disabled={!key.trim()}
+                        onClick={() =>
+                          void controller
+                            .saveApiKey(providerId, key)
+                            .then(async () => {
+                              setKey("");
+                              await controller.selectProvider(providerId);
+                              onToast("Credential saved");
+                            })
+                            .catch((error) => onToast(String(error)))
+                        }
+                      >
+                        Save
+                      </button>
+                    </div>
+                    {provider.keyUrl && (
+                      <a
+                        href={provider.keyUrl}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          void openCustomTab(provider.keyUrl!).catch((error) =>
+                            onToast(error instanceof Error ? error.message : String(error)),
+                          );
+                        }}
+                      >
+                        Get an API key
+                      </a>
+                    )}
+                  </>
+                )}
+              {provider.subscriptionLabel && (connected === false || signingIn) && !showKey && (
                 <div class="subscription">
                   <button
                     type="button"
-                    disabled={authFlow?.status === "waiting"}
-                    onClick={() =>
+                    aria-live="polite"
+                    disabled={signingIn && !canContinueSignIn}
+                    onClick={() => {
+                      if (canContinueSignIn) {
+                        void (async () => {
+                          if (authFlow.userCode) await copyText(authFlow.userCode);
+                          await controller.openSignIn();
+                        })().catch((error) => onToast(String(error)));
+                        return;
+                      }
                       void controller
                         .loginSubscription(providerId)
-                        .then(async () => {
-                          setConnected(await controller.hasCredential(providerId));
-                          onToast(`${provider.name} connected`);
+                        .then(() => {
+                          if (
+                            controller.state.authFlow?.providerId === providerId &&
+                            controller.state.authFlow.status === "connected"
+                          )
+                            onToast(`${provider.name} connected`);
                         })
                         .catch((error) =>
                           onToast(error instanceof Error ? error.message : String(error)),
-                        )
-                    }
+                        );
+                    }}
                   >
-                    {authFlow?.status === "waiting" ? "Waiting…" : provider.subscriptionLabel}
+                    {authFlow?.status === "connecting"
+                      ? "Connecting…"
+                      : authFlow?.status === "waiting" && !canContinueSignIn
+                        ? "Authenticating…"
+                        : canContinueSignIn
+                          ? authFlow.userCode
+                            ? "Copy code & sign in"
+                            : "Continue sign-in"
+                          : provider.subscriptionLabel}
                   </button>
+                  {!signingIn && providerId === "github-copilot" && (
+                    <button
+                      type="button"
+                      class="text-button"
+                      onClick={() => {
+                        void controller
+                          .loginSubscription(providerId, false, true)
+                          .catch((error) =>
+                            onToast(error instanceof Error ? error.message : String(error)),
+                          );
+                      }}
+                    >
+                      Other sign-in options
+                    </button>
+                  )}
                   {authFlow && (
                     <div class={`device ${authFlow.status}`}>
                       {authFlow.userCode && <code>{authFlow.userCode}</code>}
-                      {providerId === "openai-codex" && authFlow.prompt?.type === "manual_code" ? (
-                        <div class="auth-walkthrough">
-                          <b>Finish connecting ChatGPT</b>
-                          <ol>
-                            <li>Complete sign-in in your browser.</li>
-                            <li>On the final page, copy the full link from the address bar.</li>
-                            <li>Return here, paste the link below, and connect.</li>
-                          </ol>
-                          <p>
-                            The final page may say “localhost can’t be reached”. Your sign-in is
-                            still valid; the link completes the connection.
-                          </p>
-                        </div>
-                      ) : (
+                      {(authFlow.prompt || authFlow.verificationUri || !signingIn) && (
                         <p role="status">{authFlow.message}</p>
                       )}
                       {authFlow.prompt && (
@@ -969,18 +1015,18 @@ function SettingsSheet({
                           onSubmit={(value) => controller.submitSubscriptionPrompt(value)}
                         />
                       )}
-                      {authFlow.verificationUri && (
+                      {signingIn && (
                         <button
                           type="button"
-                          onClick={() =>
-                            void controller.openSignIn().catch((error) => onToast(String(error)))
-                          }
+                          onClick={() => {
+                            const flow = controller.state.authFlow;
+                            if (
+                              flow?.providerId === providerId &&
+                              (flow.status === "waiting" || flow.status === "connecting")
+                            )
+                              controller.cancelSubscriptionLogin();
+                          }}
                         >
-                          Open sign-in
-                        </button>
-                      )}
-                      {authFlow.status === "waiting" && (
-                        <button type="button" onClick={() => controller.cancelSubscriptionLogin()}>
                           Cancel
                         </button>
                       )}
@@ -988,7 +1034,15 @@ function SettingsSheet({
                   )}
                 </div>
               )}
-              {connected && (
+              {provider.apiKey &&
+                provider.subscriptionLabel &&
+                connected === false &&
+                !signingIn && (
+                  <button class="text-button" type="button" onClick={() => setShowKey(!showKey)}>
+                    {showKey ? "Use account sign-in" : "Use API key instead"}
+                  </button>
+                )}
+              {connected && !signingIn && (
                 <button
                   class="text-button"
                   type="button"
@@ -996,7 +1050,6 @@ function SettingsSheet({
                     void controller
                       .removeCredential(providerId)
                       .then(() => {
-                        setConnected(false);
                         onToast(`${provider.name} removed`);
                       })
                       .catch((error) => onToast(String(error)))
@@ -1070,7 +1123,7 @@ function SubscriptionPrompt({
       </div>
     );
   }
-  const required = prompt.type === "manual_code" || prompt.type === "secret";
+  const required = prompt.type === "secret";
   return (
     <form
       class="auth-prompt-input"
@@ -1083,7 +1136,7 @@ function SubscriptionPrompt({
         type={prompt.type === "secret" ? "password" : "text"}
         value={value}
         placeholder={prompt.placeholder}
-        aria-label={prompt.type === "manual_code" ? "Sign-in return link or code" : prompt.message}
+        aria-label={prompt.message}
         autoComplete="off"
         spellcheck={false}
         autoCapitalize="none"
@@ -1091,7 +1144,7 @@ function SubscriptionPrompt({
         onInput={(event) => onValue(event.currentTarget.value)}
       />
       <button type="submit" disabled={required && !value.trim()}>
-        {prompt.type === "manual_code" ? "Connect account" : "Continue"}
+        Continue
       </button>
     </form>
   );
@@ -1132,17 +1185,13 @@ function PiSettingsSheet({
   };
   return (
     <Sheet class="pi-settings" onClose={onClose}>
-      {(close) => (
+      {() => (
         <>
-          <div class="sheet-handle" />
           <header class="sheet-header">
             <div>
               <h2>Pi settings</h2>
               <small>Pi defaults are used unless changed here</small>
             </div>
-            <button type="button" onClick={close} aria-label="Close">
-              <X size={16} strokeWidth={2} />
-            </button>
           </header>
           <div class="pi-settings-body">
             <SettingsToggle
@@ -1330,9 +1379,8 @@ function AttachmentPreviewSheet({
   const body = file.encoding === "base64" ? "Binary attachment." : file.content;
   return (
     <Sheet class="command-result attachment-preview" onClose={onClose}>
-      {(close) => (
+      {() => (
         <>
-          <div class="sheet-handle" />
           <header class="sheet-header">
             <div>
               <h2>{file.name}</h2>
@@ -1340,9 +1388,6 @@ function AttachmentPreviewSheet({
             </div>
             <div class="sheet-header-actions">
               <CopyButton getText={() => body} label="Copy pasted content" />
-              <button type="button" onClick={close} aria-label="Close">
-                <X size={16} strokeWidth={2} />
-              </button>
             </div>
           </header>
           <div class="command-result-body">
@@ -1370,17 +1415,13 @@ function CommandResultSheet({
   };
   return (
     <Sheet class="command-result" onClose={onClose}>
-      {(close) => (
+      {() => (
         <>
-          <div class="sheet-handle" />
           <header class="sheet-header">
             <div>
               <h2>{panel.title}</h2>
               {panel.description && <small>{panel.description}</small>}
             </div>
-            <button type="button" onClick={close} aria-label="Close">
-              <X size={16} strokeWidth={2} />
-            </button>
           </header>
           <div class="command-result-body">
             {panel.rows?.map((row) => (
@@ -1450,7 +1491,6 @@ function ConfigSheet({
     <Sheet class={`config${view === "main" ? "" : " picker"}`} onClose={onClose}>
       {(close) => (
         <>
-          <div class="sheet-handle" />
           <div ref={bodyRef} class="sheet-view">
             {view === "providers" ? (
               <>
@@ -1464,9 +1504,6 @@ function ConfigSheet({
                     <ChevronLeft size={20} strokeWidth={2} />
                   </button>
                   <h2>Provider</h2>
-                  <button type="button" onClick={close} aria-label="Close">
-                    <X size={16} strokeWidth={2} />
-                  </button>
                 </header>
                 <div class="picker-body">
                   <ProviderPicker
@@ -1492,9 +1529,6 @@ function ConfigSheet({
                     <ChevronLeft size={20} strokeWidth={2} />
                   </button>
                   <h2>{editing && editing !== "new" ? "Edit endpoint" : "Local endpoint"}</h2>
-                  <button type="button" onClick={close} aria-label="Close">
-                    <X size={16} strokeWidth={2} />
-                  </button>
                 </header>
                 <div class="picker-body">
                   <EndpointForm
@@ -1518,9 +1552,6 @@ function ConfigSheet({
                     <ChevronLeft size={20} strokeWidth={2} />
                   </button>
                   <h2>Model</h2>
-                  <button type="button" onClick={close} aria-label="Close">
-                    <X size={16} strokeWidth={2} />
-                  </button>
                 </header>
                 <div class="picker-body">
                   <ModelPicker controller={controller} state={state} onPicked={close} />
@@ -1530,9 +1561,6 @@ function ConfigSheet({
               <>
                 <header class="sheet-header">
                   <h2>Session</h2>
-                  <button type="button" onClick={close} aria-label="Close">
-                    <X size={16} strokeWidth={2} />
-                  </button>
                 </header>
                 <div class="config-row">
                   <div>
@@ -1888,13 +1916,13 @@ function ModelPicker({
       <div class="custom-model">
         <input
           class="model-search"
-          autoFocus
           type="search"
+          aria-label="Search models or enter a model id"
           value={query}
           placeholder={
             state.settings.providerId === "openrouter"
               ? "Search or paste anthropic/claude-sonnet-4.6"
-              : `Search ${state.models.length} models or paste an id`
+              : `Search ${state.models.length} models`
           }
           onInput={(event) => {
             setQuery(event.currentTarget.value);
@@ -1914,7 +1942,7 @@ function ModelPicker({
       <p class="custom-model-hint">
         {endpoint
           ? `Local OpenAI-compatible at ${endpoint.baseUrl}. Paste a model id or load GET /models.`
-          : "Bundled catalog may lag the provider. Any valid model id works."}
+          : "Choose a model, or enter its ID above."}
       </p>
       {endpoint && (
         <button
@@ -2045,28 +2073,6 @@ function JumpLatest({ visible, onJump }: { visible: boolean; onJump: () => void 
     >
       <ArrowDownToLine size={18} strokeWidth={2} aria-hidden="true" />
     </button>
-  );
-}
-
-function Toast({ message, onDone }: { message: string; onDone: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    void fadeInUp(element);
-    const hide = window.setTimeout(() => {
-      void playMotion(
-        element,
-        { opacity: 0, transform: "translateY(8px)" },
-        { duration: 0.16, ease: "easeIn" },
-      ).then(onDone);
-    }, 2400);
-    return () => window.clearTimeout(hide);
-  }, [message]);
-  return (
-    <div ref={ref} class="agent-toast" role="status">
-      {message}
-    </div>
   );
 }
 

@@ -1,5 +1,4 @@
 import {
-  Bot,
   ChevronDown,
   ExternalLink,
   Folder,
@@ -16,6 +15,8 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import type { AgentController } from "../../app/agentController";
 import type { ChatSummary, PublicAgentState, WorkspaceInfo } from "../../core/types";
 import { pickAcodeSelect } from "../../platform/acodeSelect";
+import { showToast } from "../../platform/toast";
+import { AgentIcon } from "../AgentIcon";
 
 type Props = {
   controller: AgentController;
@@ -43,7 +44,6 @@ export function SidebarApp({
   const [sessionsOpen, setSessionsOpen] = useState(true);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ kind: "error" | "success"; text: string } | null>(null);
 
   useEffect(() => controller.changes.subscribe(setState), [controller]);
   const workspaces = controller.workspaces;
@@ -66,11 +66,10 @@ export function SidebarApp({
   const run = async (key: string, action: () => Promise<void>) => {
     if (pending) return;
     setPending(key);
-    setNotice(null);
     try {
       await action();
     } catch (error) {
-      setNotice({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+      showToast(error instanceof Error ? error.message : String(error));
     } finally {
       setPending(null);
     }
@@ -93,7 +92,7 @@ export function SidebarApp({
   };
   const startInOpenProject = () => {
     if (!workspaces.length) {
-      setNotice({ kind: "error", text: "Open a project in Acode first." });
+      showToast("Open a project in Acode first.");
       return;
     }
     if (workspaces.length === 1) {
@@ -117,7 +116,7 @@ export function SidebarApp({
     <div class="acode-agent-sidebar">
       <header class="as-head">
         <div class="as-mark">
-          <Bot size={16} strokeWidth={2} />
+          <AgentIcon size={18} />
         </div>
         <div>
           <b>AI Agent</b>
@@ -216,7 +215,7 @@ export function SidebarApp({
             void run("project", async () => {
               const workspace = await onCreateProject();
               setScope(workspace.id);
-              setNotice({ kind: "success", text: `${workspace.name} created in Home.` });
+              showToast(`${workspace.name} created in Home.`);
             })
           }
         >
@@ -337,7 +336,7 @@ export function SidebarApp({
                 </div>
               ) : (
                 <div class="as-empty-sessions">
-                  <Bot size={18} />
+                  <AgentIcon size={18} />
                   <p>{query ? "No matching sessions." : "No sessions in this scope."}</p>
                 </div>
               )}
@@ -345,13 +344,6 @@ export function SidebarApp({
           ) : null}
         </section>
       </div>
-
-      {notice ? (
-        <button type="button" class={`as-notice ${notice.kind}`} onClick={() => setNotice(null)}>
-          <span>{notice.text}</span>
-          <X size={13} />
-        </button>
-      ) : null}
     </div>
   );
 }

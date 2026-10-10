@@ -8,8 +8,8 @@
   --muted: var(--secondary-text-color, #8b919a);
   --line: var(--border-color, color-mix(in srgb, var(--fg) 12%, transparent));
   --surface: var(--primary-color, #1b1e24);
-  --accent: var(--button-background, var(--active-color, #6aa4ff));
-  --accent-ink: var(--button-text, #0c1118);
+  --accent: var(--button-background-color, var(--button-background, var(--active-color, #6aa4ff)));
+  --accent-ink: var(--button-text-color, var(--button-text, #0c1118));
   --danger: #d46a6a;
   --ok: #6ea37a;
   position: absolute;
@@ -60,6 +60,15 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+}
+.agent-dock-panels {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.agent-dock > .composer {
+  flex: none;
 }
 
 .agent-header {
@@ -73,7 +82,6 @@
 }
 
 .chat-trigger,
-.workspace-select,
 .model-trigger {
   min-width: 0;
   height: 32px;
@@ -86,23 +94,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.chat-trigger,
-.model-trigger {
   position: relative;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
-.workspace-select {
-  color: var(--muted);
-  font-size: 12px;
-  appearance: none;
-  width: 100%;
-}
 .chat-trigger:hover,
 .model-trigger:hover,
-.workspace-select:hover,
 .icon-button:hover {
   background: var(--surface);
 }
@@ -118,11 +116,44 @@
   top: 6px;
   right: 6px;
 }
-.workspace-missing {
-  padding: 0 8px;
+.provider-setup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 12px 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.provider-setup > div {
+  flex: 1;
+  min-width: 0;
+}
+.provider-setup b,
+.provider-setup span {
+  display: block;
+}
+.provider-setup b {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.provider-setup div > span {
+  margin-top: 2px;
   color: var(--muted);
   font-size: 12px;
 }
+.provider-setup button {
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -1715,7 +1746,6 @@
   flex-direction: column;
   max-height: min(72%, 520px);
   overflow: hidden;
-  padding-top: 10px;
 }
 .sheet.tasks .sheet-header {
   flex: none;
@@ -2778,15 +2808,31 @@ span.file-glyph.file {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
 }
 .sheet-handle {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 28px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: var(--bg);
+  cursor: grab;
+  touch-action: none;
+}
+.sheet-handle span {
   width: 44px;
   height: 4px;
-  margin: 0 auto 12px;
   border-radius: 99px;
   background: var(--muted);
   opacity: 0.4;
 }
-.sheet.config {
-  padding-top: 10px;
+.sheet.dragging,
+.sheet.dragging :is(.sheet-handle, .sheet-header) {
+  cursor: grabbing;
 }
 .sheet.config.picker {
   display: grid;
@@ -2799,6 +2845,9 @@ span.file-glyph.file {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+}
+.sheet-view .sheet-header {
+  top: 0;
 }
 .picker-body {
   min-height: 0;
@@ -2851,6 +2900,9 @@ span.file-glyph.file {
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+.attachment-sources .config-nav {
+  grid-template-columns: 20px minmax(0, 1fr) 18px;
 }
 .config-nav:last-child {
   border-bottom: 0;
@@ -2989,7 +3041,7 @@ span.file-glyph.file {
   width: min(100%, 640px);
   max-height: 92%;
   overflow: auto;
-  padding: 14px 14px max(20px, env(safe-area-inset-bottom));
+  padding: 0 14px max(20px, env(safe-area-inset-bottom));
   border: 1px solid var(--line);
   border-bottom: 0;
   border-radius: 16px 16px 0 0;
@@ -3007,18 +3059,30 @@ span.file-glyph.file {
   grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   height: min(86%, 720px);
-  padding-top: 10px;
 }
 .sheet-header {
+  position: sticky;
+  top: 28px;
+  z-index: 4;
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 14px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
 }
 .sheet-header.with-back {
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) 32px;
   gap: 8px;
+}
+.sheet-header button,
+.sheet-header a {
+  touch-action: manipulation;
 }
 .sheet-header h2 {
   margin: 0;
@@ -3058,30 +3122,154 @@ span.file-glyph.file {
   color: var(--muted);
   font-size: 11px;
 }
-.provider-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
+.provider-access .credential :is(input, button) {
+  min-width: 0;
+  min-height: 48px;
+  border-radius: 10px;
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
-.provider-list button {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 6px 10px;
-  background: var(--surface);
+.provider-access .credential input {
+  font-size: 16px;
+}
+.combobox {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--muted);
   font-size: 12px;
+}
+.combobox-label {
+  width: max-content;
+}
+.combobox-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--fg);
+}
+.combobox-control:focus-within {
+  border-color: var(--accent);
+}
+.combobox-control input {
+  min-width: 0;
+  padding: 12px;
+  border: 0;
+  border-radius: 10px 0 0 10px;
+  outline: none;
+  background: transparent;
+  font-size: 16px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+.combobox-control input::placeholder {
+  color: var(--fg);
+  opacity: 1;
+}
+.combobox-control.open input::placeholder {
+  color: var(--muted);
+}
+.combobox .combobox-control input:focus-visible {
+  outline: none;
+}
+.combobox-control button {
+  display: grid;
+  place-items: center;
+  border-radius: 0 10px 10px 0;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
 }
-.provider-list button.selected {
-  border-color: var(--accent);
+.combobox-control.open svg {
+  transform: rotate(180deg);
+}
+.combobox-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 2;
+  max-height: min(240px, 35vh);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  overscroll-behavior: contain;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px #0005;
+}
+.model-list {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  overscroll-behavior: contain;
+}
+.combobox-list::-webkit-scrollbar,
+.model-list::-webkit-scrollbar {
+  width: 4px;
+}
+.combobox-list::-webkit-scrollbar-thumb,
+.model-list::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: var(--line);
+}
+.combobox-list::-webkit-scrollbar-track,
+.model-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.combobox-list button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.combobox-list button.highlighted,
+.combobox-list button:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.combobox-list button[aria-selected="true"] {
+  color: var(--accent);
+}
+.combobox-list p {
+  margin: 0;
+  padding: 12px 10px;
+  color: var(--muted);
+  font-size: 13px;
 }
 .credential {
   display: grid;
-  gap: 8px;
-  margin-bottom: 14px;
-  padding: 10px;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
+}
+.credential.connected {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+.provider-access .credential.connected .text-button {
+  width: auto;
+  padding: 8px 12px;
+  color: var(--fg);
+  background: var(--surface);
 }
 .credential p {
   margin: 0;
@@ -3102,7 +3290,8 @@ span.file-glyph.file {
 .key-input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  align-items: stretch;
+  gap: 8px;
 }
 .key-input input,
 .model-search {
@@ -3124,6 +3313,26 @@ span.file-glyph.file {
   font-weight: 650;
   cursor: pointer;
 }
+.provider-access :is(select, input, button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.provider-access :is(.subscription > button, .device > button, .text-button) {
+  width: 100%;
+}
+.provider-access button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.device > button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
 .subscription {
   display: grid;
   gap: 8px;
@@ -3133,6 +3342,8 @@ span.file-glyph.file {
   gap: 6px;
 }
 .device code {
+  user-select: text;
+  -webkit-user-select: text;
   width: max-content;
   padding: 4px 8px;
   background: var(--surface);
@@ -3140,26 +3351,6 @@ span.file-glyph.file {
     700 16px ui-monospace,
     monospace;
   letter-spacing: 0.08em;
-}
-.auth-walkthrough {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-.auth-walkthrough ol {
-  margin: 0;
-  padding-left: 20px;
-}
-.auth-walkthrough li + li {
-  margin-top: 6px;
-}
-.auth-walkthrough p {
-  margin: 0;
-  color: var(--muted);
 }
 .auth-prompt-input {
   display: grid;
@@ -3214,8 +3405,7 @@ span.file-glyph.file {
   font-size: 12px;
   line-height: 1.5;
 }
-.text-button,
-.device button {
+.text-button {
   width: max-content;
   border: 0;
   padding: 0;
@@ -3425,7 +3615,7 @@ span.file-glyph.file {
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   height: min(94%, 820px);
   overflow: hidden;
-  padding: 10px 12px 0;
+  padding: 0 12px;
 }
 .tree-sheet .sheet-header {
   margin-bottom: 8px;
@@ -3747,8 +3937,12 @@ button.tree-gutter {
 .custom-model .model-search {
   width: 100%;
   margin: 0;
+  min-height: 44px;
+  font-size: 16px;
+  color: var(--fg);
 }
 .custom-model button {
+  min-height: 44px;
   border: 0;
   border-radius: 8px;
   padding: 0 12px;
@@ -3759,7 +3953,9 @@ button.tree-gutter {
   cursor: pointer;
 }
 .custom-model button:disabled {
-  opacity: 0.35;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: default;
 }
 .custom-model-hint,
 .custom-model-error {
@@ -3797,6 +3993,9 @@ button.tree-gutter {
 .model-row.selected > button:first-child {
   border-color: var(--accent);
 }
+.model-row > button > span {
+  min-width: 0;
+}
 .model-row b,
 .model-row code {
   display: block;
@@ -3816,7 +4015,8 @@ button.tree-gutter {
 .model-row small {
   display: grid;
   place-items: center;
-  width: 16px;
+  min-width: 16px;
+  width: max-content;
   height: 16px;
   color: var(--muted);
   font-size: 11px;
@@ -4096,22 +4296,6 @@ label.project-select:hover {
   color: var(--danger);
   font-size: 12px;
   font-weight: 650;
-}
-
-.agent-toast {
-  position: absolute;
-  z-index: 50;
-  left: 14px;
-  right: 14px;
-  bottom: 88px;
-  width: max-content;
-  max-width: calc(100% - 28px);
-  margin-inline: auto;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  font-size: 12px;
 }
 
 @keyframes work-enter {

@@ -32,3 +32,21 @@ test("compaction defaults come from Pi instead of a local copy", () => {
   expect(parseSettings({}).customEndpoints).toEqual([]);
   expect(DEFAULT_SETTINGS.customEndpoints).toEqual([]);
 });
+
+test("retired Acode selections fall back to OpenRouter without changing other settings", () => {
+  expect(DEFAULT_SETTINGS.providerId).toBe("openrouter");
+  expect(parseSettings({}).providerId).toBe("openrouter");
+  for (const modelId of ["free", "deepseek-paid"]) {
+    expect(
+      parseSettings({ providerId: "acode", modelId, permissionMode: "allow-edits" }),
+    ).toMatchObject({
+      providerId: DEFAULT_SETTINGS.providerId,
+      modelId: DEFAULT_SETTINGS.modelId,
+      permissionMode: "allow-edits",
+    });
+  }
+  expect(parseSettings({ providerId: "openai", modelId: "gpt-custom" })).toMatchObject({
+    providerId: "openai",
+    modelId: "gpt-custom",
+  });
+});

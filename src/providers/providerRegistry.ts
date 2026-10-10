@@ -36,11 +36,10 @@ import {
 } from "./customEndpoints";
 import { createCustomModel, mergeCustomModels, sanitizeModelId } from "./customModels";
 import {
-  // portableAnthropicOAuth,
   portableCodexOAuth,
   portableGitHubCopilotOAuth,
   portableKimiOAuth,
-  portableOpenRouterOAuth,
+  createPortableOpenRouterOAuth,
   portableXaiOAuth,
   refreshPortableCodexModels,
 } from "./portableOAuth";
@@ -96,7 +95,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     name: "GitHub Copilot",
     hint: "Copilot subscription",
     apiKey: false,
-    subscriptionLabel: "Connect GitHub Copilot",
+    subscriptionLabel: "Sign in with GitHub Copilot",
   },
   {
     id: "google",
@@ -113,7 +112,7 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     keyPlaceholder: "xai-…",
     keyUrl: "https://console.x.ai",
     apiKey: true,
-    subscriptionLabel: "Connect Grok / X subscription",
+    subscriptionLabel: "Sign in with Grok",
   },
   {
     id: "groq",
@@ -181,12 +180,12 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
   },
   {
     id: "kimi-coding",
-    name: "Kimi Coding",
+    name: "Kimi Code",
     hint: "API key or Kimi Code subscription",
     keyPlaceholder: "sk-…",
     keyUrl: "https://www.kimi.com",
     apiKey: true,
-    subscriptionLabel: "Connect Kimi Code",
+    subscriptionLabel: "Sign in with Kimi Code",
   },
   {
     id: "qwen-token-plan",
@@ -257,7 +256,7 @@ export class ProviderRegistry {
         fileExists: async () => false,
       },
     });
-    for (const provider of portableProviders()) {
+    for (const provider of portableProviders(credentials)) {
       const catalog = withRemoteCatalog(provider, catalogStore);
       this.#catalogs.set(provider.id, catalog);
       models.setProvider(catalog.provider);
@@ -457,7 +456,7 @@ export class ProviderRegistry {
   }
 }
 
-function portableProviders(): Provider[] {
+function portableProviders(credentials: PortableCredentialStore): Provider[] {
   const openrouter = openrouterProvider();
   const anthropic = anthropicProvider();
   const githubCopilot = githubCopilotProvider();
@@ -465,11 +464,13 @@ function portableProviders(): Provider[] {
   const codex = openaiCodexProvider();
   const kimi = kimiCodingProvider();
   return [
-    { ...openrouter, auth: { ...openrouter.auth, oauth: portableOpenRouterOAuth } },
+    {
+      ...openrouter,
+      auth: { ...openrouter.auth, oauth: createPortableOpenRouterOAuth(credentials) },
+    },
     openaiProvider(),
     { ...codex, auth: { ...codex.auth, oauth: portableCodexOAuth } },
     // Drop pi's built-in Claude Pro / Max OAuth too; Anthropic policy disallows it here.
-    // { ...anthropic, auth: { ...anthropic.auth, oauth: portableAnthropicOAuth } },
     { ...anthropic, auth: { ...anthropic.auth, oauth: undefined } },
     { ...githubCopilot, auth: { ...githubCopilot.auth, oauth: portableGitHubCopilotOAuth } },
     googleProvider(),

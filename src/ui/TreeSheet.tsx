@@ -1,4 +1,4 @@
-import { Copy, LocateFixed, Search, X } from "lucide-preact";
+import { Copy, LocateFixed, Search } from "lucide-preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../app/agentController";
 import type { SessionTreeItem } from "../core/types";
@@ -176,7 +176,6 @@ export function TreeSheet({
     <Sheet class="tree-sheet" onClose={onClose}>
       {(close) => (
         <>
-          <div class="sheet-handle" />
           <header class="sheet-header">
             <div>
               <h2>{mode === "fork" ? "Fork session" : "Session tree"}</h2>
@@ -194,9 +193,6 @@ export function TreeSheet({
                   <LocateFixed size={16} strokeWidth={2} />
                 </button>
               )}
-              <button type="button" onClick={close} aria-label="Close">
-                <X size={16} strokeWidth={2} />
-              </button>
             </div>
           </header>
           <div class="tree-controls">

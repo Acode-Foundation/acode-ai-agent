@@ -113,6 +113,11 @@ export function parseSettings(value: unknown): ParsedSettings & Record<string, u
       : {};
   const parsed: Record<string, unknown> = { ...input };
   for (const [key, field] of Object.entries(settingsFields)) parsed[key] = field(input[key]);
+  // Move saved selections off the retired account provider.
+  if (parsed.providerId === "acode") {
+    parsed.providerId = settingsFields.providerId(undefined);
+    parsed.modelId = settingsFields.modelId(undefined);
+  }
   return parsed as ParsedSettings & Record<string, unknown>;
 }
 

@@ -1,5 +1,6 @@
 import { fileName } from "../workspace/fileMentions";
 import { imageContentFromBytes, mimeFromName } from "./promptImages";
+import { detectSupportedImageMimeType } from "../tools/textFiles";
 import type { DraftImage } from "../ui/composerDraft";
 
 type DocumentPick = {
@@ -19,10 +20,32 @@ function sdcard(): SDcard | undefined {
   }
 }
 
+export function isIOSHost(): boolean {
+  const native = globalThis as {
+    Bridge?: { platformId?: string };
+    cordova?: { platformId?: string };
+  };
+  return (native.Bridge ?? native.cordova)?.platformId === "ios";
+}
+
 export async function pickDeviceImage(autoResize = true): Promise<DraftImage | undefined> {
   const picked = await pickWithSDcard();
   if (!picked) return undefined;
+  if (!picked.mime) {
+    // Android gallery URIs can end in a numeric ID instead of the image's filename.
+    try {
+      const stat = (await acode.fsOperation(picked.uri).stat()) as Acode.Stat & { type?: string };
+      picked.name = stat.name || picked.name;
+      picked.mime =
+        (stat.type?.startsWith("image/") ? stat.type : mimeFromName(picked.name, "")) || undefined;
+    } catch {
+      // Some gallery providers allow reading the image but do not expose metadata.
+    }
+  }
   const bytes = await readPickedBytes(picked.uri);
+  // Providers may report a generic type such as application/octet-stream; trust the bytes then.
+  if (!picked.mime?.startsWith("image/"))
+    picked.mime = detectSupportedImageMimeType(bytes) ?? picked.mime;
   const image = await imageContentFromBytes(bytes, picked.name, picked.mime, autoResize);
   return { ...image, id: newId(), name: picked.name, uri: picked.uri };
 }
@@ -74,7 +97,8 @@ function pickWithSDcard(): Promise<{ uri: string; name: string; mime?: string } 
       }
       reject(error instanceof Error ? error : new Error(String(error)));
     };
-    api.openDocumentFile(ok, fail, "image/*");
+    if (api.getImage) api.getImage(ok, fail, "image/*");
+    else api.openDocumentFile(ok, fail, "image/*");
   });
 }
 
@@ -84,7 +108,9 @@ function normalizePick(
   if (typeof value === "string") {
     if (!value) return undefined;
     return {
-      uri: value,
+      uri: value.startsWith("/")
+        ? `file://${encodeURI(value).replace(/#/g, "%23").replace(/\?/g, "%3F")}`
+        : value,
       name: fileNameFromUri(value),
       mime: mimeFromName(fileNameFromUri(value), "") || undefined,
     };

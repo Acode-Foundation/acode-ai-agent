@@ -192,7 +192,8 @@ export type PublicAgentState = {
   activeChatId?: string;
   authFlow?: {
     providerId: ProviderId;
-    status: "waiting" | "connected" | "error";
+    status: "waiting" | "connecting" | "connected" | "error";
+    browserReturned?: boolean;
     userCode?: string;
     verificationUri?: string;
     message?: string;

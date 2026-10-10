@@ -3,6 +3,11 @@ declare module "*.css" {
   export default content;
 }
 
+declare module "*.svg" {
+  const content: string;
+  export default content;
+}
+
 interface SDcardDocumentFile {
   uri: string;
   url?: string;

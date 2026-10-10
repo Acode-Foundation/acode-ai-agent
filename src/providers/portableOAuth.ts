@@ -1,19 +1,10 @@
 import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
+import type { PortableCredentialStore } from "../platform/credentials";
+import { OPENROUTER_CALLBACK_URL, waitForOpenRouterCallback } from "../platform/oauthCallback";
 import { sanitizeModelId } from "./customModels";
 
 const OAUTH_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
-
-// Claude Pro / Max sign-in is disabled: Anthropic's policy does not allow third-party
-// apps to use Claude subscription OAuth. Anthropic is API-key only.
-/*
-const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
-const ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
-const ANTHROPIC_REDIRECT_URI = "http://localhost:53692/callback";
-const ANTHROPIC_SCOPES =
-  "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
-*/
 
 const GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98";
 const GITHUB_HEADERS = {
@@ -29,7 +20,6 @@ const KIMI_AUTH_BASE = "https://auth.kimi.com";
 
 const OPENROUTER_AUTHORIZE_URL = "https://openrouter.ai/auth";
 const OPENROUTER_TOKEN_URL = "https://openrouter.ai/api/v1/auth/keys";
-const OPENROUTER_REDIRECT_URI = "http://localhost/oauth/callback";
 
 const XAI_CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access";
@@ -38,9 +28,7 @@ const XAI_TOKEN_URL = "https://auth.x.ai/oauth2/token";
 
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_AUTH_BASE = "https://auth.openai.com";
-const CODEX_AUTHORIZE_URL = `${CODEX_AUTH_BASE}/oauth/authorize`;
 const CODEX_TOKEN_URL = `${CODEX_AUTH_BASE}/oauth/token`;
-const CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models?client_version=0.83.0";
 const CODEX_DEVICE_URL = `${CODEX_AUTH_BASE}/api/accounts/deviceauth/usercode`;
 const CODEX_DEVICE_TOKEN_URL = `${CODEX_AUTH_BASE}/api/accounts/deviceauth/token`;
@@ -50,70 +38,8 @@ const CODEX_ACCOUNT_CLAIM = "https://api.openai.com/auth";
 
 type Json = Record<string, unknown>;
 
-// Disabled: see the note on the ANTHROPIC_* constants above.
-/*
-export const portableAnthropicOAuth: OAuthAuth = {
-  name: "Anthropic (Claude Pro/Max)",
-  loginLabel: "Sign in with Claude Pro or Max",
-  async login(interaction) {
-    const { verifier, challenge } = await generatePkce();
-    const authUrl = new URL(ANTHROPIC_AUTHORIZE_URL);
-    authUrl.search = new URLSearchParams({
-      code: "true",
-      client_id: ANTHROPIC_CLIENT_ID,
-      response_type: "code",
-      redirect_uri: ANTHROPIC_REDIRECT_URI,
-      scope: ANTHROPIC_SCOPES,
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-      state: verifier,
-    }).toString();
-    interaction.notify({
-      type: "auth_url",
-      url: authUrl.href,
-      instructions:
-        "Finish signing in, then paste the final redirect URL or authorization code below.",
-    });
-    const input = await interaction.prompt({
-      type: "manual_code",
-      message: "Paste the final redirect URL or authorization code",
-      placeholder: `${ANTHROPIC_REDIRECT_URI}?code=…`,
-    });
-    const parsed = parseAuthorizationInput(input);
-    if (!parsed.code) throw new Error("Anthropic sign-in did not return an authorization code.");
-    if (parsed.state && parsed.state !== verifier)
-      throw new Error("Anthropic OAuth state mismatch.");
-    const token = await postJson(
-      ANTHROPIC_TOKEN_URL,
-      {
-        grant_type: "authorization_code",
-        client_id: ANTHROPIC_CLIENT_ID,
-        code: parsed.code,
-        state: parsed.state ?? verifier,
-        redirect_uri: ANTHROPIC_REDIRECT_URI,
-        code_verifier: verifier,
-      },
-      interaction.signal,
-    );
-    return standardOAuthCredential(token);
-  },
-  async refresh(credential, signal) {
-    const token = await postJson(
-      ANTHROPIC_TOKEN_URL,
-      {
-        grant_type: "refresh_token",
-        client_id: ANTHROPIC_CLIENT_ID,
-        refresh_token: credential.refresh,
-      },
-      signal,
-    );
-    return standardOAuthCredential(token, credential.refresh);
-  },
-  async toAuth(credential) {
-    return { apiKey: credential.access };
-  },
-};
-*/
+/** Abort reason that stops a browser sign-in but keeps its pending state for the next load. */
+export const SIGN_IN_SUSPENDED = new DOMException("Sign-in suspended", "AbortError");
 
 export const portableGitHubCopilotOAuth: OAuthAuth = {
   name: "GitHub Copilot",
@@ -153,6 +79,7 @@ export const portableGitHubCopilotOAuth: OAuthAuth = {
       intervalSeconds: interval,
       expiresInSeconds: expiresIn,
       signal: interaction.signal,
+      notify: interaction.notify,
       poll: async () => {
         const response = await postFormAllowError(
           urls.accessToken,
@@ -216,6 +143,7 @@ export const portableKimiOAuth: OAuthAuth = {
       intervalSeconds: interval,
       expiresInSeconds: expiresIn,
       signal: interaction.signal,
+      notify: interaction.notify,
       poll: async () => {
         const response = await postFormAllowError(
           `${KIMI_AUTH_BASE}/api/oauth/token`,
@@ -253,41 +181,7 @@ export const portableOpenRouterOAuth: OAuthAuth = {
   name: "OpenRouter OAuth",
   loginLabel: "Sign in with OpenRouter",
   async login(interaction) {
-    const { verifier, challenge } = await generatePkce();
-    const authUrl = new URL(OPENROUTER_AUTHORIZE_URL);
-    authUrl.search = new URLSearchParams({
-      callback_url: OPENROUTER_REDIRECT_URI,
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-    }).toString();
-    interaction.notify({
-      type: "auth_url",
-      url: authUrl.href,
-      instructions:
-        "Approve access, then paste the final redirect URL or authorization code below.",
-    });
-    const input = await interaction.prompt({
-      type: "manual_code",
-      message: "Paste the final redirect URL or authorization code",
-      placeholder: `${OPENROUTER_REDIRECT_URI}?code=…`,
-    });
-    const code = parseAuthorizationInput(input).code;
-    if (!code) throw new Error("OpenRouter sign-in did not return an authorization code.");
-    const token = await postJson(
-      OPENROUTER_TOKEN_URL,
-      {
-        code,
-        code_verifier: verifier,
-        code_challenge_method: "S256",
-      },
-      interaction.signal,
-    );
-    return {
-      type: "oauth",
-      access: requiredString(token, "key"),
-      refresh: "",
-      expires: Number.MAX_SAFE_INTEGER,
-    };
+    return loginOpenRouter(interaction);
   },
   async refresh(credential) {
     return credential;
@@ -329,6 +223,7 @@ export const portableXaiOAuth: OAuthAuth = {
       intervalSeconds: interval,
       expiresInSeconds: expiresIn,
       signal: interaction.signal,
+      notify: interaction.notify,
       poll: async () => {
         const token = await postFormAllowError(
           XAI_TOKEN_URL,
@@ -339,7 +234,8 @@ export const portableXaiOAuth: OAuthAuth = {
           },
           interaction.signal,
         );
-        if (token.ok) return { done: xaiCredential(token.body) };
+        if (token.ok && optionalString(token.body, "access_token"))
+          return { done: xaiCredential(token.body) };
         return pendingResult(token.body);
       },
     });
@@ -364,92 +260,7 @@ export const portableXaiOAuth: OAuthAuth = {
 export const portableCodexOAuth: OAuthAuth = {
   name: "OpenAI (ChatGPT subscription)",
   loginLabel: "Sign in with ChatGPT",
-  async login(interaction) {
-    interaction.signal?.throwIfAborted();
-    const method = await interaction.prompt({
-      type: "select",
-      message: "Connect your ChatGPT subscription",
-      options: [
-        {
-          id: "browser",
-          label: "Sign in with browser",
-          description:
-            "Sign in, copy the return link, then paste it here. Works without changing ChatGPT settings.",
-        },
-        {
-          id: "device",
-          label: "Connect with a device code",
-          description:
-            "Connects automatically after approval. First enable device-code authorization in ChatGPT → Settings → Security.",
-        },
-      ],
-      signal: interaction.signal,
-    });
-    interaction.signal?.throwIfAborted();
-    if (method === "device") return loginCodexDevice(interaction);
-    if (method !== "browser") throw new Error("Choose a ChatGPT sign-in method.");
-    interaction.signal?.throwIfAborted();
-    // Match Pi's browser OAuth flow without importing its Node callback server.
-    const { verifier, challenge } = await generatePkce();
-    const state = base64Url(crypto.getRandomValues(new Uint8Array(16)));
-    const authUrl = new URL(CODEX_AUTHORIZE_URL);
-    authUrl.search = new URLSearchParams({
-      response_type: "code",
-      client_id: CODEX_CLIENT_ID,
-      redirect_uri: CODEX_REDIRECT_URI,
-      scope: "openid profile email offline_access",
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-      state,
-      id_token_add_organizations: "true",
-      codex_cli_simplified_flow: "true",
-      originator: "pi",
-    }).toString();
-    interaction.signal?.throwIfAborted();
-    interaction.notify({
-      type: "auth_url",
-      url: authUrl.href,
-      instructions:
-        "Sign in with ChatGPT. When the browser reaches localhost (it may show a connection error), copy the full address and paste it in Acode.",
-    });
-    const input = await interaction.prompt({
-      type: "manual_code",
-      message:
-        "After signing in, copy the full localhost URL from the browser address bar, even if the page cannot load, and paste it here.",
-      placeholder: `${CODEX_REDIRECT_URI}?code=…&state=…`,
-      signal: interaction.signal,
-    });
-    interaction.signal?.throwIfAborted();
-    let callback: URL;
-    try {
-      callback = new URL(input.trim());
-    } catch {
-      throw new Error("Paste the full localhost callback URL from the ChatGPT sign-in page.");
-    }
-    if (
-      callback.origin !== new URL(CODEX_REDIRECT_URI).origin ||
-      callback.pathname !== "/auth/callback"
-    ) {
-      throw new Error("Expected the ChatGPT localhost sign-in callback URL.");
-    }
-    if (callback.searchParams.get("state") !== state)
-      throw new Error("Codex OAuth state mismatch. Start sign-in again.");
-    if (callback.searchParams.has("error"))
-      throw new Error("ChatGPT authorization was denied or failed. Start sign-in again.");
-    const code = callback.searchParams.get("code");
-    if (!code) throw new Error("Codex sign-in did not return an authorization code.");
-    const token = await exchangeCodexToken(
-      {
-        grant_type: "authorization_code",
-        client_id: CODEX_CLIENT_ID,
-        code,
-        code_verifier: verifier,
-        redirect_uri: CODEX_REDIRECT_URI,
-      },
-      interaction.signal,
-    );
-    return codexCredential(token, undefined, interaction.signal);
-  },
+  login: loginCodexDevice,
   async refresh(credential, signal) {
     const token = await exchangeCodexToken(
       {
@@ -466,9 +277,78 @@ export const portableCodexOAuth: OAuthAuth = {
   },
 };
 
+export function createPortableOpenRouterOAuth(credentials: PortableCredentialStore): OAuthAuth {
+  return {
+    ...portableOpenRouterOAuth,
+    login: (interaction) => loginOpenRouter(interaction, credentials),
+  };
+}
+
+async function loginOpenRouter(
+  interaction: Parameters<OAuthAuth["login"]>[0],
+  credentials?: PortableCredentialStore,
+): Promise<OAuthCredential> {
+  interaction.signal?.throwIfAborted();
+  const saved = await credentials?.pendingSignIn("openrouter");
+  const resumed = saved && saved.expiresAt > Date.now() ? saved : undefined;
+  const pkce = resumed ? await pkceFromVerifier(resumed.verifier) : await generatePkce();
+  const pending = resumed ?? {
+    state: base64Url(crypto.getRandomValues(new Uint8Array(32))),
+    verifier: pkce.verifier,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  };
+  try {
+    await credentials?.savePendingSignIn("openrouter", pending);
+    interaction.signal?.throwIfAborted();
+    // OpenRouter omits echoed state on denial, so retain it in the callback URL.
+    const callbackUrl = new URL(OPENROUTER_CALLBACK_URL);
+    callbackUrl.searchParams.set("state", pending.state);
+    const authUrl = new URL(OPENROUTER_AUTHORIZE_URL);
+    authUrl.search = new URLSearchParams({
+      callback_url: callbackUrl.href,
+      code_challenge: pkce.challenge,
+      code_challenge_method: "S256",
+      key_label: "Acode AI Agent",
+    }).toString();
+    const code = await waitForOpenRouterCallback(
+      pending.state,
+      interaction.signal,
+      () => {
+        interaction.notify({
+          type: "auth_url",
+          url: authUrl.href,
+          instructions: "Approve access in your browser. You will return to Acode automatically.",
+        });
+      },
+      Math.max(0, pending.expiresAt - Date.now()),
+    );
+    interaction.signal?.throwIfAborted();
+    interaction.notify({ type: "progress", message: "Finishing secure sign-in…" });
+    const token = await postJson(
+      OPENROUTER_TOKEN_URL,
+      {
+        code,
+        code_verifier: pkce.verifier,
+        code_challenge_method: "S256",
+      },
+      interaction.signal,
+    );
+    return {
+      type: "oauth",
+      access: requiredString(token, "key"),
+      refresh: "",
+      expires: Number.MAX_SAFE_INTEGER,
+    };
+  } finally {
+    if (interaction.signal?.reason !== SIGN_IN_SUSPENDED)
+      await credentials?.clearPendingSignIn("openrouter", pending.state);
+  }
+}
+
 async function loginCodexDevice(
   interaction: Parameters<OAuthAuth["login"]>[0],
 ): Promise<OAuthCredential> {
+  interaction.signal?.throwIfAborted();
   const device = await postJson(
     CODEX_DEVICE_URL,
     { client_id: CODEX_CLIENT_ID },
@@ -488,6 +368,7 @@ async function loginCodexDevice(
     intervalSeconds: interval,
     expiresInSeconds: CODEX_TIMEOUT_SECONDS,
     signal: interaction.signal,
+    notify: interaction.notify,
     poll: async () => {
       const response = await postJsonAllowError(
         CODEX_DEVICE_TOKEN_URL,
@@ -517,7 +398,7 @@ async function loginCodexDevice(
       if (error === "access_denied" || error === "authorization_denied")
         return {
           error:
-            "ChatGPT authorization was denied. Enable device-code authorization in ChatGPT Settings → Security, or choose browser sign-in.",
+            "ChatGPT authorization was denied. Enable device-code authorization in ChatGPT Settings → Security and try again.",
         };
       if (error === "slow_down") return { slowDown: true };
       return { error: `Codex device authorization failed (HTTP ${response.status}).` };
@@ -752,8 +633,12 @@ function normalizeDomain(value: string): string | undefined {
 }
 
 async function generatePkce(): Promise<{ verifier: string; challenge: string }> {
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  const verifier = base64Url(bytes);
+  return pkceFromVerifier(base64Url(crypto.getRandomValues(new Uint8Array(32))));
+}
+
+async function pkceFromVerifier(
+  verifier: string,
+): Promise<{ verifier: string; challenge: string }> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
   return { verifier, challenge: base64Url(new Uint8Array(digest)) };
 }
@@ -764,41 +649,25 @@ function base64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function parseAuthorizationInput(input: string): { code?: string; state?: string } {
-  const value = input.trim();
-  if (!value) return {};
-  try {
-    const url = new URL(value);
-    return {
-      code: url.searchParams.get("code") ?? undefined,
-      state: url.searchParams.get("state") ?? undefined,
-    };
-  } catch {
-    // Accept a copied query string, code#state pair, or the raw authorization code.
-  }
-  if (value.includes("#")) {
-    const [code, state] = value.split("#", 2);
-    return { code: code || undefined, state: state || undefined };
-  }
-  if (value.includes("code=")) {
-    const params = new URLSearchParams(value.replace(/^\?/, ""));
-    return { code: params.get("code") ?? undefined, state: params.get("state") ?? undefined };
-  }
-  return { code: value };
-}
-
 async function pollDeviceCode<T>(options: {
   intervalSeconds: number;
   expiresInSeconds: number;
   signal?: AbortSignal;
+  notify?: Parameters<OAuthAuth["login"]>[0]["notify"];
   poll: () => Promise<{ done?: T; pending?: boolean; slowDown?: boolean; error?: string }>;
 }): Promise<T> {
   const deadline = Date.now() + options.expiresInSeconds * 1000;
   let interval = Math.max(1, options.intervalSeconds) * 1000;
   while (Date.now() < deadline) {
-    await wait(interval, options.signal);
+    await wait(Math.min(interval, Math.max(0, deadline - Date.now())), options.signal);
+    options.signal?.throwIfAborted();
+    if (Date.now() >= deadline) break;
     const result = await options.poll();
-    if (result.done) return result.done;
+    options.signal?.throwIfAborted();
+    if (result.done) {
+      options.notify?.({ type: "progress", message: "Finishing secure sign-in…" });
+      return result.done;
+    }
     if (result.error) throw new Error(result.error);
     if (result.slowDown) interval += 5000;
   }

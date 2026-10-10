@@ -88,9 +88,8 @@ export function TaskSheet({
 
   return (
     <Sheet class="tasks" onClose={onClose}>
-      {(close) => (
+      {() => (
         <>
-          <div class="sheet-handle" />
           <header class="sheet-header">
             <div>
               <h2>Tasks</h2>
@@ -129,9 +128,6 @@ export function TaskSheet({
                   <Trash2 size={16} strokeWidth={2} />
                 </button>
               )}
-              <button type="button" onClick={close} aria-label="Close">
-                <X size={16} strokeWidth={2} />
-              </button>
             </div>
           </header>
           <div class="task-sheet-body">
