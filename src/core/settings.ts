@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   enableSkillCommands: true,
   autocompleteMaxVisible: 10,
   imageAutoResize: true,
+  codemode: true,
   blockImages: false,
   globalSkillRoots: [],
   maxHistoryMessages: 80,

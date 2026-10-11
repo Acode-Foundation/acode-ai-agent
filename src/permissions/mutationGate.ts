@@ -17,7 +17,8 @@ export class MutationGate {
 
   /**
    * Ask the user to approve a change. Requests wait their turn, so parallel subagents
-   * each get their own prompt instead of being denied. `source` labels who is asking.
+   * each get their own prompt instead of being denied. `source` labels who is asking;
+   * `onPrompt` runs when this request's prompt is shown, not when it is allowed without one.
    */
   request(
     toolName: string,
@@ -26,8 +27,9 @@ export class MutationGate {
     mode: PermissionMode,
     signal?: AbortSignal,
     source?: string,
+    onPrompt?: () => void,
   ): Promise<{ block?: boolean; reason?: string }> {
-    const ask = () => this.#ask(toolName, args, workspace, mode, signal, source);
+    const ask = () => this.#ask(toolName, args, workspace, mode, signal, source, onPrompt);
     const next = this.#queue.then(ask, ask);
     this.#queue = next.then(
       () => undefined,
@@ -43,6 +45,7 @@ export class MutationGate {
     mode: PermissionMode,
     signal: AbortSignal | undefined,
     source: string | undefined,
+    onPrompt: (() => void) | undefined,
   ): Promise<{ block?: boolean; reason?: string }> {
     const category = categoryOf(toolName);
     if (!category) return {};
@@ -74,6 +77,7 @@ export class MutationGate {
         resolve: finish,
       };
       this.changes.emit(this.#pending);
+      onPrompt?.();
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
     });

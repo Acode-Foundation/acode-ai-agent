@@ -19,7 +19,9 @@ export function systemPromptSections(options: {
 }): PromptSection[] {
   const { workspace, settings, extensions, skills } = options;
   return [
-    section("preamble", () => preamble(workspace), { tag: false }),
+    section("preamble", () => preamble(workspace, { codemode: settings().codemode }), {
+      tag: false,
+    }),
     section("project_instructions", () => projectInstructions(workspace)),
     section("available_skills", () => skillCatalog(skills()), { tag: false }),
     section("plugin_context", () => pluginContext(extensions)),
@@ -27,7 +29,7 @@ export function systemPromptSections(options: {
   ];
 }
 
-export function preamble(workspace: AcodeWorkspace): string {
+export function preamble(workspace: AcodeWorkspace, tools: { codemode?: boolean } = {}): string {
   return [
     "You are Acode's in-editor coding agent, powered by the Pi agent runtime.",
     "Work autonomously toward the user's requested outcome and use tools to inspect evidence before guessing.",
@@ -40,6 +42,11 @@ export function preamble(workspace: AcodeWorkspace): string {
     "For 3+ step work, keep a live checklist with todo_write. Do not paste it into chat.",
     "When a decision is underspecified, ask with ask_user_question instead of guessing.",
     "For broad searches or reading many files, delegate to subagent (explore) so only its report enters your context. Run independent subagents in the same turn to work in parallel.",
+    ...(tools.codemode
+      ? [
+          "Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls. Prefer subagent when the work needs judgment rather than a script.",
+        ]
+      : []),
   ].join("\n\n");
 }
 

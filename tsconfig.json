@@ -14,7 +14,12 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "types": ["acode-plugin-types"],
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "pi-codemode-internal/prelude": [
+        "./node_modules/@earendil-works/pi-codemode/dist/runtime/prelude-source"
+      ]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["./dist/**/*"]

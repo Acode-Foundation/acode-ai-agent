@@ -74,10 +74,23 @@ const minifiedCssText = {
   },
 };
 
+// Codemode's QuickJS engine ships next to main.js and loads on the first script run.
+const quickJsWasm = {
+  name: "quickjs-wasm",
+  setup(build) {
+    build.onEnd(async (result) => {
+      if (result.errors.length) return;
+      await fs.mkdir("dist", { recursive: true });
+      await fs.copyFile("node_modules/quickjs-wasi/quickjs.wasm", "dist/quickjs.wasm");
+    });
+  },
+};
+
 const buildConfig = {
   entryPoints: {
     main: "src/main.ts",
     "diff-view": "src/ui/diffViewRuntime.ts",
+    "codemode-worker": "src/codemode/worker.ts",
   },
   bundle: true,
   minify: true,
@@ -96,7 +109,7 @@ const buildConfig = {
     ".css": "text",
     ".svg": "text",
   },
-  plugins: [portableNodeGuard, minifiedCssText, zipPlugin],
+  plugins: [portableNodeGuard, minifiedCssText, quickJsWasm, zipPlugin],
 };
 
 (async function () {

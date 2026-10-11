@@ -41,6 +41,8 @@ export type AgentSettings = {
   enableSkillCommands: boolean;
   autocompleteMaxVisible: number;
   imageAutoResize: boolean;
+  /** Offer the `codemode` tool: scripts that call other tools in a sandbox. */
+  codemode: boolean;
   blockImages: boolean;
   globalSkillRoots: string[];
   maxHistoryMessages: number;
@@ -116,6 +118,8 @@ export type ToolActivity = {
   status: "running" | "done" | "error";
   summary?: string;
   error?: string;
+  /** The running call's details, for tools whose progress the work log draws (scripts). */
+  details?: unknown;
   startedAt: number;
   endedAt?: number;
 };

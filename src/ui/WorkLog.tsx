@@ -1,5 +1,7 @@
 import {
   Bot,
+  Braces,
+  Check,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -11,13 +13,16 @@ import {
   Globe,
   ListPlus,
   LoaderCircle,
+  Minus,
   Pencil,
   Search,
+  ShieldQuestion,
   Sparkles,
   Square,
   SquareTerminal,
   Trash2,
   Wrench,
+  X,
 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -35,6 +40,9 @@ import {
   groupWorkEntries,
   parseDirListing,
   parseToolFileResults,
+  parseScriptResult,
+  presentTool,
+  scriptCalls,
   splitWorkBurst,
   turnDurationMs,
   type ChatTurn,
@@ -47,7 +55,7 @@ import {
 /** Survives WorkLog remounts when a stream tick rebuilds the turn tree. */
 const workRowOpen = new Map<string, boolean>();
 
-/** Stops one running tool call (a subagent) without stopping the run. */
+/** Stops one running tool call (a subagent or a script) without stopping the run. */
 type StopTool = (callId: string) => void;
 
 export function WorkLog({
@@ -260,6 +268,8 @@ function WorkRow({
 }) {
   if (entry.name === "subagent")
     return <SubagentCard turnId={turnId} entry={entry} workspace={workspace} onStop={onStopTool} />;
+  if (entry.name === "codemode")
+    return <ScriptCard turnId={turnId} entry={entry} workspace={workspace} onStop={onStopTool} />;
   return <ToolRow turnId={turnId} entry={entry} workspace={workspace} />;
 }
 
@@ -353,6 +363,229 @@ function SubagentCard({
       </Collapse>
     </div>
   );
+}
+
+/**
+ * A codemode script as a two-line row: the tools it calls, then the call in progress or how it
+ * ended. Opening it lists every nested call with its result and time, the script's output, and
+ * the script itself on request.
+ */
+function ScriptCard({
+  turnId,
+  entry,
+  workspace,
+  onStop,
+}: {
+  turnId: string;
+  entry: WorkEntry;
+  workspace?: WorkspaceInfo;
+  onStop?: StopTool;
+}) {
+  const key = `${turnId}:${entry.id}`;
+  const [open, setOpen] = useState(() => workRowOpen.get(key) ?? entry.status === "error");
+  const [showCode, setShowCode] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const running = entry.status === "running";
+  const { calls, omitted } = scriptCalls(entry.details);
+  const result = running ? undefined : parseScriptResult(entry.output, entry.status === "error");
+  const code = stringArg(entry.args, "code");
+  const awaiting = calls.find((call) => call.status === "waiting");
+  const current = awaiting ?? [...calls].reverse().find((call) => call.status === "running");
+  const stopped = !running && entry.status === "error" && /\babort/i.test(entry.output ?? "");
+  const durationMs = entry.durationMs ?? result?.wallTimeMs;
+  const callCount = calls.length + omitted;
+  const meta = running
+    ? awaiting
+      ? `Waiting for approval · ${callLine(awaiting.name, awaiting.args)}`
+      : current
+        ? callLine(current.name, current.args)
+        : callCount
+          ? `${callCount} call${callCount === 1 ? "" : "s"}`
+          : "Starting"
+    : [
+        stopped ? "Stopped" : entry.status === "error" ? "Failed" : undefined,
+        callCount ? `${callCount} call${callCount === 1 ? "" : "s"}` : "No tool calls",
+        durationMs !== undefined ? formatCallDuration(durationMs) : undefined,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+  const toggle = () =>
+    setOpen((value) => {
+      workRowOpen.set(key, !value);
+      return !value;
+    });
+  return (
+    <div class={`agent-run script-run ${entry.status}${running && awaiting ? " awaiting" : ""}`}>
+      <div class="agent-run-row">
+        <button type="button" class="agent-run-toggle" aria-expanded={open} onClick={toggle}>
+          <span class="agent-run-icon" aria-hidden="true">
+            {running && awaiting ? (
+              <ShieldQuestion size={14} strokeWidth={2} />
+            ) : running ? (
+              <LoaderCircle class="work-spin" size={14} strokeWidth={2.4} />
+            ) : (
+              <Braces size={14} strokeWidth={2} />
+            )}
+          </span>
+          <span class="agent-run-text">
+            <span class="agent-run-title">
+              <span class="agent-run-kind">Script</span>
+              <span class="agent-run-task">{scriptTools(calls) || entry.detail}</span>
+            </span>
+            <span class="agent-run-meta">
+              {meta}
+              {running && <Elapsed since={entry.startedAt} prefix=" · " />}
+            </span>
+          </span>
+          <RotateIcon open={open} class="work-row-chevron">
+            <ChevronRight size={14} strokeWidth={2} />
+          </RotateIcon>
+        </button>
+        {running && onStop && (
+          <button
+            type="button"
+            class="agent-run-stop"
+            disabled={stopping}
+            onClick={() => {
+              setStopping(true);
+              onStop(entry.id);
+            }}
+          >
+            <Square size={11} strokeWidth={2.6} aria-hidden="true" />
+            {stopping ? "Stopping" : "Stop"}
+          </button>
+        )}
+      </div>
+      <Collapse open={open}>
+        <div class="agent-run-body script-body">
+          {calls.length > 0 && (
+            <ul class="script-calls">
+              {calls.map((call, index) => {
+                const presented = presentTool(call.name, call.args);
+                // Labels are past tense ("Wrote file"); a call that did not finish shows its tool.
+                const label = call.status === "ok" ? presented.label : call.name;
+                return (
+                  <li class={`script-call ${call.status}`} key={index}>
+                    <span class="script-call-status" aria-label={call.status}>
+                      {call.status === "running" ? (
+                        <LoaderCircle class="work-spin" size={11} strokeWidth={2.6} />
+                      ) : call.status === "waiting" ? (
+                        <ShieldQuestion size={11} strokeWidth={2.4} />
+                      ) : call.status === "ok" ? (
+                        <Check size={11} strokeWidth={2.6} />
+                      ) : call.status === "error" ? (
+                        <X size={11} strokeWidth={2.6} />
+                      ) : (
+                        <Minus size={11} strokeWidth={2.6} />
+                      )}
+                    </span>
+                    <span class={`work-kind ${presented.kind}`} aria-hidden="true">
+                      {kindIcon(presented.kind, call.name)}
+                    </span>
+                    <span class="script-call-text">
+                      <span class="script-call-line">
+                        <span class={`script-call-label${call.status === "ok" ? "" : " is-tool"}`}>
+                          {label}
+                        </span>
+                        {presented.detail && (
+                          <span class="script-call-detail">{presented.detail}</span>
+                        )}
+                      </span>
+                      {call.status === "waiting" && (
+                        <span class="script-call-note">Waiting for your approval</span>
+                      )}
+                      {call.error && <span class="script-call-error">{call.error}</span>}
+                    </span>
+                    {call.durationMs !== undefined && (
+                      <span class="script-call-time">{formatCallDuration(call.durationMs)}</span>
+                    )}
+                  </li>
+                );
+              })}
+              {omitted > 0 && (
+                <li class="script-call more">
+                  {omitted} more call{omitted === 1 ? "" : "s"}
+                </li>
+              )}
+            </ul>
+          )}
+          {result?.output && (
+            <section class="script-section">
+              <p class="work-io-label">Output</p>
+              <pre class="work-body script-output">{readableOutput(result.output)}</pre>
+            </section>
+          )}
+          {result?.error && (
+            <section class="script-section">
+              <p class="work-io-label">{stopped ? "Stopped" : "Error"}</p>
+              <pre class="work-body script-error">{result.error}</pre>
+            </section>
+          )}
+          {code && (
+            <section class="script-section">
+              <button
+                type="button"
+                class="script-code-toggle"
+                aria-expanded={showCode}
+                onClick={() => setShowCode((value) => !value)}
+              >
+                <RotateIcon open={showCode} class="work-row-chevron">
+                  <ChevronRight size={12} strokeWidth={2} />
+                </RotateIcon>
+                {showCode ? "Hide script" : `Show script · ${lineCount(code)}`}
+              </button>
+              <Collapse open={showCode}>
+                <div class="script-code">
+                  <Markdown text={codeFence(code)} workspace={workspace} />
+                </div>
+              </Collapse>
+            </section>
+          )}
+        </div>
+      </Collapse>
+    </div>
+  );
+}
+
+/** "read ×3 · grep": the tools a script called, in first-call order. */
+function scriptTools(calls: readonly { name: string }[]): string {
+  const counts = new Map<string, number>();
+  for (const call of calls) counts.set(call.name, (counts.get(call.name) ?? 0) + 1);
+  return [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name)).join(" · ");
+}
+
+/** A script that returned one JSON value reads better indented. */
+function readableOutput(output: string): string {
+  if (output.length > 200_000 || !/^[[{]/.test(output)) return output;
+  try {
+    return JSON.stringify(JSON.parse(output), null, 2);
+  } catch {
+    return output;
+  }
+}
+
+/** The call in progress, by tool name: it may still be waiting for approval. */
+function callLine(name: string, args: Record<string, unknown>): string {
+  const detail = presentTool(name, args).detail;
+  return detail ? `${name} ${detail}` : name;
+}
+
+function formatCallDuration(ms: number): string {
+  if (ms < 1_000) return `${Math.max(0, Math.round(ms))}ms`;
+  if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
+  return formatWorkDuration(ms);
+}
+
+function lineCount(code: string): string {
+  const lines = code.trimEnd().split("\n").length;
+  return `${lines} line${lines === 1 ? "" : "s"}`;
+}
+
+/** A fence longer than any backtick run in the code, so the code cannot close it. */
+function codeFence(code: string): string {
+  const longestRun = Math.max(0, ...[...code.matchAll(/`+/g)].map((run) => run[0].length));
+  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  return `${fence}js\n${code}\n${fence}`;
 }
 
 function subagentState(entry: WorkEntry): string {

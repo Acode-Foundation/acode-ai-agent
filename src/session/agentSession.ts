@@ -34,6 +34,7 @@ import {
   type UsageState,
 } from "@earendil-works/pi-durable";
 import { createAskTool } from "../ask/createAskTool";
+import { CODEMODE_TOOL_NAME, createCodemodeTool } from "../codemode/createCodemodeTool";
 import { QuestionGate } from "../ask/questionGate";
 import { systemPromptSections } from "../context/contextBuilder";
 import { Signal } from "../core/events";
@@ -162,6 +163,8 @@ export class AgentSession {
   #cadence = createCadenceState();
   #unsubscribers: Array<() => void> = [];
   #toolStarts = new Map<string, number>();
+  /** Whether the installed tools include `codemode`, to reinstall when the setting changes. */
+  #codemodeInstalled = false;
   #recovery?: RunRecovery;
   #runError?: string;
   #storage?: Storage;
@@ -316,7 +319,9 @@ export class AgentSession {
   }
 
   applySettings(): void {
-    // Harness settings are read live through getters; only derived UI state changes here.
+    // Harness settings are read live through getters; only the tool set and UI state change here.
+    if (this.#harness && this.#settings().codemode !== this.#codemodeInstalled)
+      this.#installExtensions();
     this.#publish();
   }
 
@@ -673,6 +678,17 @@ export class AgentSession {
     ];
     // A subagent picks from every tool its parent has, filtered by its profile.
     tools.push(withReadableErrors(createSubagentTool(() => [...tools, ...pluginTools])));
+    this.#codemodeInstalled = this.#settings().codemode;
+    if (this.#codemodeInstalled)
+      tools.push(
+        withReadableErrors(
+          createCodemodeTool({
+            tools: [...tools, ...pluginTools],
+            approve: (name, args, api, signal, onPrompt) =>
+              this.#approve(name, args, api.conversationId, signal, "Codemode", onPrompt),
+          }),
+        ),
+      );
     this.#registry.install(
       defineExtension({
         name: "acode",
@@ -686,17 +702,13 @@ export class AgentSession {
         hooks: [
           hook(ToolTask, {
             beforeTool: async (call, api, toolContext) => {
-              const decision = await this.mutationGate.request(
+              const block = await this.#approve(
                 call.name,
                 call.arguments,
-                this.workspace,
-                this.#settings().permissionMode,
+                api.conversationId,
                 toolContext.abortSignal,
-                api.conversationId === this.#conversation?.id ? undefined : "Subagent",
               );
-              return decision.block
-                ? { block: decision.reason || "User denied this action." }
-                : undefined;
+              return block ? { block } : undefined;
             },
             afterTool: (call, _result, api) => {
               // The task list belongs to the user's conversation, not to subagents.
@@ -718,6 +730,32 @@ export class AgentSession {
       }),
     );
     this.#registry.install(defineExtension({ name: "plugins", tools: pluginTools }));
+  }
+
+  /**
+   * Ask the user to approve a change when the permission mode requires it. Returns the reason
+   * when it is blocked. `via` names the tool making the call for the user, such as a script.
+   */
+  async #approve(
+    name: string,
+    args: Record<string, unknown>,
+    conversationId: number,
+    signal: AbortSignal | undefined,
+    via?: string,
+    onPrompt?: () => void,
+  ): Promise<string | undefined> {
+    const subagent = conversationId !== this.#conversation?.id;
+    const source = [subagent ? "Subagent" : undefined, via].filter(Boolean).join(" · ");
+    const decision = await this.mutationGate.request(
+      name,
+      args,
+      this.workspace,
+      this.#settings().permissionMode,
+      signal,
+      source || undefined,
+      onPrompt,
+    );
+    return decision.block ? decision.reason || "User denied this action." : undefined;
   }
 
   /** Each request starts a task-list turn and may carry a reminder the model sees only once. */
@@ -866,6 +904,7 @@ export class AgentSession {
         error: failed
           ? slot.diagnostics?.find((item) => item.severity === "error")?.message
           : undefined,
+        details: slot.name === CODEMODE_TOOL_NAME ? slot.details : undefined,
         startedAt,
       };
     });

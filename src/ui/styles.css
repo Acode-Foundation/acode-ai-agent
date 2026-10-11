@@ -2501,6 +2501,144 @@
   color: var(--fg);
   font-size: 13px;
 }
+/* A codemode script: the agent-run row, then its nested calls, output, and source. */
+.script-body {
+  display: grid;
+  gap: 8px;
+}
+.script-calls {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.script-call {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+/* Kind classes such as "list" also match host stylesheets; keep the icon box fixed. */
+.script-call .work-kind {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+.script-call-status {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 17px;
+  flex: none;
+  color: var(--muted);
+}
+.script-call.ok .script-call-status {
+  color: var(--ok);
+}
+.script-call.error .script-call-status {
+  color: var(--danger);
+}
+.script-call.running .script-call-status,
+.script-call.waiting .script-call-status {
+  color: var(--accent);
+}
+.script-call-note {
+  color: var(--accent);
+  font-size: 11px;
+}
+/* A script paused on an approval prompt: no spinner, the meta line says why. */
+.script-run.awaiting .agent-run-meta {
+  color: var(--accent);
+  opacity: 1;
+}
+.script-call.cancelled {
+  opacity: 0.6;
+}
+.script-call-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.script-call-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.script-call-label {
+  flex: none;
+  color: var(--fg);
+}
+.script-call-label.is-tool {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+.script-call-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+.script-call-error {
+  color: var(--danger);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.script-call-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.script-call.more {
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.script-section {
+  min-width: 0;
+}
+.script-section .work-body {
+  margin: 0;
+  max-height: 260px;
+  /* The card animates open; anchoring would scroll the box away from its first line. */
+  overflow-anchor: none;
+}
+.script-error {
+  border-left: 2px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  border-radius: 0 8px 8px 0;
+}
+.script-code-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 6px 0 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.script-code {
+  min-width: 0;
+  font-size: 12px;
+}
+.script-code pre {
+  max-height: 320px;
+  margin: 0;
+}
 .work-stopped,
 .turn-stopped {
   color: var(--muted);

@@ -1223,6 +1223,12 @@ function PiSettingsSheet({
               onChange={(value) => update({ imageAutoResize: value })}
             />
             <SettingsToggle
+              label="Codemode"
+              hint="Let the agent run scripts that call several tools in one step"
+              checked={settings.codemode}
+              onChange={(value) => update({ codemode: value })}
+            />
+            <SettingsToggle
               label="Skill commands"
               hint="Register discovered skills as /skill:name"
               checked={settings.enableSkillCommands}

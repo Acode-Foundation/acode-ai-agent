@@ -85,6 +85,7 @@ const settingsFields = {
   enableSkillCommands: flag(true),
   autocompleteMaxVisible: int(7, 20, 10),
   imageAutoResize: flag(true),
+  codemode: flag(true),
   blockImages: flag(false),
   globalSkillRoots: ((value) => (isTextList(value, 20, 1_024) ? value : [])) as Field<string[]>,
   maxHistoryMessages: int(20, 200, 80),

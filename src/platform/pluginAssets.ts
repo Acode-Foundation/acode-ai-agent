@@ -15,6 +15,22 @@ export function setPluginBaseUrl(baseUrl: string): void {
   pluginBaseUrl = baseUrl.replace(/\/$/, "");
 }
 
+/** Read a file shipped next to `main.js`. */
+export async function readPluginAsset(name: string): Promise<ArrayBuffer> {
+  if (!pluginBaseUrl) throw new Error(`The plugin asset path is unavailable for ${name}.`);
+  const url = `${pluginBaseUrl}/${name}`;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.arrayBuffer();
+  } catch (error) {
+    // Some WebView builds refuse fetch() on file URLs; Acode's file API reads them.
+    const fs = typeof acode === "undefined" ? undefined : acode.fsOperation;
+    if (!fs) throw error;
+    return (await fs(url).readFile()) as ArrayBuffer;
+  }
+}
+
 export function loadDiffViewRuntime(): Promise<AcodeDiffViewRuntime> {
   const ready = window.acodeAiDiffViewRuntime;
   if (ready) return Promise.resolve(ready);

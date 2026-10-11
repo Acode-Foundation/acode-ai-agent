@@ -26,6 +26,10 @@ export type WorkEntry = {
   args?: Record<string, unknown>;
   /** When the live tool call started (Pi's tool activity); absent for replayed history. */
   startedAt?: number;
+  /** How long the finished call ran, as Pi recorded it. */
+  durationMs?: number;
+  /** The tool's own details, kept for tools whose rows draw them (scripts). */
+  details?: unknown;
 };
 
 export type ChatTurn = {
@@ -260,6 +264,8 @@ export function presentTool(
       };
     case "ask_user_question":
       return { kind: "other", label: "Asked you", detail: askDetail(args, output) };
+    case "codemode":
+      return { kind: "other", label: "Ran a script", detail: scriptToolsDetail(args) };
     default:
       return { kind: "other", label: humanize(name) || "Used tool", detail: path ?? query };
   }
@@ -419,6 +425,8 @@ function projectTurn(allMessages: AgentMessage[], streaming: boolean): ChatTurn 
       if (existing) {
         existing.status = part.error ? "error" : "done";
         existing.output = part.text;
+        existing.details = part.details;
+        existing.durationMs = part.durationMs;
         existing.detail =
           presentTool(part.name, existing.args ?? {}, part.text).detail ?? existing.detail;
       } else {
@@ -432,6 +440,8 @@ function projectTurn(allMessages: AgentMessage[], streaming: boolean): ChatTurn 
           detail: presented.detail,
           status: part.error ? "error" : "done",
           output: part.text,
+          details: part.details,
+          durationMs: part.durationMs,
         });
       }
       continue;
@@ -503,7 +513,15 @@ type FlatPart =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool"; id: string; name: string; args: Record<string, unknown> }
-  | { kind: "result"; id: string; name: string; text: string; error: boolean };
+  | {
+      kind: "result";
+      id: string;
+      name: string;
+      text: string;
+      error: boolean;
+      details?: unknown;
+      durationMs?: number;
+    };
 
 function flatten(messages: AgentMessage[]): FlatPart[] {
   const parts: FlatPart[] = [];
@@ -527,6 +545,8 @@ function flatten(messages: AgentMessage[]): FlatPart[] {
         name: message.toolName,
         text: toolMessageText(message),
         error: message.isError,
+        details: message.toolName === "codemode" ? message.details : undefined,
+        durationMs: message.durationMs,
       });
     }
   }
@@ -543,6 +563,7 @@ function mergeActivities(
     const existing = turn.work.find((entry) => entry.id === activity.id);
     if (existing) {
       existing.startedAt = activity.startedAt;
+      if (activity.details !== undefined) existing.details = activity.details;
       if (activity.status === "running") existing.status = "running";
       if (activity.status === "error") existing.status = "error";
       if (activity.summary && (!existing.output || existing.status === "running"))
@@ -563,6 +584,7 @@ function mergeActivities(
       output: activity.summary,
       args: activity.args,
       startedAt: activity.startedAt,
+      details: activity.details,
     });
   }
 }
@@ -645,6 +667,88 @@ function firstString(args: Record<string, unknown>, keys: string[]): string | un
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return undefined;
+}
+
+export type ScriptCall = {
+  name: string;
+  args: Record<string, unknown>;
+  status: "running" | "waiting" | "ok" | "error" | "cancelled";
+  durationMs?: number;
+  error?: string;
+};
+
+/** The nested calls a codemode script recorded in its details; unknown shapes give none. */
+export function scriptCalls(details: unknown): { calls: ScriptCall[]; omitted: number } {
+  if (!details || typeof details !== "object") return { calls: [], omitted: 0 };
+  const { calls, omitted } = details as { calls?: unknown; omitted?: unknown };
+  const statuses = new Set(["running", "waiting", "ok", "error", "cancelled"]);
+  const valid = Array.isArray(calls)
+    ? calls.flatMap((call): ScriptCall[] => {
+        if (!call || typeof call !== "object") return [];
+        const { name, args, status, durationMs, error } = call as Record<string, unknown>;
+        if (typeof name !== "string" || !statuses.has(String(status))) return [];
+        return [
+          {
+            name,
+            args: args && typeof args === "object" ? (args as Record<string, unknown>) : {},
+            status: status as ScriptCall["status"],
+            durationMs: typeof durationMs === "number" ? durationMs : undefined,
+            error: typeof error === "string" ? error : undefined,
+          },
+        ];
+      })
+    : [];
+  return { calls: valid, omitted: typeof omitted === "number" && omitted > 0 ? omitted : 0 };
+}
+
+/**
+ * Split a codemode result ("Script completed|failed", wall time, "Output:", then the output and
+ * any "Script error:") into what the work log shows. A result without that header (the harness
+ * stopped the call, or the script was rejected before it ran) is all error when the call failed.
+ */
+export function parseScriptResult(
+  text: string | undefined,
+  failed = false,
+): { output?: string; error?: string; wallTimeMs?: number } {
+  const value = (text ?? "").replace(/<\/?harness>/g, "").trim();
+  const header = /^Script (?:completed|failed)\nWall time ([\d.]+) seconds\nOutput:\n?/.exec(value);
+  if (!header) {
+    const cleaned = value.replace(/^\[error\]\s*/m, "").trim();
+    return failed ? { error: cleaned || undefined } : { output: cleaned || undefined };
+  }
+  const body = value.slice(header[0].length);
+  const marker = body.lastIndexOf("Script error:\n");
+  const output = (marker >= 0 ? body.slice(0, marker) : body).trim();
+  // The model gets a summary of the calls made before the failure; the work log lists them.
+  const error =
+    marker >= 0
+      ? body
+          .slice(marker + "Script error:\n".length)
+          .replace(
+            /\n*(?:Tool calls made before the failure \(they are not undone\): .*|No tool calls were made\.)$/,
+            "",
+          )
+          .trim()
+      : undefined;
+  return {
+    output: output || undefined,
+    error: error || undefined,
+    wallTimeMs: Math.round(Number(header[1]) * 1_000),
+  };
+}
+
+/** The tools a script calls, in order of first use: "read, grep". */
+function scriptToolsDetail(args: Record<string, unknown>): string | undefined {
+  const code = firstString(args, ["code"]);
+  if (!code) return undefined;
+  const names = new Set<string>();
+  for (const match of code.matchAll(
+    /\btools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*["']([^"']+)["']\s*\])/g,
+  ))
+    names.add(match[1] ?? match[2]!);
+  return names.size
+    ? [...names].join(", ")
+    : inlinePreview(code.replace(/^\/\/ @options:.*$/m, ""));
 }
 
 function inlinePreview(value: string | undefined): string | undefined {

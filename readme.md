@@ -159,6 +159,16 @@ None of them overwrite an existing path. Open tabs follow moves and renames. A d
 - Subagents can't start subagents, ask you questions or edit the task list. Their edits still need approval, labeled "Subagent".
 - Stopping the run stops them, and a resumed run picks them back up. After 30 model turns a subagent is told to wrap up.
 
+**Codemode**
+
+The `codemode` tool is on by default (**Pi settings → Codemode** turns it off). The agent writes one JavaScript script that calls other tools as `await tools.read({ path })`, so it can run several reads or searches at once, chain them, and filter large results before they reach the model. Only the script's output goes back into the context, which saves model turns and tokens.
+
+- Scripts run in a QuickJS sandbox in a Web Worker: no DOM, network, file system or timers, only the tools. A script that loops forever is stopped by its timeout or **Stop**, and memory is capped at 64 MB.
+- The work log shows each script as one card: the tools it called with their results and times, its output, and the script itself.
+- Nested calls are validated and approved like direct ones (the prompt says "Codemode"), and edits are covered by **Undo**. Calls made before a script fails are not undone.
+- `store()` / `load()` keep small JSON values across scripts in the same chat.
+- Subagents, `ask_user_question` and `codemode` itself can't be called from scripts.
+
 **Other**
 
 - `todo_write`: a checklist for multi-step work
