@@ -962,11 +962,19 @@ export class AgentSession {
       this.#toolStarts.clear();
       return [];
     }
+    // A batch of parallel calls is followed by one result message per call, so the assistant
+    // message holding their args can sit many messages back; walk back until every slot is found.
+    const pending = new Set(slots.map((slot) => slot.callId));
     const calls = new Map<string, Record<string, unknown>>();
-    for (const message of [...messages.slice(-4), ...(streaming ? [streaming] : [])]) {
+    const recent = streaming ? [...messages, streaming] : messages;
+    for (let index = recent.length - 1; index >= 0 && pending.size; index -= 1) {
+      const message = recent[index]!;
       if (message.role !== "assistant") continue;
-      for (const part of message.content)
-        if (part.type === "toolCall") calls.set(part.id, part.arguments as Record<string, unknown>);
+      for (const part of message.content) {
+        if (part.type !== "toolCall" || !pending.has(part.id)) continue;
+        calls.set(part.id, part.arguments as Record<string, unknown>);
+        pending.delete(part.id);
+      }
     }
     return slots.map((slot) => {
       const startedAt = this.#toolStarts.get(slot.callId) ?? Date.now();

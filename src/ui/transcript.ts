@@ -586,8 +586,10 @@ function mergeActivities(
       if (activity.status === "error") existing.status = "error";
       if (activity.summary && (!existing.output || existing.status === "running"))
         existing.output = activity.summary;
+      // The transcript's own call args are complete; the activity's may be missing or sanitized.
       existing.detail =
-        presentTool(activity.name, activity.args, existing.output).detail ?? presented.detail;
+        presentTool(activity.name, existing.args ?? activity.args, existing.output).detail ??
+        existing.detail;
       continue;
     }
     if (priorWorkIds.has(activity.id)) continue;

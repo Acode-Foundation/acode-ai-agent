@@ -90,13 +90,20 @@ export class AcodeWorkspace {
     const { uri } = this.sandbox.resolve(path);
     const openFile = editorManager.getFile(uri, "uri");
     if (openFile?.loaded) return openFile.session.getValue();
-    return acode.fsOperation(uri).readFile("utf-8");
+    return this.#readFile(path, (fs) => fs.readFile("utf-8"));
   }
 
   async readBinary(path: string): Promise<Uint8Array> {
-    const { uri } = this.sandbox.resolve(path);
-    const buffer = await acode.fsOperation(uri).readFile();
-    return new Uint8Array(buffer);
+    return new Uint8Array(await this.#readFile(path, (fs) => fs.readFile()));
+  }
+
+  /** Acode's readFile never settles on a folder, so folders are refused before reading. */
+  async #readFile<T>(path: string, read: (fs: Acode.FileSystem) => Promise<T>): Promise<T> {
+    const { relativePath, uri } = this.sandbox.resolve(path);
+    const stat = await this.stat(path).catch(() => undefined);
+    if (stat?.isDirectory)
+      throw new Error(`${relativePath || "The workspace root"} is a folder, not a file.`);
+    return this.#settle(read(acode.fsOperation(uri)), `Reading ${relativePath}`);
   }
 
   async writeText(path: string, content: string): Promise<"buffer" | "disk"> {

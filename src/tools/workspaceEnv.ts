@@ -227,6 +227,7 @@ function fileErrorCode(error: unknown): FileErrorCode {
   if (code === 2 || code === 6) return "permission_denied";
   const message = describeError(error);
   if (/not found|no such file|does not exist/i.test(message)) return "not_found";
+  if (/is a folder/i.test(message)) return "is_directory";
   if (/escape|outside the workspace|invalid|absolute|binary|size limit/i.test(message))
     return "invalid";
   return "unknown";

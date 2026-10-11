@@ -395,6 +395,29 @@ test("does not attach the previous run's tool activities to the next user turn",
   expect(turns[1]?.work).toHaveLength(0);
 });
 
+test("keeps a live call's path when its activity arrives without args", () => {
+  const turns = buildTurns(
+    [
+      user("map the project", 1),
+      assistant(
+        [
+          { type: "toolCall", id: "t1", name: "read", arguments: { path: "a.ts" } },
+          { type: "toolCall", id: "t2", name: "grep", arguments: { pattern: "loadApp" } },
+        ],
+        2,
+      ),
+      toolResult("t1", "read", "body", 3),
+    ],
+    undefined,
+    [
+      { id: "t1", name: "read", args: {}, status: "done", startedAt: 2 },
+      { id: "t2", name: "grep", args: {}, status: "running", startedAt: 2 },
+    ],
+    true,
+  );
+  expect(turns[0]?.work.map((entry) => entry.detail)).toEqual(["a.ts", "loadApp"]);
+});
+
 test("keeps a tool turn live after results while the same run continues", () => {
   const turns = buildTurns(
     [
