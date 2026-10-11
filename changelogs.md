@@ -5,6 +5,7 @@
 - Deferred tools: the file operation tools and `ask_user_question` are loaded with a new `tool_search` tool when needed instead of sent with every request, saving about 740 tokens per request on folders without `bash`. Loaded tools are unloaded again after a compaction leaves them unused. Plugins can register tools with `{ exposure: "deferred" }`.
 - Edit (through the composer, with Cancel), Retry, and Fork buttons under messages, and a `‹ 1/2 ›` switcher between versions of an edited or retried prompt. An empty branch offers to restore the latest messages.
 - Work-log steps show how long they ran, and `/tree` shows the context size at the selected point.
+- Codemode scripts can generate images and run classifiers through `models`, and save images into the project with `saveImage()`; their cost counts toward the session.
 - Pi packages upgraded to 1.1.0.
 
 # 0.1.0

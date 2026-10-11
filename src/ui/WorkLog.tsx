@@ -11,10 +11,12 @@ import {
   FolderOpen,
   FolderPlus,
   Globe,
+  Image as ImageIcon,
   ListPlus,
   LoaderCircle,
   Minus,
   Pencil,
+  Scale,
   Search,
   ShieldQuestion,
   Sparkles,
@@ -517,6 +519,18 @@ function ScriptCard({
               <pre class="work-body script-output">{readableOutput(result.output)}</pre>
             </section>
           )}
+          {entry.images && entry.images.length > 0 && (
+            <div class="script-images">
+              {entry.images.slice(0, 8).map((image, index) => (
+                <img
+                  key={index}
+                  src={`data:${image.mimeType};base64,${image.data}`}
+                  alt={`Image ${index + 1} from the script`}
+                  loading="lazy"
+                />
+              ))}
+            </div>
+          )}
           {result?.error && (
             <section class="script-section">
               <p class="work-io-label">{stopped ? "Stopped" : "Error"}</p>
@@ -1013,6 +1027,8 @@ function kindIcon(kind: ToolKind, name?: string) {
   if (name === "todo_write") return <ListPlus {...props} />;
   if (name === "ask_user_question") return <AskIcon />;
   if (name === "delete_path") return <Trash2 {...props} />;
+  if (name === "models.generateImages" || name === "saveImage") return <ImageIcon {...props} />;
+  if (name === "models.classify") return <Scale {...props} />;
   if (name === "create_directory") return <FolderPlus {...props} />;
   switch (kind) {
     case "read":

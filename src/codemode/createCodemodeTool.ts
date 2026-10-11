@@ -3,7 +3,7 @@ import { withAbortSignal } from "@earendil-works/chord/context";
 import type { CodemodeTool } from "@earendil-works/pi-codemode";
 import { renderToolSample, toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
 import { CodemodeSourceError, parseCodemodeSource } from "@earendil-works/pi-codemode/source";
-import { Type, validateToolArguments } from "@earendil-works/pi-ai";
+import { Type, validateToolArguments, type Usage } from "@earendil-works/pi-ai";
 import {
   defineDoc,
   defineTool,
@@ -20,6 +20,7 @@ import {
   type OutputBlock,
 } from "./output";
 import { offersAllTools } from "../tools/toolSearch";
+import { addUsage, createModelGlobals, isImageBlock } from "./models";
 import { loadCodemodeRuntime } from "./runtime";
 import { CodemodeSandbox, type CodemodeResult, type CodemodeRuntime } from "./sandbox";
 
@@ -93,6 +94,16 @@ export type CodemodeToolOptions = {
     signal: AbortSignal,
     onPrompt: () => void,
   ): Promise<string | undefined>;
+  /**
+   * Write an image a script made into the workspace, after the same approval as `write`.
+   * Returns the saved path. Without it scripts have no `saveImage()`.
+   */
+  saveImage?: (
+    path: string,
+    image: { data: string; mimeType: string },
+    api: ToolExecutionApi,
+    signal: AbortSignal,
+  ) => Promise<string>;
   /** Defaults to the worker and QuickJS module shipped with the plugin. */
   runtime?: () => Promise<CodemodeRuntime>;
 };
@@ -143,28 +154,72 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
         }, 120);
       };
 
-      const sandbox = new CodemodeSandbox({
-        tools: tools.map((tool) =>
-          nestedTool(tool, api, context, options, (record) => {
-            if (details.calls.length < MAX_RECORDED_CALLS) details.calls.push(record);
-            else details.omitted = (details.omitted ?? 0) + 1;
-            api.output(`→ ${record.name}${callTarget(record.args)}\n`);
+      const track = (record: CodemodeCallRecord) => {
+        if (details.calls.length < MAX_RECORDED_CALLS) details.calls.push(record);
+        else details.omitted = (details.omitted ?? 0) + 1;
+        api.output(`→ ${record.name}${callTarget(record.args)}\n`);
+        publish();
+        return {
+          changed: () => {
+            if (record.status === "waiting")
+              api.output(`… ${record.name} is waiting for approval\n`);
             publish();
-            return {
-              changed: () => {
-                if (record.status === "waiting")
-                  api.output(`… ${record.name} is waiting for approval\n`);
-                publish();
-              },
-              done: () => {
-                const mark = record.status === "ok" ? "✓" : "✗";
-                api.output(`${mark} ${record.name}${record.error ? `: ${record.error}` : ""}\n`);
-                publish();
-              },
-            };
+          },
+          done: () => {
+            const mark = record.status === "ok" ? "✓" : "✗";
+            api.output(`${mark} ${record.name}${record.error ? `: ${record.error}` : ""}\n`);
+            publish();
+          },
+        };
+      };
+      // Spend of the script's model calls, and images they returned that it never showed or saved.
+      let usage: Usage | undefined;
+      let generatedImages = 0;
+      let handledImages = 0;
+
+      const sandbox = new CodemodeSandbox({
+        tools: tools.map((tool) => nestedTool(tool, api, context, options, track)),
+        globals: [
+          ...discoveryGlobals(tools),
+          ...createModelGlobals(api.models, {
+            track: (record) => track(record).done,
+            addUsage: (spent) => {
+              usage = addUsage(usage, spent);
+            },
+            addImages: (count) => {
+              generatedImages += count;
+            },
           }),
-        ),
-        globals: discoveryGlobals(tools),
+          ...(options.saveImage
+            ? [
+                saveImageGlobal(async (path, image, signal) => {
+                  const record: CodemodeCallRecord = {
+                    name: "saveImage",
+                    args: { path },
+                    status: "running",
+                  };
+                  const done = track(record).done;
+                  const started = performance.now();
+                  try {
+                    const saved = await options.saveImage!(path, image, api, signal);
+                    record.status = "ok";
+                    handledImages += 1;
+                    return saved;
+                  } catch (error) {
+                    record.status = signal.aborted ? "cancelled" : "error";
+                    record.error = preview(
+                      error instanceof Error ? error.message : String(error),
+                      ERROR_PREVIEW_CHARS,
+                    );
+                    throw error;
+                  } finally {
+                    record.durationMs = Math.round(performance.now() - started);
+                    done();
+                  }
+                }),
+              ]
+            : []),
+        ],
         timeoutMs: parsed.options.timeoutMs ?? Number.POSITIVE_INFINITY,
         memoryLimitBytes: MEMORY_LIMIT_BYTES,
         runtime: options.runtime ?? loadCodemodeRuntime,
@@ -200,6 +255,14 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
       const items: OutputBlock[] = formatOutput(scriptOutput);
       if (!result.ok)
         items.push({ type: "text", text: `Script error:\n${formatError(result, details.calls)}` });
+      if (generatedImages > 0 && !handledImages && !items.some((item) => item.type === "image"))
+        items.push({
+          type: "text",
+          text:
+            `Note: models.generateImages() returned ${generatedImages} image${generatedImages === 1 ? "" : "s"} ` +
+            "that the script neither showed nor saved. Show each image block of result.output with " +
+            "image(block), or save it with await saveImage(path, block).",
+        });
       const output = truncateOutput(
         joinAdjacentText(items),
         parsed.options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
@@ -209,6 +272,7 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
       return {
         content: joinAdjacentText([{ type: "text", text: header }, ...output]),
         details: details as unknown as JsonValue,
+        ...(usage ? { usage } : {}),
         ...(result.ok ? {} : { isError: true }),
       };
     },
@@ -386,6 +450,12 @@ function codemodeDescription(tools: readonly ToolRegistration[]): string {
       "output; it rejects with an Error on failure. Edits, deletes, and commands still need the user's approval. " +
       "Calls still running when the script ends are cancelled; calls made before a failure are not undone.",
     `- Callable: ${names.join(", ") || "none"}.`,
+    "- `models` runs image and classifier models with this chat's credentials: " +
+      '`await models.getAvailableOfType("image")` lists usable ones; ' +
+      '`await models.generateImages(model, { input: [{ type: "text", text }] })` (model: a catalog entry or "provider/id") resolves to `{ output, stopReason, errorMessage }` ' +
+      "with image blocks in `output`; show one with `image(block)` or write it into the project with " +
+      "`await saveImage(path, block)` (asks for approval). " +
+      "`await models.classify(model, { state, questions })` answers choice, score, or bool questions about JSON state.",
     "- `text(value)`, `image(dataUrlOrImageBlock)`, `console.log(...)`, and `return value` add output; `exit()` ends " +
       "the script. `store(key, value)` / `load(key)` keep small JSON values across scripts in this chat. " +
       "`ALL_TOOLS` lists the callable tools; `await searchTools(query)` and `await describeTool(name)` look them up.",
@@ -445,4 +515,44 @@ export function isCodemodeDetails(value: unknown): value is CodemodeDetails {
     typeof value === "object" &&
     Array.isArray((value as { calls?: unknown }).calls)
   );
+}
+
+const IMAGE_DATA_URL = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/is;
+
+/** `saveImage(path, image)`: the image as a base64 `data:` URL, `{ image_url }`, or an image block. */
+function saveImageGlobal(
+  save: (
+    path: string,
+    image: { data: string; mimeType: string },
+    signal: AbortSignal,
+  ) => Promise<string>,
+): CodemodeTool {
+  return {
+    name: "saveImage",
+    spread: true,
+    execute: async (args, { signal }) => {
+      const [path, value] = args as [unknown, unknown];
+      if (typeof path !== "string" || !path.trim())
+        throw new Error("saveImage(path, image) expects a workspace path as its first argument");
+      const url =
+        typeof value === "string"
+          ? value
+          : value &&
+              typeof value === "object" &&
+              typeof (value as { image_url?: unknown }).image_url === "string"
+            ? (value as { image_url: string }).image_url
+            : undefined;
+      const match = url ? IMAGE_DATA_URL.exec(url) : null;
+      const image = match
+        ? { mimeType: match[1]!, data: match[2]! }
+        : isImageBlock(value)
+          ? value
+          : undefined;
+      if (!image)
+        throw new Error(
+          "saveImage(path, image) expects an image block from models.generateImages(), a base64 data: URL, or { image_url }",
+        );
+      return save(path.trim(), { data: image.data, mimeType: image.mimeType }, signal);
+    },
+  };
 }

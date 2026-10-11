@@ -30,6 +30,7 @@ import {
   type Registry,
   type Storage,
   type Submission,
+  type ToolExecutionApi,
   type ToolRegistration,
   type UsageState,
 } from "@earendil-works/pi-durable";
@@ -70,6 +71,7 @@ import {
 import { parseTaskStore, TaskList } from "../tasks/taskList";
 import type { Task, TaskStatus } from "../tasks/types";
 import { createWorkspaceTools, withReadableErrors } from "../tools/createTools";
+import { formatSize } from "../tools/truncate";
 import { editPairs } from "../tools/textEdits";
 import { createWebSearchContext } from "../tools/web/context";
 import { createWebTools } from "../tools/web/createWebTools";
@@ -734,6 +736,7 @@ export class AgentSession {
           createCodemodeTool({
             tools: [...tools, ...pluginTools],
             deferred: new Set(this.#deferredTools),
+            saveImage: (path, image, api, signal) => this.#saveImage(path, image, api, signal),
             approve: (name, args, api, signal, onPrompt) =>
               this.#approve(name, args, api.conversationId, signal, "Codemode", onPrompt),
           }),
@@ -808,6 +811,33 @@ export class AgentSession {
       onPrompt,
     );
     return decision.block ? decision.reason || "User denied this action." : undefined;
+  }
+
+  /** Write an image a codemode script made into the workspace, after the `write` approval. */
+  async #saveImage(
+    path: string,
+    image: { data: string; mimeType: string },
+    api: ToolExecutionApi,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const target = this.workspace.sandbox.normalize(path);
+    const bytes = base64Bytes(image.data);
+    if (bytes.byteLength > MAX_SAVED_IMAGE_BYTES)
+      throw new Error(
+        `The image is ${formatSize(bytes.byteLength)}; images up to 20 MB can be saved.`,
+      );
+    const kind = image.mimeType.replace(/^image\//, "").toUpperCase();
+    const blocked = await this.#approve(
+      "write",
+      { path: target, image: `${kind}, ${formatSize(bytes.byteLength)}` },
+      api.conversationId,
+      signal,
+      "Codemode",
+    );
+    if (blocked) throw new Error(blocked);
+    if (signal.aborted) throw new Error("The script ended before the image was saved.");
+    await this.workspace.writeBinary(target, bytes);
+    return target;
   }
 
   /** Each request starts a task-list turn and may carry a reminder the model sees only once. */
@@ -1313,4 +1343,13 @@ function toolCallArgs(view: ConversationView, callId: string): Record<string, un
     }
   }
   return undefined;
+}
+
+const MAX_SAVED_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function base64Bytes(data: string): Uint8Array {
+  const binary = atob(data.replace(/\s+/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }

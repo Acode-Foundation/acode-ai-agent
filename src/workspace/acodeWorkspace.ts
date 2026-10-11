@@ -133,6 +133,24 @@ export class AcodeWorkspace {
     });
   }
 
+  /** Write bytes to a file on disk, creating it and missing parent folders. */
+  async writeBinary(path: string, bytes: Uint8Array): Promise<void> {
+    const { relativePath, uri } = this.sandbox.resolve(path);
+    if (!relativePath) throw new Error("A file path is required.");
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    await this.#serialize(uri, async () => {
+      const target = acode.fsOperation(uri);
+      if (!(await target.exists())) {
+        const slash = relativePath.lastIndexOf("/");
+        const parentPath = slash >= 0 ? relativePath.slice(0, slash) : "";
+        const filename = slash >= 0 ? relativePath.slice(slash + 1) : relativePath;
+        await this.#ensureDirectory(parentPath);
+        await acode.fsOperation(this.sandbox.resolve(parentPath).uri).createFile(filename, "");
+      }
+      await acode.fsOperation(uri).writeFile(buffer as ArrayBuffer);
+    });
+  }
+
   /**
    * Move or rename a file or folder to the full path `to`. Missing parent folders are created,
    * an existing destination is never overwritten, and open editor tabs follow the move.

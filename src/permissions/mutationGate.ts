@@ -108,6 +108,8 @@ export class MutationGate {
     workspace: AcodeWorkspace,
   ): Promise<string> {
     if (toolName === "bash") return truncate(String(args.command ?? ""), 2_800);
+    if (typeof args.image === "string")
+      return `Save image (${args.image}) to ${String(args.path ?? "")}`;
     if (toolName === "delete_path") return this.#deletePreview(args, workspace);
     if (toolName === "move_path" || toolName === "copy_path")
       return `${String(args.source ?? "")}\n→ ${String(args.destination ?? "")}`;

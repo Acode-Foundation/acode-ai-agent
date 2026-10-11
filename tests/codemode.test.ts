@@ -183,6 +183,8 @@ function codemodeHarness(options: {
   store?: Record<string, unknown>;
   /** Show an approval prompt for these tools and hold the call until the returned release runs. */
   prompt?: { tools: string[]; release: Promise<void> };
+  models?: unknown;
+  saveImage?: (path: string, image: { data: string; mimeType: string }) => Promise<string>;
 }) {
   const doc = { values: { ...options.store } };
   const approvals: string[] = [];
@@ -191,6 +193,7 @@ function codemodeHarness(options: {
   const tool = createCodemodeTool({
     tools: options.tools,
     deferred: new Set(options.deferred ?? []),
+    saveImage: options.saveImage && ((path, image) => options.saveImage!(path, image)),
     runtime: inProcessRuntime(),
     approve: async (name, args, _api, _signal, onPrompt) => {
       approvals.push(`${name}:${String(args.path)}`);
@@ -205,6 +208,7 @@ function codemodeHarness(options: {
     taskId: 1,
     conversationId: 1,
     callId: "call-1",
+    models: options.models,
     outputWindow: undefined,
     output: (chunk: string) => output.push(chunk),
     diagnostic: () => undefined,
@@ -438,6 +442,11 @@ describe("codemode work log", () => {
         code: 'await tools.read({ path: "a" });\nawait tools["list_dir"]({}); await tools.read({});',
       }),
     ).toMatchObject({ label: "Ran a script", detail: "read, list_dir" });
+    expect(
+      presentTool("codemode", {
+        code: 'const m = await models.getModelOfType("image", "a", "b"); await saveImage("x.png", m);',
+      }),
+    ).toMatchObject({ detail: "models.getModelOfType, saveImage" });
   });
 });
 
@@ -474,4 +483,180 @@ describe("approval prompts", () => {
     );
     expect(shown).toEqual(["a"]);
   });
+});
+
+describe("codemode models", () => {
+  const painter = {
+    provider: "openrouter",
+    id: "google/gemini-2.5-flash-image",
+    api: "openrouter-images",
+  };
+  const judge = { provider: "openrouter", id: "typesafe/jev-1.13", api: "typesafe-system-one" };
+  const usage = (total: number) => ({
+    input: 10,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 10,
+    cost: { input: total, output: 0, cacheRead: 0, cacheWrite: 0, total },
+  });
+  function fakeModels(overrides: Record<string, unknown> = {}) {
+    let active = 0;
+    const stats = { maxActive: 0 };
+    const models = {
+      getModelsOfType: (type: string) =>
+        type === "image" ? [{ ...painter, headers: { Authorization: "secret" } }] : [judge],
+      getAvailableOfType: async (type: string) => (type === "image" ? [painter] : [judge]),
+      getModelOfType: (type: string, provider: string, id: string) =>
+        [painter, judge].find(
+          (model) =>
+            model.provider === provider &&
+            model.id === id &&
+            (type === "image"
+              ? model === painter
+              : type === "classifier"
+                ? model === judge
+                : false),
+        ),
+      generateImages: async () => ({
+        output: [{ type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }],
+        stopReason: "stop",
+        usage: usage(0.04),
+      }),
+      classify: async () => {
+        active += 1;
+        stats.maxActive = Math.max(stats.maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active -= 1;
+        return {
+          answers: { ok: { type: "bool", probability: 0.9 } },
+          stopReason: "stop",
+          usage: usage(0.01),
+        };
+      },
+      ...overrides,
+    };
+    return { models, stats };
+  }
+
+  it("generates images, shows them, and counts their cost", async () => {
+    const { models } = fakeModels();
+    const { run } = codemodeHarness({ tools: [], models });
+    const { result, text } = await run(`
+      const [model] = await models.getAvailableOfType("image");
+      const made = await models.generateImages(model, { input: [{ type: "text", text: "a fox" }] });
+      for (const block of made.output) image(block);
+      return made.stopReason;
+    `);
+    expect(text).toContain("stop");
+    expect(result.content?.some((part) => part.type === "image")).toBe(true);
+    expect(result.usage?.cost.total).toBeCloseTo(0.04);
+    expect(result.details).toMatchObject({
+      calls: [
+        {
+          name: "models.generateImages",
+          args: { model: "openrouter/google/gemini-2.5-flash-image" },
+          status: "ok",
+        },
+      ],
+    });
+  });
+
+  it("notes images the script neither showed nor saved", async () => {
+    const { models } = fakeModels();
+    const { text } = await run(
+      models,
+      `
+      const model = await models.getModelOfType("image", "openrouter", "google/gemini-2.5-flash-image");
+      await models.generateImages(model, { input: [{ type: "text", text: "a fox" }] });
+    `,
+    );
+    expect(text).toContain("neither showed nor saved");
+  });
+
+  it("explains malformed calls and wrong model types", async () => {
+    const { models } = fakeModels();
+    const { text } = await run(
+      models,
+      `
+      const judge = await models.getModelOfType("classifier", "openrouter", "typesafe/jev-1.13");
+      const errors = [];
+      try { await models.classify(judge, { state: {} }); } catch (error) { errors.push(error.message); }
+      try { await models.generateImages(judge, { input: [{ type: "text", text: "x" }] }); } catch (error) { errors.push(error.message); }
+      try { await models.generateImages(undefined, {}); } catch (error) { errors.push(error.message); }
+      return errors.join("\\n");
+    `,
+    );
+    expect(text).toContain("context.questions must map question ids");
+    expect(text).toContain("is a classifier model, not an image model");
+    expect(text).toContain("returns undefined for an unknown provider or id");
+  });
+
+  it("runs at most four model calls at once and sums their cost", async () => {
+    const { models, stats } = fakeModels();
+    const { result } = await run(
+      models,
+      `
+      const judge = await models.getModelOfType("classifier", "openrouter", "typesafe/jev-1.13");
+      const question = { ok: { type: "bool", instructions: "ok?", criteria: { true: "yes", false: "no" } } };
+      await Promise.all(Array.from({ length: 6 }, () => models.classify(judge, { state: { a: 1 }, questions: question })));
+    `,
+    );
+    expect(stats.maxActive).toBe(4);
+    expect(result.usage?.cost.total).toBeCloseTo(0.06);
+  });
+
+  it("accepts a model named by string", async () => {
+    const { models } = fakeModels();
+    const { text } = await run(
+      models,
+      `
+      const a = await models.generateImages("openrouter/google/gemini-2.5-flash-image", { input: [{ type: "text", text: "x" }] });
+      const b = await models.generateImages("google/gemini-2.5-flash-image", { input: [{ type: "text", text: "x" }] });
+      let error = "";
+      try { await models.generateImages("nope/model", { input: [{ type: "text", text: "x" }] }); } catch (e) { error = e.message; }
+      image(a.output[0]); image(b.output[0]);
+      return [a.stopReason, b.stopReason, error];
+    `,
+    );
+    expect(text).toContain('["stop","stop","Unknown image model \\"nope/model\\"');
+  });
+
+  it("never hands scripts a model's request headers", async () => {
+    const { models } = fakeModels();
+    const { text } = await run(models, 'return await models.getModelsOfType("image");');
+    expect(text).toContain("gemini-2.5-flash-image");
+    expect(text).not.toContain("secret");
+  });
+
+  it("saves images through the host and records the call", async () => {
+    const { models } = fakeModels();
+    const saved: Array<{ path: string; mimeType: string }> = [];
+    const { run: runWithSave } = codemodeHarness({
+      tools: [],
+      models,
+      saveImage: async (path, image) => {
+        saved.push({ path, mimeType: image.mimeType });
+        return path;
+      },
+    });
+    const { result, text } = await runWithSave(`
+      const model = await models.getModelOfType("image", "openrouter", "google/gemini-2.5-flash-image");
+      const made = await models.generateImages(model, { input: [{ type: "text", text: "an icon" }] });
+      return await saveImage("assets/icon.png", made.output[0]);
+    `);
+    expect(saved).toEqual([{ path: "assets/icon.png", mimeType: "image/png" }]);
+    expect(text).toContain("assets/icon.png");
+    expect(text).not.toContain("neither showed nor saved");
+    expect(result.details).toMatchObject({
+      calls: [
+        { name: "models.generateImages" },
+        { name: "saveImage", args: { path: "assets/icon.png" }, status: "ok" },
+      ],
+    });
+  });
+
+  function run(models: unknown, code: string) {
+    return codemodeHarness({ tools: [], models }).run(code);
+  }
 });

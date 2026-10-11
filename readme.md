@@ -175,6 +175,7 @@ The `codemode` tool is on by default (**Pi settings → Codemode** turns it off)
 - Nested calls are validated and approved like direct ones (the prompt says "Codemode"), and edits are covered by **Undo**. Calls made before a script fails are not undone.
 - `store()` / `load()` keep small JSON values across scripts in the same chat.
 - Subagents, `ask_user_question` and `codemode` itself can't be called from scripts.
+- Scripts can run image and classifier models with the chat's credentials through `models` (for example OpenRouter's image models): `models.getAvailableOfType("image")`, `models.generateImages(model, { input })`, `models.classify(model, { state, questions })`. `saveImage(path, image)` writes a generated image into the project after the usual approval. Their cost counts toward the session. OpenRouter needs a credit balance for image output.
 
 **Other**
 

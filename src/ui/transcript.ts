@@ -30,6 +30,8 @@ export type WorkEntry = {
   durationMs?: number;
   /** The tool's own details, kept for tools whose rows draw them (scripts). */
   details?: unknown;
+  /** Images a script showed with `image()`, drawn under its output. */
+  images?: Array<{ data: string; mimeType: string }>;
 };
 
 export type ChatTurn = {
@@ -266,6 +268,12 @@ export function presentTool(
       return { kind: "other", label: "Asked you", detail: askDetail(args, output) };
     case "codemode":
       return { kind: "other", label: "Ran a script", detail: scriptToolsDetail(args) };
+    case "models.generateImages":
+      return { kind: "other", label: "Generated images", detail: firstString(args, ["model"]) };
+    case "models.classify":
+      return { kind: "other", label: "Classified", detail: firstString(args, ["model"]) };
+    case "saveImage":
+      return { kind: "change", label: "Saved image", detail: path };
     case "tool_search":
       return { kind: "search", label: "Loaded tools", detail: loadedToolsDetail(args, output) };
     default:
@@ -429,6 +437,7 @@ function projectTurn(allMessages: AgentMessage[], streaming: boolean): ChatTurn 
         existing.output = part.text;
         existing.details = part.details;
         existing.durationMs = part.durationMs;
+        existing.images = part.images;
         existing.detail =
           presentTool(part.name, existing.args ?? {}, part.text).detail ?? existing.detail;
       } else {
@@ -523,6 +532,7 @@ type FlatPart =
       error: boolean;
       details?: unknown;
       durationMs?: number;
+      images?: Array<{ data: string; mimeType: string }>;
     };
 
 function flatten(messages: AgentMessage[]): FlatPart[] {
@@ -549,6 +559,12 @@ function flatten(messages: AgentMessage[]): FlatPart[] {
         error: message.isError,
         details: message.toolName === "codemode" ? message.details : undefined,
         durationMs: message.durationMs,
+        images:
+          message.toolName === "codemode"
+            ? message.content.flatMap((part) =>
+                part.type === "image" ? [{ data: part.data, mimeType: part.mimeType }] : [],
+              )
+            : undefined,
       });
     }
   }
@@ -751,9 +767,9 @@ function scriptToolsDetail(args: Record<string, unknown>): string | undefined {
   if (!code) return undefined;
   const names = new Set<string>();
   for (const match of code.matchAll(
-    /\btools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*["']([^"']+)["']\s*\])/g,
+    /\b(?:tools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*["']([^"']+)["']\s*\])|(models\.[A-Za-z]+|saveImage)\s*\()/g,
   ))
-    names.add(match[1] ?? match[2]!);
+    names.add(match[1] ?? match[2] ?? match[3]!);
   return names.size
     ? [...names].join(", ")
     : inlinePreview(code.replace(/^\/\/ @options:.*$/m, ""));

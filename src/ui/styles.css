@@ -2698,6 +2698,19 @@
   /* The card animates open; anchoring would scroll the box away from its first line. */
   overflow-anchor: none;
 }
+.script-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
+}
+.script-images img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
 .script-error {
   border-left: 2px solid color-mix(in srgb, var(--danger) 55%, transparent);
   border-radius: 0 8px 8px 0;
