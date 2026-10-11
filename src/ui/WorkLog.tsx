@@ -304,7 +304,9 @@ function SubagentCard({
           .replace(/^\[error\]\s*/m, "")
           .trim()
       : undefined;
-  const meta = running ? entry.output || "Starting" : state;
+  const meta = running
+    ? entry.output || "Starting"
+    : [state, took(entry.durationMs)].filter(Boolean).join(" · ");
   const toggle = () =>
     setOpen((current) => {
       workRowOpen.set(key, !current);
@@ -570,6 +572,11 @@ function callLine(name: string, args: Record<string, unknown>): string {
   return detail ? `${name} ${detail}` : name;
 }
 
+/** A finished step's recorded run time, shown from one second up so quick steps stay quiet. */
+function took(ms: number | undefined): string | undefined {
+  return ms !== undefined && ms >= 1_000 ? formatCallDuration(ms) : undefined;
+}
+
 function formatCallDuration(ms: number): string {
   if (ms < 1_000) return `${Math.max(0, Math.round(ms))}ms`;
   if (ms < 60_000) return `${(ms / 1_000).toFixed(1)}s`;
@@ -643,6 +650,13 @@ function ToolRow({
         <span class="work-live">
           <Elapsed since={entry.startedAt} />
           <LoaderCircle class="work-spin" size={12} strokeWidth={2.4} aria-hidden="true" />
+        </span>
+      ) : took(entry.durationMs) ? (
+        <span class="work-tail">
+          <span class="work-took" title="How long this step ran">
+            {took(entry.durationMs)}
+          </span>
+          {tail}
         </span>
       ) : (
         tail

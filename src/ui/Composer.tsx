@@ -9,6 +9,7 @@ import {
   Send,
   Settings,
   Square,
+  Pencil,
 } from "lucide-preact";
 import { forwardRef } from "preact/compat";
 import {
@@ -64,6 +65,8 @@ export type ComposerHandle = {
   restore: (draft: ComposerDraft) => void;
   /** Add text, `@path` mentions, and attachments at the caret, keeping the current draft. */
   insert: (draft: ComposerDraft) => void;
+  /** The current draft, to put back later (editing a prompt sets the composer aside). */
+  getDraft: () => ComposerDraft;
   focus: () => void;
 };
 
@@ -87,6 +90,8 @@ type Props = {
   queued: QueuedPrompt[];
   onFocusComposer: () => void;
   onSubmit: (draft: ComposerDraft, mode: "steer" | "followUp") => Promise<void>;
+  /** Set while the draft is an earlier prompt being edited; sending replaces that prompt. */
+  editing?: { onCancel: () => void };
   onStop: () => void;
   onToast: (message: string) => void;
   onPreviewAttachment: (file: {
@@ -192,6 +197,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
         }
         refresh();
         root.focus();
+      },
+      getDraft() {
+        const root = editor.current;
+        return root ? readDraft(root, attachments.current) : { text: "", images: [], files: [] };
       },
       focus() {
         editor.current?.focus();
@@ -441,14 +450,25 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
               ))}
             </div>
           )}
+          {props.editing && (
+            <div class="composer-editing" role="status">
+              <Pencil size={13} strokeWidth={2} aria-hidden="true" />
+              <span>Editing your prompt · sending replaces it and reruns from there</span>
+              <button type="button" onClick={props.editing.onCancel}>
+                Cancel
+              </button>
+            </div>
+          )}
           <div class="composer-field">
             {empty && (
               <span class="composer-placeholder">
                 {props.disabled
                   ? (props.disabledReason ?? "Open a folder to begin")
-                  : props.running
-                    ? "Steer now, or queue a follow-up…"
-                    : "Ask anything…  / commands  @ files"}
+                  : props.editing
+                    ? "Edit your prompt…"
+                    : props.running
+                      ? "Steer now, or queue a follow-up…"
+                      : "Ask anything…  / commands  @ files"}
               </span>
             )}
             <div

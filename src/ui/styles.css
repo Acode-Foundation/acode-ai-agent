@@ -377,6 +377,77 @@
   color: var(--fg);
   opacity: 1;
 }
+/* Shown on an empty branch when the chat has history on another one. */
+.branch-restore {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+  margin: 16px auto 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  font-size: 13px;
+}
+.branch-restore span {
+  flex: 1;
+}
+.branch-restore button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+  font: inherit;
+  cursor: pointer;
+}
+/* ‹ 1/2 › between versions of an edited or retried prompt. */
+.version-switcher {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.version-switcher button {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.version-switcher button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+.version-switcher button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.version-count {
+  min-width: 26px;
+  text-align: center;
+}
+/* The prompt loaded into the composer for editing; it is replaced when the edit is sent. */
+.message.being-edited .bubble.user {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 3px;
+  opacity: 0.7;
+}
+.copy-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.message-action svg {
+  width: 14px;
+  height: 14px;
+}
 .copy-btn.copied {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 40%, transparent);
@@ -549,6 +620,20 @@
 .work-row-toggle > .work-live {
   grid-column: 4;
   justify-self: center;
+}
+/* A finished step's run time, before its chevron or open-file icon. */
+.work-row-toggle > .work-tail {
+  grid-column: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: end;
+}
+.work-took {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 .work-live {
   display: inline-flex;
@@ -2651,6 +2736,37 @@
   color: var(--muted);
   font-size: 12px;
   padding: 4px 2px;
+}
+/* Above the composer while it holds an earlier prompt being edited. */
+.composer-editing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 6px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--fg);
+  font-size: 12px;
+}
+.composer-editing svg {
+  flex: none;
+  color: var(--accent);
+}
+.composer-editing span {
+  flex: 1;
+  min-width: 0;
+}
+.composer-editing button {
+  flex: none;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
 }
 .composer-field {
   position: relative;

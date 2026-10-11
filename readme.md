@@ -65,6 +65,13 @@ Sessions are stored per project. The sidebar lists and searches them and can ope
 - **Stop** ends the run. Sending a message mid-run steers it; **Queue follow-up** holds a message until the run finishes.
 - When it's done the log collapses to "Worked for …". Tap it to look back.
 
+**Branching**
+
+- Under each prompt, **Edit** loads it into the composer with its mentions, files, and images, so `@`, attachments, and commands all work. Sending replaces the prompt where it is and reruns from there, keeping the original as an earlier version; **Cancel** puts back whatever you had typed. **Fork** starts a new chat from that prompt.
+- Under each answer, **Retry** sends the same prompt again on a new branch, and **Fork** copies the chat up to that answer into a new chat.
+- A prompt that was edited or retried shows `‹ 1/2 ›` to switch between its versions; each brings back the rest of its branch.
+- Earlier branches also stay in `/tree`, which shows how much context each point carries before you move there. If you ever land on an empty branch, **Restore** brings back the latest messages.
+
 **Reviewing changes**
 
 - In **Ask** mode, each edit shows the removed (`−`) and added (`+`) lines before you approve.

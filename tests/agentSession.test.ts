@@ -561,3 +561,41 @@ test("a compaction that summarizes away a loaded tool unloads it at the next pro
   expect(offered.at(-1)).not.toContain("rename_path");
   expect(offered.at(-1)).toContain("tool_search");
 });
+
+test("previews the context at a tree entry without branching there", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-context-at"));
+  env.faux.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
+  await session.prompt("first");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 2);
+  await session.prompt("second");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length === 4);
+
+  const items = await session.treeItems();
+  const firstAnswer = items.find((item) => item.kind === "assistant")!;
+  const last = items.at(-1)!;
+  const early = await session.contextAt(firstAnswer.id);
+  const now = await session.contextAt(last.id);
+  expect(early.messages).toBe(2);
+  expect(now.messages).toBe(4);
+  expect(now.tokens).toBeGreaterThan(early.tokens);
+  // Still on the same branch.
+  expect(session.snapshot.messages).toHaveLength(4);
+});
+
+test("returns a sent prompt with its images for editing", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-prompt-at"));
+  env.faux.setResponses([fauxAssistantMessage("seen")]);
+  const image = { type: "image" as const, data: "iVBORw0KGgo=", mimeType: "image/png" };
+  await session.prompt("what is in this picture?", "steer", [image]);
+  const done = await settle(
+    session,
+    (snapshot) => idle(snapshot) && snapshot.messages.length === 2,
+  );
+  const user = done.messages[0] as { entryId?: number };
+  const prompt = await session.promptAt(String(user.entryId));
+  expect(prompt.text).toBe("what is in this picture?");
+  expect(prompt.images).toEqual([expect.objectContaining({ mimeType: "image/png" })]);
+  await expect(session.promptAt(String((user.entryId ?? 0) + 1))).rejects.toThrow();
+});

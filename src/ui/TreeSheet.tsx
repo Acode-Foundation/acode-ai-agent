@@ -34,6 +34,7 @@ export function TreeSheet({
   const [folded, setFolded] = useState<string[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [contextSize, setContextSize] = useState<{ id: string; text: string }>();
   const listRef = useRef<HTMLDivElement>(null);
   const centerNext = useRef(true);
 
@@ -63,6 +64,28 @@ export function TreeSheet({
     rows.find((row) => row.id === selectedId) ?? items.find((item) => item.id === selectedId);
   const selectedIndex = rows.findIndex((row) => row.id === selectedId);
   const branches = useMemo(() => countTreeBranches(items), [items]);
+
+  // How much context the selected point carries, from Pi's view as of that entry.
+  useEffect(() => {
+    if (!selectedId) return;
+    let live = true;
+    const timer = window.setTimeout(() => {
+      void controller
+        .contextAt(selectedId)
+        .then((size) => {
+          if (live && size)
+            setContextSize({
+              id: selectedId,
+              text: `${formatTokens(size.tokens)} tokens · ${size.messages} message${size.messages === 1 ? "" : "s"} in context`,
+            });
+        })
+        .catch(() => undefined);
+    }, 120);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [controller, selectedId]);
   const turns = useMemo(
     () =>
       items.filter(
@@ -308,6 +331,7 @@ export function TreeSheet({
                   <small>
                     {selectedIndex >= 0 ? `${selectedIndex + 1} of ${rows.length}` : "Selected"}
                     {" · "}
+                    {contextSize?.id === selected.id ? `${contextSize.text} · ` : ""}
                     {selected.current
                       ? "Current leaf"
                       : selected.kind === "user" && mode === "tree"
@@ -404,4 +428,9 @@ function cssEscape(value: string): string {
   return typeof CSS !== "undefined" && typeof CSS.escape === "function"
     ? CSS.escape(value)
     : value.replace(/"/g, "\\22");
+}
+
+function formatTokens(tokens: number): string {
+  if (tokens < 1_000) return `~${tokens}`;
+  return `~${(tokens / 1_000).toFixed(tokens < 10_000 ? 1 : 0)}k`;
 }

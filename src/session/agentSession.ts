@@ -414,6 +414,33 @@ export class AgentSession {
     return undefined;
   }
 
+  /**
+   * What the model would see from a point in the tree, without branching there: the context
+   * Pi derives as of that entry (after compaction), as a message count and token estimate.
+   */
+  async contextAt(target: string): Promise<{ messages: number; tokens: number }> {
+    const entryId = Number(target) as EntryId;
+    const owner = await this.#ownerOf(entryId);
+    if (!owner) throw new Error("That message is no longer in this chat.");
+    const view = await owner.context(context, { at: entryId });
+    const messages = view.messages.filter((message) => message.role !== "system");
+    return {
+      messages: messages.length,
+      tokens: estimateContextTokens(view.messages as Message[]).tokens,
+    };
+  }
+
+  /** A prompt as it was sent (text, with attached files, and images), for editing it again. */
+  async promptAt(target: string): Promise<RestoredPrompt> {
+    const entryId = Number(target) as EntryId;
+    const owner = await this.#ownerOf(entryId);
+    if (!owner) throw new Error("That message is no longer in this chat.");
+    const entry = (await historyEntries(owner, context, entryId)).at(-1);
+    if (!entry || entry.id !== entryId || !UserEntry.is(entry))
+      throw new Error("Only your own prompts can be edited.");
+    return restorePrompt((entry.model![0] as { content: unknown }).content);
+  }
+
   /** Visible history up to an entry (or all of it), for copying into another chat. */
   async historyUntil(target?: string): Promise<{ entries: EntryDraft[]; restoredText?: string }> {
     const conversation = this.#requireConversation();

@@ -212,3 +212,60 @@ function prioritizeActive(list: SessionTreeItem[]): SessionTreeItem[] {
   for (const item of list) (item.active ? active : rest).push(item);
   return active.length && rest.length ? [...active, ...rest] : list;
 }
+
+/** A prompt that was edited or retried: its versions in order, and where each one continues. */
+export type PromptVersions = {
+  /** This version's position, from 0. */
+  index: number;
+  /** Each version's prompt entry, so the switcher can follow a switch before the tree reloads. */
+  ids: string[];
+  /** For each version, the newest point of its branch, to switch to. */
+  targets: string[];
+};
+
+/**
+ * Versions of each prompt on the active branch, like the `‹ 1/2 ›` switcher of chat apps: the
+ * user messages that share its parent, oldest first. Switching opens the newest entry under a
+ * version, so the whole branch comes back. Prompts without siblings are left out.
+ */
+export function promptVersions(items: readonly SessionTreeItem[]): Map<string, PromptVersions> {
+  const children = new Map<string | null, SessionTreeItem[]>();
+  for (const item of items) {
+    const list = children.get(item.parentId) ?? [];
+    list.push(item);
+    children.set(item.parentId, list);
+  }
+  const newestUnder = (root: SessionTreeItem): SessionTreeItem => {
+    let newest = root;
+    const stack = [root];
+    while (stack.length) {
+      const item = stack.pop()!;
+      if (Number(item.id) > Number(newest.id)) newest = item;
+      stack.push(...(children.get(item.id) ?? []));
+    }
+    return newest;
+  };
+  const versions = new Map<string, PromptVersions>();
+  for (const item of items) {
+    if (item.kind !== "user" || !item.active) continue;
+    const siblings = (children.get(item.parentId) ?? [])
+      .filter((sibling) => sibling.kind === "user")
+      .sort((a, b) => Number(a.id) - Number(b.id));
+    if (siblings.length < 2) continue;
+    versions.set(item.id, {
+      index: siblings.findIndex((sibling) => sibling.id === item.id),
+      ids: siblings.map((sibling) => sibling.id),
+      targets: siblings.map((sibling) => newestUnder(sibling).id),
+    });
+  }
+  return versions;
+}
+
+/**
+ * The newest entry when none of the chat's entries is on the active branch, as after branching
+ * before the first prompt; the chat shows it as a way back. Otherwise nothing.
+ */
+export function newestOffBranch(items: readonly SessionTreeItem[]): string | undefined {
+  if (!items.length || items.some((item) => item.active)) return undefined;
+  return items.reduce((newest, item) => (Number(item.id) > Number(newest.id) ? item : newest)).id;
+}

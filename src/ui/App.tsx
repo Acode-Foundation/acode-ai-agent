@@ -6,7 +6,10 @@ import {
   ChevronRight,
   Ellipsis,
   Folder,
+  GitFork,
+  Pencil,
   Plus,
+  RotateCcw,
   Trash2,
   X,
 } from "lucide-preact";
@@ -36,12 +39,13 @@ import { Collapse } from "./Collapse";
 import { Combobox } from "./Combobox";
 import { Composer, UserMessage, type ComposerHandle } from "./Composer";
 import { CopyButton, copyText } from "./CopyButton";
-import { MessageMeta } from "./MessageMeta";
+import { MessageAction, MessageMeta, VersionSwitcher } from "./MessageMeta";
 import { ErrorNotice } from "./ErrorNotice";
 import { fadeInUp, fadeSlide } from "./motion";
 import { Markdown } from "./markdown";
 import { Sheet } from "./Sheet";
 import { TreeSheet } from "./TreeSheet";
+import { newestOffBranch, promptVersions, type PromptVersions } from "./sessionTree";
 import { buildTurns, formatWorkDuration, turnDurationMs, type ChatTurn } from "./transcript";
 import { useChatScroll } from "./useChatScroll";
 import { AskCard } from "./AskCard";
@@ -138,6 +142,17 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     running,
   ]);
 
+  /**
+   * The earlier prompt loaded into the composer for editing, and the draft it set aside. The
+   * chat does not change until the edit is sent; Cancel puts the set-aside draft back.
+   */
+  const [editing, setEditing] = useState<{
+    turnId: string;
+    entryId: string;
+    saved: ComposerDraft;
+  }>();
+  useEffect(() => setEditing(undefined), [state.activeChatId]);
+
   const send = useCallback(
     async (draft: ComposerDraft, mode: "steer" | "followUp" = "steer") => {
       if (!draft.text.trim() && !draft.images.length && !draft.files.length) return;
@@ -159,6 +174,11 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           if (result.message) showToast(result.message);
           return;
         }
+        if (editing) {
+          // Replace the edited prompt: branch just before it, then send the new draft there.
+          await controller.navigateTree(editing.entryId);
+          setEditing(undefined);
+        }
         await controller.send(promptTextFromDraft(draft), mode, draft.images);
       } catch (error) {
         composerRef.current?.restore(draft);
@@ -166,7 +186,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
         throw error;
       }
     },
-    [controller, pin],
+    [controller, pin, editing],
   );
 
   useEffect(
@@ -236,6 +256,121 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     [controller, state.edits],
   );
 
+  // Versions of edited or retried prompts, from the session tree, for the ‹ 1/2 › switcher.
+  const [versions, setVersions] = useState<Map<string, PromptVersions>>(new Map());
+  // On an empty branch of a chat that has history elsewhere: the newest entry to restore.
+  const [elsewhere, setElsewhere] = useState<string>();
+  const versionsKey = `${state.activeChatId}:${state.messages.length}:${state.messages.at(-1)?.timestamp ?? ""}`;
+  useEffect(() => {
+    if (running) return;
+    let live = true;
+    void controller
+      .getTreeItems()
+      .then((items) => {
+        if (!live) return;
+        setVersions(promptVersions(items));
+        setElsewhere(newestOffBranch(items));
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [controller, versionsKey, running]);
+
+  /** Load a prompt into the composer, with its mentions, files, and images, for editing. */
+  const startEdit = useCallback(
+    async (turn: ChatTurn) => {
+      try {
+        const prompt = await controller.promptAt(String(turn.entryId));
+        if (!prompt) return;
+        const composer = composerRef.current;
+        const saved = editing?.saved ?? composer?.getDraft() ?? { text: "", images: [], files: [] };
+        composer?.restore(
+          draftFromParts(
+            prompt.text,
+            prompt.images.map((image, index) => ({
+              ...image,
+              id: `edit-${index}-${image.mimeType}-${image.data.length}`,
+              name: "image",
+            })),
+          ),
+        );
+        composer?.focus();
+        setEditing({ turnId: turn.id, entryId: String(turn.entryId), saved });
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [controller, editing],
+  );
+
+  const cancelEdit = useCallback(() => {
+    if (editing) composerRef.current?.restore(editing.saved);
+    setEditing(undefined);
+  }, [editing]);
+
+  /**
+   * Message actions, after Pi's `/tree` and `/fork`: retrying branches before a prompt and
+   * sends it again; forking starts a new chat. Every earlier version stays reachable through the
+   * switcher and `/tree`. Editing goes through the composer (`startEdit`).
+   */
+  const branchAction = useCallback(
+    async (action: "fork" | "retry" | "fork-after", turn: ChatTurn, next?: ChatTurn) => {
+      try {
+        const id = String(turn.entryId);
+        if (action === "retry") {
+          const text = await controller.navigateTree(id);
+          if (text) await controller.send(text);
+        } else if (action === "fork") {
+          const text = await controller.forkConversation(id);
+          if (text) composerRef.current?.setText(text);
+          showToast("Forked into a new chat");
+        } else {
+          // Everything through this answer: the history before the next prompt, or all of it.
+          await controller.forkConversation(
+            next?.entryId === undefined ? undefined : String(next.entryId),
+          );
+          showToast("Forked into a new chat");
+        }
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [controller],
+  );
+
+  /**
+   * Show another version of a prompt: the newest point of its branch. The switcher moves at
+   * once, keyed by the version's prompt, so the row does not lose it while the branch loads.
+   */
+  const switchVersion = useCallback(
+    async (current: PromptVersions, index: number) => {
+      const target = current.targets[index];
+      const prompt = current.ids[index];
+      if (target === undefined || prompt === undefined) return;
+      setVersions((map) => new Map(map).set(prompt, { ...current, index }));
+      try {
+        // A version that never got an answer ends at its prompt, which comes back for editing.
+        const text = await controller.navigateTree(target);
+        if (text) composerRef.current?.setText(text);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [controller],
+  );
+
+  const restoreBranch = useCallback(
+    async (target: string) => {
+      try {
+        await controller.navigateTree(target);
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [controller],
+  );
+
   const resume = useCallback(async () => {
     setResuming(true);
     try {
@@ -282,16 +417,28 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
 
       <main class="conversation" ref={scrollRef}>
         {turns.length === 0 ? (
-          <EmptyState
-            hasWorkspace={Boolean(state.workspace)}
-            onPrompt={(value) => composerRef.current?.setText(value)}
-          />
+          <>
+            {elsewhere && !running && (
+              <div class="branch-restore" role="status">
+                <span>Your earlier messages are on another branch.</span>
+                <button type="button" onClick={() => void restoreBranch(elsewhere)}>
+                  Restore
+                </button>
+              </div>
+            )}
+            <EmptyState
+              hasWorkspace={Boolean(state.workspace)}
+              onPrompt={(value) => composerRef.current?.setText(value)}
+            />
+          </>
         ) : (
           <div class="thread">
-            {turns.map((turn) => (
+            {turns.map((turn, turnIndex) => (
               <section class="turn" key={turn.id}>
                 {(turn.userParts?.length || turn.user) && (
-                  <div class="message from-user">
+                  <div
+                    class={`message from-user${editing?.turnId === turn.id ? " being-edited" : ""}`}
+                  >
                     <UserMessage
                       parts={turn.userParts}
                       text={turn.user}
@@ -316,6 +463,35 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                       timestamp={turn.startedAt}
                       copyText={turn.user}
                       copyLabel="Copy message"
+                      actions={
+                        turn.entryId !== undefined && (
+                          <>
+                            <MessageAction
+                              label="Edit"
+                              disabled={running}
+                              onClick={() => void startEdit(turn)}
+                            >
+                              <Pencil size={14} strokeWidth={2} />
+                            </MessageAction>
+                            <MessageAction
+                              label="Fork into a new chat"
+                              disabled={running}
+                              onClick={() => void branchAction("fork", turn)}
+                            >
+                              <GitFork size={14} strokeWidth={2} />
+                            </MessageAction>
+                            {turn.entryId !== undefined && versions.has(String(turn.entryId)) && (
+                              <VersionSwitcher
+                                versions={versions.get(String(turn.entryId))!}
+                                disabled={running}
+                                onSwitch={(index) =>
+                                  void switchVersion(versions.get(String(turn.entryId))!, index)
+                                }
+                              />
+                            )}
+                          </>
+                        )
+                      }
                     />
                   </div>
                 )}
@@ -344,6 +520,30 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                         detail={answerDuration(turn)}
                         copyText={turn.answer}
                         copyLabel="Copy response"
+                        actions={
+                          turn.entryId !== undefined && (
+                            <>
+                              {retryable(turn) && (
+                                <MessageAction
+                                  label="Retry"
+                                  disabled={running}
+                                  onClick={() => void branchAction("retry", turn)}
+                                >
+                                  <RotateCcw size={14} strokeWidth={2} />
+                                </MessageAction>
+                              )}
+                              <MessageAction
+                                label="Fork from here into a new chat"
+                                disabled={running}
+                                onClick={() =>
+                                  void branchAction("fork-after", turn, turns[turnIndex + 1])
+                                }
+                              >
+                                <GitFork size={14} strokeWidth={2} />
+                              </MessageAction>
+                            </>
+                          )
+                        }
                       />
                     )}
                   </div>
@@ -441,6 +641,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           ref={composerRef}
           controller={controller}
           running={running}
+          editing={editing ? { onCancel: cancelEdit } : undefined}
           disabled={!state.workspace || Boolean(state.recovery)}
           disabledReason={
             state.workspace && state.recovery
@@ -2124,6 +2325,20 @@ function ApprovalPanel({
 }
 
 /** The work log already says how long a turn with tool calls took. */
+/**
+ * Edit and retry resend the prompt's text, so prompts with images or attached files are left
+ * out; mentions and pasted text are part of the text.
+ */
+function retryable(turn: ChatTurn): boolean {
+  return (turn.userParts ?? []).every(
+    (part) =>
+      part.type === "text" ||
+      part.type === "file" ||
+      part.type === "paste" ||
+      (part.type === "attachment" && part.kind === "paste"),
+  );
+}
+
 function answerDuration(turn: ChatTurn): string | undefined {
   if (turn.work.length) return undefined;
   const duration = turnDurationMs(turn);

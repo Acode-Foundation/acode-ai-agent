@@ -371,6 +371,14 @@ export class AgentController {
     return this.#activeSession()?.treeItems() ?? [];
   }
 
+  async contextAt(targetId: string): Promise<{ messages: number; tokens: number } | undefined> {
+    return this.#activeSession()?.contextAt(targetId);
+  }
+
+  async promptAt(targetId: string): Promise<RestoredPrompt | undefined> {
+    return this.#activeSession()?.promptAt(targetId);
+  }
+
   async navigateTree(targetId: string): Promise<string | undefined> {
     return this.#activeSession()?.navigateTree(targetId);
   }
