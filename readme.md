@@ -186,6 +186,7 @@ The `codemode` tool is on by default (**Pi settings → Codemode** turns it off)
 **Deferred tools**
 
 Tools the agent seldom needs are not sent with every request: the file operation tools and `ask_user_question`. The system prompt names them, and the agent loads one with `tool_search` when it needs it. A loaded tool stays available on that chat branch until a compaction summarizes away both its loading and its use; then it is hidden again at the next prompt and can be reloaded. Codemode scripts can call deferred tools without loading them. This saves about 740 tokens per request on folders without `bash` and about 180 on Terminal folders.
+
 - `load_skill`: load a skill into context
 
 ## Permissions
