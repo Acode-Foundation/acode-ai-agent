@@ -260,3 +260,16 @@ function installHttp(http: {
 }): void {
   (globalThis as { cordova?: { plugin: { http: unknown } } }).cordova = { plugin: { http } };
 }
+
+test("leaves the WebView's own origin to the WebView", async () => {
+  const httpStream = vi.fn(async () => new Response("native"));
+  vi.stubGlobal("system", { httpStream });
+  vi.stubGlobal("location", { origin: "https://localhost" });
+  // The WebView answers its own origin without a server; here nothing listens, so it fails fast.
+  await nativeFetch("https://localhost/__cdvfile_files-external__/plugins/x/asset.wasm").catch(
+    () => undefined,
+  );
+  expect(httpStream).not.toHaveBeenCalled();
+  await nativeFetch("https://api.example.test/chat");
+  expect(httpStream).toHaveBeenCalledOnce();
+});

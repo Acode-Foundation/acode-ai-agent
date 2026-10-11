@@ -82,6 +82,16 @@ export function getCordovaHttp(): CordovaHttp | undefined {
   return http && typeof http.sendRequest === "function" ? http : undefined;
 }
 
+function isOwnOrigin(url: string): boolean {
+  const origin = globalThis.location?.origin;
+  if (!origin || origin === "null") return false;
+  try {
+    return new URL(url).origin === origin;
+  } catch {
+    return false;
+  }
+}
+
 /** Prefer Acode's native response stream, with buffered HTTP for older versions. */
 export const nativeFetch: typeof fetch = async (input, init) => {
   const system = getStreamingSystem();
@@ -93,7 +103,9 @@ export const nativeFetch: typeof fetch = async (input, init) => {
 
   const request = input instanceof Request && !init ? input : new Request(input, init);
   const url = request.url;
-  if (!/^https?:\/\//i.test(url)) return originalFetch(request);
+  // The WebView serves its own origin (app and plugin files at https://localhost) without a
+  // network server, so only the WebView's fetch can load it.
+  if (!/^https?:\/\//i.test(url) || isOwnOrigin(url)) return originalFetch(request);
 
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {
