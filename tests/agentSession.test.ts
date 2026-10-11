@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { createModels } from "@earendil-works/pi-ai";
+import { createModels, getCurrentTools } from "@earendil-works/pi-ai";
 import {
   fauxAssistantMessage,
   fauxProvider,
@@ -471,4 +471,93 @@ test("stopping one subagent ends just that call and the run continues", async ()
   const result = done.messages.find((message) => message.role === "toolResult");
   expect(result?.role === "toolResult" && result.isError).toBe(true);
   expect(done.isRunning).toBe(false);
+});
+
+test("deferred tools stay out of requests until tool_search loads them, and stay loaded", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-deferred"));
+  const offered: string[][] = [];
+  const step =
+    (message: ReturnType<typeof fauxAssistantMessage>): FauxResponseStep =>
+    (context) => {
+      offered.push(getCurrentTools(context.messages).map((tool) => tool.name));
+      return message;
+    };
+  env.faux.setResponses([
+    step(
+      fauxAssistantMessage([fauxToolCall("rename_path", { path: "a.txt", new_name: "b.txt" })], {
+        stopReason: "toolUse",
+      }),
+    ),
+    step(
+      fauxAssistantMessage([fauxToolCall("tool_search", { query: "rename a file" })], {
+        stopReason: "toolUse",
+      }),
+    ),
+    step(fauxAssistantMessage("Loaded.")),
+  ]);
+
+  await session.prompt("rename a.txt");
+  const done = await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 6);
+  const results = done.messages.filter((message) => message.role === "toolResult");
+  // Calling a deferred tool before loading it fails without running it.
+  expect(results[0]?.role === "toolResult" && results[0].isError).toBe(true);
+  expect(JSON.stringify(results[1])).toContain("rename_path");
+
+  expect(offered[0]).toContain("tool_search");
+  expect(offered[0]).toContain("read");
+  for (const name of ["rename_path", "move_path", "delete_path", "ask_user_question"])
+    expect(offered[0]).not.toContain(name);
+  expect(offered[2]).toContain("rename_path");
+  expect(offered[2]).not.toContain("delete_path");
+
+  // A later prompt keeps what this branch loaded.
+  env.faux.setResponses([step(fauxAssistantMessage("Still here."))]);
+  await session.prompt("thanks");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 8);
+  expect(offered[3]).toContain("rename_path");
+  expect(offered[3]).not.toContain("ask_user_question");
+});
+
+test("a compaction that summarizes away a loaded tool unloads it at the next prompt", async () => {
+  const env = environment();
+  env.settings.compactionKeepRecentTokens = 1;
+  const { session } = await env.open(env.newMeta("chat-unload"));
+  const offered: string[][] = [];
+  const step =
+    (message: ReturnType<typeof fauxAssistantMessage>): FauxResponseStep =>
+    (context) => {
+      offered.push(getCurrentTools(context.messages).map((tool) => tool.name));
+      return message;
+    };
+  env.faux.setResponses([
+    step(
+      fauxAssistantMessage([fauxToolCall("tool_search", { query: "rename_path" })], {
+        stopReason: "toolUse",
+      }),
+    ),
+    step(fauxAssistantMessage("Loaded.")),
+  ]);
+  await session.prompt("load the rename tool");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 4);
+  expect(offered[1]).toContain("rename_path");
+
+  // Without a compaction, the load is still in context: the tool stays.
+  env.faux.appendResponses([step(fauxAssistantMessage("ok"))]);
+  await session.prompt("next");
+  await settle(session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 6);
+  expect(offered[2]).toContain("rename_path");
+
+  env.faux.appendResponses([fauxAssistantMessage("Summary: loaded a tool earlier.")]);
+  await session.compact();
+  await settle(session, (snapshot) =>
+    snapshot.messages.some((message) => message.role === "compactionSummary"),
+  );
+  env.faux.appendResponses([step(fauxAssistantMessage("after compaction"))]);
+  await session.prompt("and now?");
+  await settle(session, (snapshot) =>
+    snapshot.messages.some((message) => JSON.stringify(message).includes("after compaction")),
+  );
+  expect(offered.at(-1)).not.toContain("rename_path");
+  expect(offered.at(-1)).toContain("tool_search");
 });

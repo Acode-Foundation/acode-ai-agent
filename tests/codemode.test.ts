@@ -178,6 +178,7 @@ function fakeTool(name: string, run: (args: Record<string, unknown>) => string):
 function codemodeHarness(options: {
   tools: ToolRegistration[];
   active?: string[];
+  deferred?: string[];
   deny?: string[];
   store?: Record<string, unknown>;
   /** Show an approval prompt for these tools and hold the call until the returned release runs. */
@@ -189,6 +190,7 @@ function codemodeHarness(options: {
   const output: string[] = [];
   const tool = createCodemodeTool({
     tools: options.tools,
+    deferred: new Set(options.deferred ?? []),
     runtime: inProcessRuntime(),
     approve: async (name, args, _api, _signal, onPrompt) => {
       approvals.push(`${name}:${String(args.path)}`);
@@ -285,6 +287,16 @@ describe("codemode tool", () => {
     expect(text).toContain('rejected: Validation failed for tool "write"');
     // `read` is not active in this conversation, so scripts cannot call it.
     expect(text).toContain("tools.read does not exist. Available: write.");
+  });
+
+  it("calls deferred tools in user chats without loading them", async () => {
+    const { run } = codemodeHarness({
+      tools: [read, write],
+      active: ["read"],
+      deferred: ["write"],
+    });
+    const { text } = await run('return await tools.write({ path: "x" });');
+    expect(text).toContain("wrote x");
   });
 
   it("never exposes subagents, questions or itself to scripts", async () => {

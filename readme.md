@@ -173,6 +173,11 @@ The `codemode` tool is on by default (**Pi settings → Codemode** turns it off)
 
 - `todo_write`: a checklist for multi-step work
 - `ask_user_question`: ask you to pick between options instead of guessing
+- `tool_search`: load a deferred tool (see below)
+
+**Deferred tools**
+
+Tools the agent seldom needs are not sent with every request: the file operation tools and `ask_user_question`. The system prompt names them, and the agent loads one with `tool_search` when it needs it. A loaded tool stays available on that chat branch until a compaction summarizes away both its loading and its use; then it is hidden again at the next prompt and can be reloaded. Codemode scripts can call deferred tools without loading them. This saves about 740 tokens per request on folders without `bash` and about 180 on Terminal folders.
 - `load_skill`: load a skill into context
 
 ## Permissions
@@ -271,6 +276,7 @@ Other Acode plugins can extend the agent once it has loaded:
 const runtime = acode.require("acode.ai.agent.runtime");
 
 runtime.registerTool(myPiAgentTool);
+runtime.registerTool(myRarelyUsedTool, { exposure: "deferred" });
 runtime.registerProvider(myPiProvider);
 runtime.registerContext("my-plugin:context", async () => "Extra project context");
 runtime.registerFeature({
@@ -283,7 +289,7 @@ runtime.open();
 runtime.selectProvider("openrouter");
 ```
 
-- `registerTool` takes a Pi durable tool (`defineTool` from `@earendil-works/pi-durable`, with `execute(args, api, context)`). It applies to running chats immediately.
+- `registerTool` takes a Pi durable tool (`defineTool` from `@earendil-works/pi-durable`, with `execute(args, api, context)`). It applies to running chats immediately. With `{ exposure: "deferred" }` the tool is loaded through `tool_search` instead of sent with every request; use it for large or rarely needed tools.
 - `registerProvider` takes a Pi provider. Open sessions pick it up.
 - `registerContext` adds a section to the system prompt, rebuilt before each request and re-sent only when it changes.
 - `registerFeature` only records metadata for now and isn't shown in the UI.

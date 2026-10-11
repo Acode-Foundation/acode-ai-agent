@@ -1,17 +1,24 @@
 import type { ToolRegistration } from "@earendil-works/pi-durable";
+import type { ToolExposure } from "../tools/toolSearch";
 import type { AgentFeature } from "./types";
 
 export type ContextContribution = () => string | Promise<string>;
 
 export class ExtensionRegistry {
   #tools = new Map<string, ToolRegistration>();
+  #deferred = new Set<string>();
   #context = new Map<string, ContextContribution>();
   #features = new Map<string, AgentFeature>();
 
-  registerTool(tool: ToolRegistration): () => void {
+  /** `deferred` tools stay out of requests until the model loads them with `tool_search`. */
+  registerTool(tool: ToolRegistration, options: { exposure?: ToolExposure } = {}): () => void {
     if (this.#tools.has(tool.name)) throw new Error(`Tool already registered: ${tool.name}`);
     this.#tools.set(tool.name, tool);
-    return () => this.#tools.delete(tool.name);
+    if (options.exposure === "deferred") this.#deferred.add(tool.name);
+    return () => {
+      this.#tools.delete(tool.name);
+      this.#deferred.delete(tool.name);
+    };
   }
 
   registerContext(id: string, contribution: ContextContribution): () => void {
@@ -29,6 +36,11 @@ export class ExtensionRegistry {
 
   get tools(): ToolRegistration[] {
     return [...this.#tools.values()];
+  }
+
+  /** Names of plugin tools registered as deferred. */
+  get deferredTools(): ReadonlySet<string> {
+    return this.#deferred;
   }
 
   get contextSources(): ContextContribution[] {

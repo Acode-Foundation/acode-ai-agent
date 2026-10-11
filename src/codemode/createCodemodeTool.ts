@@ -19,13 +19,17 @@ import {
   valueText,
   type OutputBlock,
 } from "./output";
+import { offersAllTools } from "../tools/toolSearch";
 import { loadCodemodeRuntime } from "./runtime";
 import { CodemodeSandbox, type CodemodeResult, type CodemodeRuntime } from "./sandbox";
 
 export const CODEMODE_TOOL_NAME = "codemode";
 
-/** Tools scripts never reach: no nested scripts or delegation, and no questions to the user. */
-const NOT_CALLABLE = new Set([CODEMODE_TOOL_NAME, "subagent", "ask_user_question"]);
+/**
+ * Tools scripts never reach: no nested scripts or delegation, no questions to the user, and no
+ * tool loading, which changes what the model sees rather than doing work.
+ */
+const NOT_CALLABLE = new Set([CODEMODE_TOOL_NAME, "subagent", "ask_user_question", "tool_search"]);
 
 /**
  * Heap limit for one script's VM. The worker shares the app's memory on a phone, so a runaway
@@ -74,6 +78,11 @@ export type CodemodeToolOptions = {
   /** Tools scripts may call. A call also needs the tool to be active in the calling conversation. */
   tools: readonly ToolRegistration[];
   /**
+   * Tools loaded on demand. Scripts in user chats call them without loading, so loading never
+   * changes what scripts can do; subagents keep to the tools their profile lists.
+   */
+  deferred?: ReadonlySet<string>;
+  /**
    * Approve a nested call the way the harness approves a direct one. Returns the reason when the
    * call is blocked. `onPrompt` runs when the user is actually asked.
    */
@@ -118,6 +127,11 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
         throw error;
       }
       const active = new Set((await api.agent(context)).tools.map((tool) => tool.name));
+      if (
+        options.deferred?.size &&
+        (await api.commit((tx) => offersAllTools(tx, api.conversationId), context))
+      )
+        for (const name of options.deferred) active.add(name);
       const tools = callable.filter((tool) => active.has(tool.name));
       const details: CodemodeDetails = { calls: [] };
       // Coalesce progress: a script can start many calls at once.

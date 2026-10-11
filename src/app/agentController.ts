@@ -1,5 +1,6 @@
 import type { AuthEvent, AuthPrompt, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
+import type { ToolExposure } from "../tools/toolSearch";
 import { Signal } from "../core/events";
 import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";
@@ -834,9 +835,12 @@ export class AgentController {
     this.#activeSession()?.questionGate.cancel();
   }
 
-  /** Add a Pi tool (`defineTool` from @earendil-works/pi-durable) to every chat. */
-  registerTool(tool: ToolRegistration): () => void {
-    const unregister = this.extensions.registerTool(tool);
+  /**
+   * Add a Pi tool (`defineTool` from @earendil-works/pi-durable) to every chat. With
+   * `exposure: "deferred"` it is loaded through `tool_search` instead of declared on every request.
+   */
+  registerTool(tool: ToolRegistration, options?: { exposure?: ToolExposure }): () => void {
+    const unregister = this.extensions.registerTool(tool, options);
     for (const session of this.#sessions.values()) session.refreshTools();
     return () => {
       unregister();

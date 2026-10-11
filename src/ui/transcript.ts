@@ -266,6 +266,8 @@ export function presentTool(
       return { kind: "other", label: "Asked you", detail: askDetail(args, output) };
     case "codemode":
       return { kind: "other", label: "Ran a script", detail: scriptToolsDetail(args) };
+    case "tool_search":
+      return { kind: "search", label: "Loaded tools", detail: loadedToolsDetail(args, output) };
     default:
       return { kind: "other", label: humanize(name) || "Used tool", detail: path ?? query };
   }
@@ -735,6 +737,12 @@ export function parseScriptResult(
     error: error || undefined,
     wallTimeMs: Math.round(Number(header[1]) * 1_000),
   };
+}
+
+/** The tools a `tool_search` call loaded, or its query while it runs or when nothing matched. */
+function loadedToolsDetail(args: Record<string, unknown>, output?: string): string | undefined {
+  const loaded = [...(output ?? "").matchAll(/^- ([\w-]+):/gm)].map((match) => match[1]);
+  return loaded.length ? loaded.join(", ") : inlinePreview(firstString(args, ["query"]));
 }
 
 /** The tools a script calls, in order of first use: "read, grep". */

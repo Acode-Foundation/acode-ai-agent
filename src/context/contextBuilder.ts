@@ -16,12 +16,18 @@ export function systemPromptSections(options: {
   settings: () => AgentSettings;
   extensions: ExtensionRegistry;
   skills: () => readonly Skill[];
+  deferredTools?: () => readonly string[];
 }): PromptSection[] {
-  const { workspace, settings, extensions, skills } = options;
+  const { workspace, settings, extensions, skills, deferredTools } = options;
   return [
-    section("preamble", () => preamble(workspace, { codemode: settings().codemode }), {
-      tag: false,
-    }),
+    section(
+      "preamble",
+      () =>
+        preamble(workspace, { codemode: settings().codemode, deferred: deferredTools?.() ?? [] }),
+      {
+        tag: false,
+      },
+    ),
     section("project_instructions", () => projectInstructions(workspace)),
     section("available_skills", () => skillCatalog(skills()), { tag: false }),
     section("plugin_context", () => pluginContext(extensions)),
@@ -29,7 +35,10 @@ export function systemPromptSections(options: {
   ];
 }
 
-export function preamble(workspace: AcodeWorkspace, tools: { codemode?: boolean } = {}): string {
+export function preamble(
+  workspace: AcodeWorkspace,
+  tools: { codemode?: boolean; deferred?: readonly string[] } = {},
+): string {
   return [
     "You are Acode's in-editor coding agent, powered by the Pi agent runtime.",
     "Work autonomously toward the user's requested outcome and use tools to inspect evidence before guessing.",
@@ -45,6 +54,11 @@ export function preamble(workspace: AcodeWorkspace, tools: { codemode?: boolean 
     ...(tools.codemode
       ? [
           "Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls. Prefer subagent when the work needs judgment rather than a script.",
+        ]
+      : []),
+    ...(tools.deferred?.length
+      ? [
+          `Load these tools with tool_search before calling them: ${tools.deferred.join(", ")}.${tools.codemode ? " Codemode scripts can call them without loading." : ""}`,
         ]
       : []),
   ].join("\n\n");

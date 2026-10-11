@@ -73,6 +73,12 @@ import { createWorkspaceTools, withReadableErrors } from "../tools/createTools";
 import { editPairs } from "../tools/textEdits";
 import { createWebSearchContext } from "../tools/web/context";
 import { createWebTools } from "../tools/web/createWebTools";
+import {
+  createToolSearchTool,
+  DEFERRED_BUILTIN_TOOLS,
+  syncDeferredTools,
+  toolsInUse,
+} from "../tools/toolSearch";
 import { WorkspaceExecutionEnv } from "../tools/workspaceEnv";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 import type { ChatMeta, ChatStore } from "./chatStore";
@@ -165,6 +171,8 @@ export class AgentSession {
   #toolStarts = new Map<string, number>();
   /** Whether the installed tools include `codemode`, to reinstall when the setting changes. */
   #codemodeInstalled = false;
+  /** Installed tools the model loads with `tool_search` instead of seeing on every request. */
+  #deferredTools: string[] = [];
   #recovery?: RunRecovery;
   #runError?: string;
   #storage?: Storage;
@@ -456,6 +464,14 @@ export class AgentSession {
     this.#runError = undefined;
     // Sending resumes any interrupted work first, then queues behind it.
     this.#recovery = undefined;
+    // Unloads deferred tools a compaction left unused; reads the cached context, so it is cheap.
+    const inUse = this.#deferredTools.length
+      ? toolsInUse((await conversation.context(context)).messages)
+      : undefined;
+    await conversation.commit(
+      (tx) => syncDeferredTools(tx, conversation.id, this.#deferredTools, inUse),
+      context,
+    );
     const submission = await conversation.submit(
       { type: "input", content, whenBusy: mode },
       context,
@@ -678,17 +694,25 @@ export class AgentSession {
     ];
     // A subagent picks from every tool its parent has, filtered by its profile.
     tools.push(withReadableErrors(createSubagentTool(() => [...tools, ...pluginTools])));
+    // Seldom-used tools stay out of requests until `tool_search` loads them.
+    const deferred = [...tools, ...pluginTools].filter(
+      (tool) =>
+        DEFERRED_BUILTIN_TOOLS.has(tool.name) || this.#extensions.deferredTools.has(tool.name),
+    );
+    this.#deferredTools = deferred.map((tool) => tool.name);
     this.#codemodeInstalled = this.#settings().codemode;
     if (this.#codemodeInstalled)
       tools.push(
         withReadableErrors(
           createCodemodeTool({
             tools: [...tools, ...pluginTools],
+            deferred: new Set(this.#deferredTools),
             approve: (name, args, api, signal, onPrompt) =>
               this.#approve(name, args, api.conversationId, signal, "Codemode", onPrompt),
           }),
         ),
       );
+    if (deferred.length) tools.push(withReadableErrors(createToolSearchTool(deferred)));
     this.#registry.install(
       defineExtension({
         name: "acode",
@@ -698,6 +722,7 @@ export class AgentSession {
           settings: this.#settings,
           extensions: this.#extensions,
           skills: () => this.#resources.skills,
+          deferredTools: () => this.#deferredTools,
         }),
         hooks: [
           hook(ToolTask, {

@@ -2,6 +2,7 @@
 
 - Codemode: a `codemode` tool, on by default, that runs model-written JavaScript in a QuickJS sandbox and calls the agent's tools from it. Nested calls keep approvals and Undo, and each script shows as one card in the work log with its calls, output and source.
 - Fixed `fetch` of the WebView's own files (`https://localhost/...`) failing while the agent was loaded; those requests no longer go through native HTTP.
+- Deferred tools: the file operation tools and `ask_user_question` are loaded with a new `tool_search` tool when needed instead of sent with every request, saving about 740 tokens per request on folders without `bash`. Loaded tools are unloaded again after a compaction leaves them unused. Plugins can register tools with `{ exposure: "deferred" }`.
 - Pi packages upgraded to 1.1.0.
 
 # 0.1.0

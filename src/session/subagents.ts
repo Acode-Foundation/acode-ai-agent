@@ -34,7 +34,13 @@ export function wrapUpReminder(messages: readonly Message[]): Message | undefine
 const MAX_ANSWER_CHARS = 16_000;
 
 /** Tools a child never gets: no nested delegation, and no talking to the user or their task list. */
-const PARENT_ONLY_TOOLS = new Set([SUBAGENT_TOOL_NAME, "todo_write", "ask_user_question"]);
+const PARENT_ONLY_TOOLS = new Set([
+  SUBAGENT_TOOL_NAME,
+  "todo_write",
+  "ask_user_question",
+  // A child's tools are a fixed list that already includes the parent's deferred tools.
+  "tool_search",
+]);
 
 /** Tools an `explore` child may use: it reads and searches, and never changes the workspace. */
 const READ_ONLY_TOOLS = new Set([
