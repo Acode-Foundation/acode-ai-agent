@@ -13,7 +13,7 @@ If you use Pi on a desktop, most of it carries over:
 - Project instructions from `AGENTS.md` or `CLAUDE.md`
 - Import and export of Pi CLI session files (JSONL)
 
-What differs: files go through Acode's `fsOperation` (local, SAF, FTP, SFTP), `bash` only exists on Terminal-backed folders, and OAuth uses a custom tab with device approval or an app callback instead of a localhost server. Pi packages, tmux and the Pi TUI are not included.
+What differs: files go through Acode's `fsOperation` (local, SAF, FTP, SFTP), `bash` only exists on Terminal-backed folders, and OAuth uses Acode's native browser and callback support. Pi packages, tmux and the Pi TUI are not included.
 
 ## Requirements
 
@@ -102,11 +102,13 @@ Add credentials under **Provider access**. Keys and tokens are kept in Acode's p
 | -------------- | --------------------- |
 | OpenRouter     | OpenRouter account    |
 | Codex          | ChatGPT Plus / Pro    |
+| ChatGPT        | ChatGPT Plus / Pro    |
 | GitHub Copilot | Copilot subscription  |
 | xAI            | Grok / X subscription |
 | Kimi Code      | Kimi Code             |
 
 - **OpenRouter** opens a custom tab and connects when you approve. No code to paste.
+- **ChatGPT** uses OpenAI's official Sign in with ChatGPT integration. Tap **Continue with ChatGPT**, approve plan usage, then tap **Return to Acode** if needed. On Android, use Chrome for browser sign-in. One ChatGPT account is saved at a time. **Disconnect** signs out; **Remove account** then forgets the saved account so you can connect another. Reconnecting uses the saved registration directly. Use **Manage usage** to review access and limits in ChatGPT. Requests use the public Responses API and your ChatGPT plan allowance.
 - **Codex, xAI and Kimi Code** use device codes: tap **Copy code & sign in**, paste the code on the provider's page and approve. For Codex, first enable device-code authorization in ChatGPT under Settings → Security.
 - **GitHub Copilot** uses github.com by default. **Other sign-in options** accepts an Enterprise domain.
 

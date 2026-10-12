@@ -731,6 +731,7 @@ export class AgentController {
       this.#state.authFlow = {
         providerId,
         status: "connecting",
+        signedIn: true,
         message: "Signed in. Loading your models…",
       };
       this.#emit();
@@ -807,11 +808,24 @@ export class AgentController {
 
   async removeCredential(providerId: ProviderId): Promise<void> {
     if (this.#state.authFlow?.providerId === providerId) this.cancelSubscriptionLogin();
-    await this.providers.models.logout(providerId);
+    const flow = this.#state.authFlow;
+    const revoked =
+      providerId === "chatgpt"
+        ? await this.providers.chatgptAccount.disconnect()
+        : (await this.providers.models.logout(providerId), true);
     await this.providers.refreshModelAvailability(providerId);
     if (this.settings.value.providerId === providerId) this.#refreshModels();
-    this.#state.authFlow = undefined;
+    if (this.#state.authFlow === flow) this.#state.authFlow = undefined;
     this.#emit();
+    if (!revoked)
+      throw new Error(
+        "Signed out locally. Remote revocation could not be confirmed; disconnect Acode AI Agent in ChatGPT Settings → Usage.",
+      );
+  }
+
+  async forgetChatGPTAccount(): Promise<void> {
+    if (this.#state.authFlow?.providerId === "chatgpt") this.cancelSubscriptionLogin();
+    await this.providers.chatgptAccount.forget();
   }
 
   async hasCredential(providerId: ProviderId): Promise<boolean> {

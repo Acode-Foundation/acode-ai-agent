@@ -61,6 +61,7 @@ import { draftFromParts, promptTextFromDraft, type ComposerDraft } from "./compo
 import { parseSlashCommand } from "../core/slashCommands";
 import { showToast } from "../platform/toast";
 import { useProviderCredential } from "./useProviderCredential";
+import { CHATGPT_USAGE_URL, type ChatGPTRegistration } from "../providers/chatgptOAuth";
 import { AgentIcon } from "./AgentIcon";
 
 type Props = {
@@ -1019,6 +1020,50 @@ function SettingsSheet({
   const [showKey, setShowKey] = useState(false);
   const [authPromptValue, setAuthPromptValue] = useState("");
   const connected = useProviderCredential(controller, providerId, state.settings.customEndpoints);
+  const [chatgptAccount, setChatgptAccount] = useState<ChatGPTRegistration>();
+  const [credentialAction, setCredentialAction] = useState<{
+    providerId: ProviderId;
+    kind: "disconnect" | "remove";
+  }>();
+  const credentialActionPending = useRef(false);
+  const changeCredential = async (kind: "disconnect" | "remove") => {
+    if (credentialActionPending.current) return;
+    credentialActionPending.current = true;
+    setCredentialAction({ providerId, kind });
+    try {
+      if (kind === "remove") await controller.forgetChatGPTAccount();
+      else await controller.removeCredential(providerId);
+      onToast(kind === "remove" ? "ChatGPT account removed" : `${provider.name} disconnected`);
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      credentialActionPending.current = false;
+      setCredentialAction(undefined);
+    }
+  };
+  useEffect(() => {
+    if (providerId !== "chatgpt") return;
+    let revision = 0;
+    const refresh = () => {
+      const current = ++revision;
+      void controller.providers.chatgptAccount
+        .state()
+        .then(({ registration }) => {
+          if (current === revision) setChatgptAccount(registration);
+        })
+        .catch(() => {
+          if (current === revision) setChatgptAccount(undefined);
+        });
+    };
+    const unsubscribe = controller.credentials.changes.subscribe((id) => {
+      if (id === "chatgpt") refresh();
+    });
+    refresh();
+    return () => {
+      revision++;
+      unsubscribe();
+    };
+  }, [controller, providerId]);
   const [endpointView, setEndpointView] = useState<{ endpoint?: CustomEndpoint } | null>(null);
   useEffect(() => {
     setKey("");
@@ -1030,6 +1075,10 @@ function SettingsSheet({
   );
   const authFlow = state.authFlow?.providerId === providerId ? state.authFlow : undefined;
   const signingIn = authFlow?.status === "waiting" || authFlow?.status === "connecting";
+  const disconnecting =
+    credentialAction?.providerId === providerId && credentialAction.kind === "disconnect";
+  const removing =
+    credentialAction?.providerId === providerId && credentialAction.kind === "remove";
   const canContinueSignIn =
     authFlow?.status === "waiting" && authFlow.browserReturned && Boolean(authFlow.verificationUri);
   const authPromptKey = `${providerId}:${authFlow?.prompt?.type ?? ""}:${authFlow?.prompt?.message ?? ""}`;
@@ -1090,7 +1139,9 @@ function SettingsSheet({
               }}
             />
 
-            <div class={`credential${connected && !signingIn ? " connected" : ""}`}>
+            <div
+              class={`credential${providerId === "chatgpt" ? " chatgpt" : ""}${connected && !signingIn ? " connected" : ""}`}
+            >
               {!signingIn && (
                 <p class={connected ? "ok" : ""} role="status">
                   {connected === undefined
@@ -1099,6 +1150,18 @@ function SettingsSheet({
                       ? `${provider.name} is connected`
                       : `Connect to ${provider.name}`}
                 </p>
+              )}
+              {providerId === "chatgpt" && !signingIn && (chatgptAccount || connected) && (
+                <div class="credential-details">
+                  {chatgptAccount && (
+                    <p>
+                      {chatgptAccount.identity?.email ??
+                        chatgptAccount.identity?.name ??
+                        "Saved ChatGPT account"}
+                    </p>
+                  )}
+                  {connected && <p class="ok">Using your ChatGPT plan</p>}
+                </div>
               )}
               {provider.apiKey &&
                 connected === false &&
@@ -1154,7 +1217,7 @@ function SettingsSheet({
                   <button
                     type="button"
                     aria-live="polite"
-                    disabled={signingIn && !canContinueSignIn}
+                    disabled={Boolean(credentialAction) || (signingIn && !canContinueSignIn)}
                     onClick={() => {
                       if (canContinueSignIn) {
                         void (async () => {
@@ -1216,14 +1279,15 @@ function SettingsSheet({
                           onSubmit={(value) => controller.submitSubscriptionPrompt(value)}
                         />
                       )}
-                      {signingIn && (
+                      {signingIn && !authFlow.signedIn && (
                         <button
                           type="button"
                           onClick={() => {
                             const flow = controller.state.authFlow;
                             if (
                               flow?.providerId === providerId &&
-                              (flow.status === "waiting" || flow.status === "connecting")
+                              (flow.status === "waiting" || flow.status === "connecting") &&
+                              !flow.signedIn
                             )
                               controller.cancelSubscriptionLogin();
                           }}
@@ -1243,21 +1307,47 @@ function SettingsSheet({
                     {showKey ? "Use account sign-in" : "Use API key instead"}
                   </button>
                 )}
-              {connected && !signingIn && (
-                <button
-                  class="text-button"
-                  type="button"
-                  onClick={() =>
-                    void controller
-                      .removeCredential(providerId)
-                      .then(() => {
-                        onToast(`${provider.name} removed`);
-                      })
-                      .catch((error) => onToast(String(error)))
-                  }
-                >
-                  Disconnect
-                </button>
+              {!signingIn && (connected || providerId === "chatgpt" || disconnecting) && (
+                <div class="credential-actions">
+                  {(connected || disconnecting) && (
+                    <button
+                      class="text-button"
+                      type="button"
+                      disabled={Boolean(credentialAction)}
+                      aria-busy={disconnecting}
+                      aria-live="polite"
+                      onClick={() => void changeCredential("disconnect")}
+                    >
+                      {disconnecting ? "Disconnecting…" : "Disconnect"}
+                    </button>
+                  )}
+                  {providerId === "chatgpt" && (
+                    <>
+                      {connected === false && chatgptAccount && !disconnecting && (
+                        <button
+                          type="button"
+                          class="text-button danger"
+                          disabled={Boolean(credentialAction)}
+                          aria-live="polite"
+                          onClick={() => void changeCredential("remove")}
+                        >
+                          {removing ? "Removing…" : "Remove account"}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        class="text-button"
+                        onClick={() =>
+                          void openCustomTab(CHATGPT_USAGE_URL).catch((error) =>
+                            onToast(String(error)),
+                          )
+                        }
+                      >
+                        Manage usage
+                      </button>
+                    </>
+                  )}
+                </div>
               )}
               {selectedEndpoint && (
                 <button

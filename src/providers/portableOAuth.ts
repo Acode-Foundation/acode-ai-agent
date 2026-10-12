@@ -357,6 +357,7 @@ async function loginCodexDevice(
   const deviceAuthId = requiredString(device, "device_auth_id");
   const userCode = requiredString(device, "user_code");
   const interval = positiveNumber(device.interval, 5);
+  const deadline = Date.now() + CODEX_TIMEOUT_SECONDS * 1000;
   interaction.notify({
     type: "device_code",
     userCode,
@@ -370,12 +371,14 @@ async function loginCodexDevice(
     signal: interaction.signal,
     notify: interaction.notify,
     poll: async () => {
-      const response = await postJsonAllowError(
-        CODEX_DEVICE_TOKEN_URL,
-        {
-          device_auth_id: deviceAuthId,
-          user_code: userCode,
-        },
+      const response = await retryCodexDns(
+        () =>
+          postJsonAllowError(
+            CODEX_DEVICE_TOKEN_URL,
+            { device_auth_id: deviceAuthId, user_code: userCode },
+            interaction.signal,
+          ),
+        deadline,
         interaction.signal,
       );
       if (response.ok) {
@@ -404,17 +407,47 @@ async function loginCodexDevice(
       return { error: `Codex device authorization failed (HTTP ${response.status}).` };
     },
   });
-  const token = await exchangeCodexToken(
-    {
-      grant_type: "authorization_code",
-      client_id: CODEX_CLIENT_ID,
-      code: code.authorizationCode,
-      code_verifier: code.codeVerifier,
-      redirect_uri: `${CODEX_AUTH_BASE}/deviceauth/callback`,
-    },
+  const token = await retryCodexDns(
+    () =>
+      exchangeCodexToken(
+        {
+          grant_type: "authorization_code",
+          client_id: CODEX_CLIENT_ID,
+          code: code.authorizationCode,
+          code_verifier: code.codeVerifier,
+          redirect_uri: `${CODEX_AUTH_BASE}/deviceauth/callback`,
+        },
+        interaction.signal,
+      ),
+    deadline,
     interaction.signal,
   );
   return codexCredential(token, undefined, interaction.signal);
+}
+
+async function retryCodexDns<T>(
+  request: () => Promise<T>,
+  deadline: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  while (Date.now() < deadline) {
+    signal?.throwIfAborted();
+    try {
+      return await request();
+    } catch (error) {
+      signal?.throwIfAborted();
+      // DNS failed before sending the request, so even a one-use token exchange is safe to retry.
+      if (
+        !(error instanceof Error) ||
+        !/^(?:Unable to resolve host|No address associated with hostname|Host could not be resolved|(?:java\.net\.)?UnknownHostException)\b/i.test(
+          error.message,
+        )
+      )
+        throw error;
+      await wait(Math.min(5000, Math.max(0, deadline - Date.now())), signal);
+    }
+  }
+  throw new Error("Device authorization expired. Start sign-in again.");
 }
 
 async function exchangeCodexToken(

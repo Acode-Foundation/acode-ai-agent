@@ -3205,6 +3205,10 @@ span.file-glyph.file {
 .config-nav svg {
   color: var(--muted);
 }
+.config-nav > svg:last-child {
+  grid-column: -2;
+  justify-self: end;
+}
 .config-pills {
   display: flex;
   flex-wrap: wrap;
@@ -3522,21 +3526,40 @@ span.file-glyph.file {
 }
 .credential {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin-bottom: 16px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.credential.connected {
+.credential.connected:not(.chatgpt) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
-.provider-access .credential.connected .text-button {
+.credential-details {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.credential-actions {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.provider-access .credential-actions .text-button {
+  flex: 1;
   width: auto;
-  padding: 8px 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
   color: var(--fg);
   background: var(--surface);
+}
+.provider-access .credential-actions .danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
 }
 .credential p {
   margin: 0;
@@ -3698,7 +3721,8 @@ span.file-glyph.file {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 10px 0;
+  min-height: 48px;
+  padding: 10px 2px;
   border-top: 1px solid var(--line);
   font-size: 13px;
 }
@@ -3779,9 +3803,12 @@ span.file-glyph.file {
   flex: none;
   color: var(--muted);
 }
+.toggle input[type="checkbox"],
 .setting-row input[type="checkbox"] {
-  width: 17px;
-  height: 17px;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
   accent-color: var(--accent);
 }
 .settings-section {

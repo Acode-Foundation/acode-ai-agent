@@ -10,6 +10,7 @@ const PROVIDER_DEFAULTS: Record<string, Pick<Model<any>, "api" | "baseUrl" | "co
     compat: { supportsDeveloperRole: false, thinkingFormat: "openrouter" },
   },
   openai: { api: "openai-completions", baseUrl: "https://api.openai.com/v1" },
+  chatgpt: { api: "openai-responses", baseUrl: "https://api.openai.com/v1" },
   "openai-codex": { api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api" },
   anthropic: { api: "anthropic-messages", baseUrl: "https://api.anthropic.com" },
   google: { api: "google-generative-ai", baseUrl: "https://generativelanguage.googleapis.com" },

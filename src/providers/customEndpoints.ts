@@ -8,6 +8,7 @@ export const BUILTIN_PROVIDER_IDS = [
   "openrouter",
   "openai",
   "openai-codex",
+  "chatgpt",
   "anthropic",
   "github-copilot",
   "google",
