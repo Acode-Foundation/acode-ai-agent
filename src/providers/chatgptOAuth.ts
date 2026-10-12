@@ -10,6 +10,8 @@ export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
 export const CHATGPT_RESOURCE = "https://api.openai.com/v1";
 const AUTH_BASE = "https://auth.openai.com";
 const PLAN_SCOPE = "chatgpt.tokens.use.direct";
+// The local sign-out is already done; bound how long the UI waits on remote revocation.
+const REVOKE_TIMEOUT_MS = 15_000;
 type Json = Record<string, unknown>;
 export type ChatGPTRegistration = { clientId: string; identity?: ChatGPTIdentity };
 type ChatGPTState = { hostId: string; registration?: ChatGPTRegistration };
@@ -84,14 +86,15 @@ export class ChatGPTAccount {
       request.abort(new DOMException("ChatGPT was disconnected.", "AbortError"));
     this.#requests.clear();
     try {
-      let revoked = true;
+      let removed = undefined as OAuthCredential | undefined;
       // Serialize against refresh so revocation uses the latest rotating token.
       await this.credentials.delete(CHATGPT_PROVIDER, undefined, async (current) => {
         if (current?.type !== "oauth") return;
         await this.save(String(current.clientId), current.identity as ChatGPTIdentity);
-        revoked = await revoke(current);
+        removed = current;
       });
-      return revoked;
+      // Sign out locally first so a slow or offline revocation cannot keep the session alive.
+      return removed ? await revoke(removed) : true;
     } finally {
       this.#disconnects--;
     }
@@ -197,6 +200,10 @@ export function createChatGPTOAuth(accounts: ChatGPTAccount): OAuthAuth {
         },
         signal,
       );
+      // RFC 6749 §6 lets a refresh response omit an unchanged refresh token and scope.
+      token.refresh_token ??= credential.refresh;
+      if (token.scope === undefined && Array.isArray(credential.scopes))
+        token.scope = credential.scopes.join(" ");
       let identity = credential.identity as ChatGPTIdentity;
       let idToken = typeof credential.idToken === "string" ? credential.idToken : undefined;
       if (typeof token.id_token === "string") {
@@ -295,10 +302,21 @@ async function tokenRequest(fields: Record<string, string>, signal?: AbortSignal
   return response.body;
 }
 async function revoke(credential: OAuthCredential): Promise<boolean> {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), REVOKE_TIMEOUT_MS);
+  try {
+    return await revokeWithin(credential, abort.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function revokeWithin(credential: OAuthCredential, signal: AbortSignal): Promise<boolean> {
+  for (let attempt = 0; attempt < 3 && !signal.aborted; attempt++) {
     if (attempt) await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
     try {
-      const discovery = await oauthRequest(`${AUTH_BASE}/.well-known/openid-configuration`);
+      const discovery = await oauthRequest(`${AUTH_BASE}/.well-known/openid-configuration`, {
+        signal,
+      });
       if (!discovery.ok) {
         if (discovery.status < 500) return false;
         continue;
@@ -317,6 +335,7 @@ async function revoke(credential: OAuthCredential): Promise<boolean> {
             token_type_hint: "refresh_token",
             client_id: requiredString(credential, "clientId"),
           }),
+          signal,
         },
         false,
       );

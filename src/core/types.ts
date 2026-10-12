@@ -198,6 +198,8 @@ export type PublicAgentState = {
     providerId: ProviderId;
     status: "waiting" | "connecting" | "connected" | "error";
     browserReturned?: boolean;
+    /** Credentials are saved; cancelling now would not undo the sign-in. */
+    signedIn?: boolean;
     userCode?: string;
     verificationUri?: string;
     message?: string;

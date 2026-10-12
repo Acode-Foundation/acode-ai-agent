@@ -112,8 +112,10 @@ async function prepareBrowser(authorization: string, state: string) {
 function returnToAcode(returnUri: string) {
   const query = new URLSearchParams(location.search);
   history.replaceState(null, "", location.pathname);
+  // Android intent URIs carry their target after the fragment; plain URIs take the query at the end.
   const suffix = returnUri.indexOf("#Intent;");
-  const target = returnUri.slice(0, suffix) + "?" + query.toString() + returnUri.slice(suffix);
+  const split = suffix < 0 ? returnUri.length : suffix;
+  const target = returnUri.slice(0, split) + "?" + query.toString() + returnUri.slice(split);
   document.getElementById("return")!.setAttribute("href", target);
   if (query.has("error")) {
     document.getElementById("title")!.textContent = "Sign-in cancelled";

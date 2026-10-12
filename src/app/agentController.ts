@@ -731,6 +731,7 @@ export class AgentController {
       this.#state.authFlow = {
         providerId,
         status: "connecting",
+        signedIn: true,
         message: "Signed in. Loading your models…",
       };
       this.#emit();

@@ -1279,12 +1279,16 @@ function SettingsSheet({
                           onSubmit={(value) => controller.submitSubscriptionPrompt(value)}
                         />
                       )}
-                      {authFlow.status === "waiting" && (
+                      {signingIn && !authFlow.signedIn && (
                         <button
                           type="button"
                           onClick={() => {
                             const flow = controller.state.authFlow;
-                            if (flow?.providerId === providerId && flow.status === "waiting")
+                            if (
+                              flow?.providerId === providerId &&
+                              (flow.status === "waiting" || flow.status === "connecting") &&
+                              !flow.signedIn
+                            )
                               controller.cancelSubscriptionLogin();
                           }}
                         >
