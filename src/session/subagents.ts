@@ -51,6 +51,8 @@ const READ_ONLY_TOOLS = new Set([
   "load_skill",
   "web_search",
   "fetch_content",
+  "list_sessions",
+  "read_session",
 ]);
 
 type Profile = { tools: (name: string) => boolean; instructions: string };

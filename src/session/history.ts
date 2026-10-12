@@ -12,6 +12,7 @@ import {
   type EntryId,
   type EntryRecord,
   type Harness,
+  type Storage,
 } from "@earendil-works/pi-durable";
 import type { SessionTreeItem, TranscriptMessage } from "../core/types";
 import { messagePlainText } from "./sessionText";
@@ -78,6 +79,20 @@ export function transcriptFromEntries(
   }
   closeTurn();
   return messages;
+}
+
+/** User entries whose prompt Pi settled as aborted, from the chat's submission records. */
+export async function stoppedPrompts(storage: Storage, context: Context): Promise<Set<EntryId>> {
+  const stopped = new Set<EntryId>();
+  let cursor: Parameters<Storage["scanSubmissions"]>[2];
+  do {
+    const page = await storage.scanSubmissions({ status: "unanswered" }, 200, cursor, context);
+    for (const record of page.items)
+      if (record.type === "input" && record.reason === "aborted" && record.entry !== undefined)
+        stopped.add(record.entry);
+    cursor = page.next;
+  } while (cursor);
+  return stopped;
 }
 
 /** Every visible entry of a conversation, oldest first, including those inherited from forks. */

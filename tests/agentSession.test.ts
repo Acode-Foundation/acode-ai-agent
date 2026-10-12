@@ -15,7 +15,10 @@ import type { ProviderRegistry } from "../src/providers/providerRegistry";
 import { AgentSession, type AgentSessionSnapshot } from "../src/session/agentSession";
 import { ChatStore, type ChatMeta } from "../src/session/chatStore";
 import { fromPiSessionJsonl } from "../src/session/history";
+import { createSessionTools } from "../src/session/sessionTools";
+import { createCodemodeTool } from "../src/codemode/createCodemodeTool";
 import type { AcodeWorkspace } from "../src/workspace/acodeWorkspace";
+import { inProcessRuntime, runTool } from "./toolHarness";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 let databases = 0;
@@ -214,6 +217,9 @@ test("abort stops the run and returns queued prompts for the composer", async ()
   );
   expect(done.queued).toEqual([]);
   expect(done.messages.at(-1)).toMatchObject({ role: "runNotice" });
+  const [, read] = createSessionTools(env.store, "chat-abort");
+  const stopped = JSON.parse((await runTool(read!, {})).content[0]!.text!);
+  expect(stopped.turns[0]).toMatchObject({ prompt: "first", status: "stopped" });
 
   // The notice comes from Pi's submission record; nothing extra reaches the model.
   let seen: string[] = [];
@@ -598,4 +604,96 @@ test("returns a sent prompt with its images for editing", async () => {
   expect(prompt.text).toBe("what is in this picture?");
   expect(prompt.images).toEqual([expect.objectContaining({ mimeType: "image/png" })]);
   await expect(session.promptAt(String((user.entryId ?? 0) + 1))).rejects.toThrow();
+});
+
+test("session tools find chats and read their turns, tool calls, status, and usage", async () => {
+  const env = environment();
+  const first = env.newMeta("chat-old");
+  await env.store.save(first);
+  const old = await env.open(first);
+  env.faux.setResponses([
+    fauxAssistantMessage([fauxToolCall("read", { path: "a.txt" })], { stopReason: "toolUse" }),
+    fauxAssistantMessage("Done with the parser."),
+  ]);
+  await old.session.prompt("fix the parser");
+  await settle(old.session, (snapshot) => idle(snapshot) && snapshot.messages.length >= 4);
+  await old.session.dispose();
+
+  const second = env.newMeta("chat-new");
+  await env.store.save(second);
+  const { session } = await env.open(second);
+  env.faux.setResponses([fauxAssistantMessage("Hi.")]);
+  await session.prompt("hello");
+  await settle(session, idle);
+
+  const [list, read] = createSessionTools(env.store, "chat-new");
+  const parse = async (tool: typeof list, args: unknown) =>
+    JSON.parse((await runTool(tool!, args)).content[0]!.text!);
+
+  expect((await parse(list, { query: "parser" })).sessions).toEqual([
+    expect.objectContaining({ id: "chat-old" }),
+  ]);
+  // Text the title lacks is found in the chat's replies, with a snippet.
+  expect((await parse(list, { query: "done with" })).sessions).toEqual([
+    expect.objectContaining({ id: "chat-old", match: "Done with the parser." }),
+  ]);
+  const paged = await parse(list, { limit: 1 });
+  expect(paged).toMatchObject({ sessions: [{ id: "chat-new", current: true }], nextOffset: 1 });
+
+  const closed = await parse(read, { id: "chat-old" });
+  expect(closed).toMatchObject({ status: "idle", branches: 0, subagents: 0, turnCount: 1 });
+  expect(closed.turns[0]).toMatchObject({
+    prompt: "fix the parser",
+    reply: "Done with the parser.",
+    tools: { read: 1 },
+  });
+  expect(closed.turns[0].status).toBeUndefined();
+  expect(closed.turns[0].usage.tokens).toBeGreaterThan(0);
+  expect(closed.totals.tokens).toBe(closed.turns[0].usage.tokens);
+  expect(Object.keys(closed.totals.byModel)).toEqual(closed.turns[0].models);
+
+  const detail = await parse(read, { id: "chat-old", turn: 1 });
+  expect(detail.items.map((item: { type: string }) => item.type)).toEqual([
+    "prompt",
+    "tool",
+    "reply",
+  ]);
+  expect(detail.items[1]).toMatchObject({ name: "read", args: '{"path":"a.txt"}' });
+  expect(detail.items[1].result).toContain("alpha");
+  const cut = await parse(read, { id: "chat-old", turn: 1, maxChars: 100 });
+  expect(cut.items[0]).toEqual({ type: "prompt", text: "fix the parser" });
+  await expect(runTool(read!, { id: "chat-old", turn: 2 })).rejects.toThrow("has 1");
+
+  const current = await parse(read, {});
+  expect(current).toMatchObject({ id: "chat-new", turnCount: 1 });
+  expect(current.totals.tokens).toBe(session.sessionInfo().tokens);
+
+  // A script calls them like any tool and parses the JSON.
+  const codemode = createCodemodeTool({
+    tools: [list!, read!],
+    runtime: inProcessRuntime(),
+    approve: async () => undefined,
+  });
+  const scripted = await runTool(
+    codemode,
+    {
+      code:
+        'const { sessions } = JSON.parse(await tools.list_sessions({ query: "parser" }));\n' +
+        "const chat = JSON.parse(await tools.read_session({ id: sessions[0].id }));\n" +
+        "return chat.turns.map((turn) => turn.prompt);",
+    },
+    {
+      api: {
+        agent: async () => ({ tools: [list!, read!] }),
+        commit: async (change: (tx: unknown) => unknown) =>
+          change({ doc: async () => ({ values: {} }) }),
+      } as never,
+    },
+  );
+  expect(scripted.isError).toBeFalsy();
+  expect(scripted.content.map((part) => part.text).join("")).toContain("fix the parser");
+
+  // A read leaves the closed chat whole for its next owner.
+  const reopened = await env.open(env.store.get("chat-old")!);
+  expect(reopened.session.snapshot.messages).toHaveLength(4);
 });

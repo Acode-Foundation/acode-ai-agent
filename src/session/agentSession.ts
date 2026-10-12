@@ -21,7 +21,6 @@ import {
   type Conversation,
   type ConversationId,
   type ConversationView,
-  type Cursor,
   type EntryDraft,
   type EntryId,
   type HarnessSettings,
@@ -90,6 +89,7 @@ import {
   historyEntries,
   latestAssistantText,
   REVERT_ENTRY_KIND,
+  stoppedPrompts,
   toPiSessionJsonl,
   transcriptFromEntries,
 } from "./history";
@@ -107,6 +107,7 @@ import {
   SUBAGENT_TOOL_NAME,
   wrapUpReminder,
 } from "./subagents";
+import { createSessionTools } from "./sessionTools";
 import { loadWorkspaceResources } from "./workspaceResources";
 
 export type AgentSessionSnapshot = {
@@ -639,6 +640,7 @@ export class AgentSession {
     await this.#persistTasks.catch(() => undefined);
     // Closing keeps unfinished work durable; it resumes when the chat is opened again.
     await this.#harness?.close(context).catch((error) => console.warn("Pi harness close", error));
+    this.#store.releaseStorage(this.id);
     this.#harness = undefined;
     this.#conversation = undefined;
   }
@@ -714,6 +716,7 @@ export class AgentSession {
       }),
       ...[
         ...createTaskTools(this.#tasks),
+        ...createSessionTools(this.#store, this.id),
         createAskTool(this.questionGate),
         this.#skillTool(),
         ...createWebTools(
@@ -1063,18 +1066,7 @@ export class AgentSession {
 
   /** Read Pi's submission records for prompts that ended aborted (Stop or Discard). */
   async #refreshStopped(): Promise<void> {
-    const storage = this.#storage;
-    if (!storage) return;
-    const stopped = new Set<EntryId>();
-    let cursor: Cursor | undefined;
-    do {
-      const page = await storage.scanSubmissions({ status: "unanswered" }, 200, cursor, context);
-      for (const record of page.items)
-        if (record.type === "input" && record.reason === "aborted" && record.entry !== undefined)
-          stopped.add(record.entry);
-      cursor = page.next;
-    } while (cursor);
-    this.#stopped = stopped;
+    if (this.#storage) this.#stopped = await stoppedPrompts(this.#storage, context);
   }
 
   async #loadTasks(): Promise<void> {

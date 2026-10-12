@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
@@ -7,44 +6,9 @@ import { createCodemodeTool } from "../src/codemode/createCodemodeTool";
 import { MutationGate } from "../src/permissions/mutationGate";
 import type { AcodeWorkspace } from "../src/workspace/acodeWorkspace";
 import { formatOutput, truncateOutput } from "../src/codemode/output";
-import type { MessagePortLike } from "../src/codemode/protocol";
-import { CodemodeSandbox, type CodemodeRuntime, type WorkerLike } from "../src/codemode/sandbox";
-import { runCodemodeWorker } from "../src/codemode/workerMain";
+import { CodemodeSandbox } from "../src/codemode/sandbox";
 import { parseScriptResult, presentTool, scriptCalls } from "../src/ui/transcript";
-
-const wasm = WebAssembly.compile(readFileSync("node_modules/quickjs-wasi/quickjs.wasm"));
-
-type Listener = (event: { data: unknown }) => void;
-
-/** The real worker code on an in-process channel. Messages are async, like postMessage. */
-function inProcessRuntime(): () => Promise<CodemodeRuntime> {
-  return async () => ({
-    wasm: await wasm,
-    createWorker: (): WorkerLike => {
-      const toWorker = new Set<Listener>();
-      const toHost = new Set<Listener>();
-      let terminated = false;
-      const deliver = (listeners: Set<Listener>, data: unknown) =>
-        queueMicrotask(() => {
-          if (!terminated) for (const listener of listeners) listener({ data });
-        });
-      const workerSide: MessagePortLike = {
-        postMessage: (message) => deliver(toHost, message),
-        addEventListener: (_type, listener) => toWorker.add(listener),
-      };
-      runCodemodeWorker(workerSide);
-      return {
-        postMessage: (message) => deliver(toWorker, message),
-        addEventListener: (type: string, listener: Listener) => {
-          if (type === "message") toHost.add(listener);
-        },
-        terminate: () => {
-          terminated = true;
-        },
-      } as WorkerLike;
-    },
-  });
-}
+import { inProcessRuntime } from "./toolHarness";
 
 describe("CodemodeSandbox", () => {
   it("runs a script that calls tools and returns output", async () => {

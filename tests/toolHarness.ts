@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import type {
   ToolDiagnostic,
@@ -5,6 +6,9 @@ import type {
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
+import type { MessagePortLike } from "../src/codemode/protocol";
+import type { CodemodeRuntime, WorkerLike } from "../src/codemode/sandbox";
+import { runCodemodeWorker } from "../src/codemode/workerMain";
 
 export type ToolOutput = {
   content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -20,7 +24,7 @@ export type ToolOutput = {
 export async function runTool(
   tool: ToolRegistration,
   args: unknown,
-  options: { signal?: AbortSignal; env?: ExecutionEnv } = {},
+  options: { signal?: AbortSignal; env?: ExecutionEnv; api?: Partial<ToolExecutionApi> } = {},
 ): Promise<ToolOutput> {
   const prepared = tool.prepareArguments ? tool.prepareArguments(args) : args;
   const output: string[] = [];
@@ -38,6 +42,7 @@ export async function runTool(
     details: async (value: unknown) => {
       details = value;
     },
+    ...options.api,
   } as unknown as ToolExecutionApi;
   const context = options.signal
     ? withAbortSignal(options.signal, BACKGROUND_CONTEXT)
@@ -60,4 +65,38 @@ export function legacyTool(tool: ToolRegistration, env?: ExecutionEnv) {
     execute: (_id: string, args: unknown, signal?: AbortSignal) =>
       runTool(tool, args, { signal, env }),
   };
+}
+
+const wasm = WebAssembly.compile(readFileSync("node_modules/quickjs-wasi/quickjs.wasm"));
+
+type Listener = (event: { data: unknown }) => void;
+
+/** The real worker code on an in-process channel. Messages are async, like postMessage. */
+export function inProcessRuntime(): () => Promise<CodemodeRuntime> {
+  return async () => ({
+    wasm: await wasm,
+    createWorker: (): WorkerLike => {
+      const toWorker = new Set<Listener>();
+      const toHost = new Set<Listener>();
+      let terminated = false;
+      const deliver = (listeners: Set<Listener>, data: unknown) =>
+        queueMicrotask(() => {
+          if (!terminated) for (const listener of listeners) listener({ data });
+        });
+      const workerSide: MessagePortLike = {
+        postMessage: (message) => deliver(toHost, message),
+        addEventListener: (_type, listener) => toWorker.add(listener),
+      };
+      runCodemodeWorker(workerSide);
+      return {
+        postMessage: (message) => deliver(toWorker, message),
+        addEventListener: (type: string, listener: Listener) => {
+          if (type === "message") toHost.add(listener);
+        },
+        terminate: () => {
+          terminated = true;
+        },
+      } as WorkerLike;
+    },
+  });
 }

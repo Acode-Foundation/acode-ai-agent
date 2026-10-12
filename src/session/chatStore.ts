@@ -33,6 +33,10 @@ export class ChatStore {
   #db: Promise<IDBDatabase>;
   #index = new Map<string, ChatMeta>();
   #ready?: Promise<void>;
+  /** Storage of chats a session holds open; reads share it rather than open a second copy. */
+  #open = new Map<string, Promise<Storage>>();
+  /** Reads of closed chats in flight; opening the chat waits for them. */
+  #reads = new Map<string, Promise<unknown>>();
 
   constructor(db: Promise<IDBDatabase> = openAgentDatabase()) {
     this.#db = db;
@@ -79,16 +83,63 @@ export class ChatStore {
 
   /** Open the chat's Pi storage, creating it on first use. One owner at a time. */
   async openStorage(id: string): Promise<Storage> {
-    return JsonlStorage.open(chatDirectory(id), redactingFileSystem(this.fs), context);
+    const opening = (this.#reads.get(id) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.#openJsonl(id));
+    this.#open.set(id, opening);
+    opening.catch(() => {
+      if (this.#open.get(id) === opening) this.#open.delete(id);
+    });
+    return opening;
+  }
+
+  /** The owner closed the chat's storage. */
+  releaseStorage(id: string): void {
+    this.#open.delete(id);
+  }
+
+  /**
+   * Read a chat's Pi storage without owning it: the open chat's own storage, or for a closed
+   * chat a copy opened only for this read. `open` tells the read which one it got.
+   */
+  async readStorage<T>(
+    id: string,
+    read: (storage: Storage, open: boolean) => Promise<T>,
+  ): Promise<T> {
+    await this.hydrate();
+    if (!this.#index.has(id)) throw new Error(`No chat has the id "${id}".`);
+    const open = this.#open.get(id);
+    if (open) return read(await open, true);
+    const reading = (this.#reads.get(id) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(async () => {
+        const storage = await this.#openJsonl(id);
+        try {
+          return await read(storage, false);
+        } finally {
+          await storage.close(context);
+        }
+      });
+    this.#reads.set(id, reading);
+    try {
+      return await reading;
+    } finally {
+      if (this.#reads.get(id) === reading) this.#reads.delete(id);
+    }
   }
 
   async remove(id: string): Promise<void> {
     await this.hydrate();
     getOrThrow(await this.fs.remove(chatDirectory(id), { recursive: true, force: true }, context));
     this.#index.delete(id);
+    this.#open.delete(id);
     await idbTransaction(await this.#db, [CHATS], "readwrite", async (tx) => {
       await idbRequest(tx.objectStore(CHATS).delete(id));
     });
+  }
+
+  #openJsonl(id: string): Promise<JsonlStorage> {
+    return JsonlStorage.open(chatDirectory(id), redactingFileSystem(this.fs), context);
   }
 
   async #load(): Promise<void> {

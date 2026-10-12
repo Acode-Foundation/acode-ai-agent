@@ -25,6 +25,8 @@ export const DEFERRED_BUILTIN_TOOLS: ReadonlySet<string> = new Set([
   "delete_path",
   "create_directory",
   "ask_user_question",
+  "list_sessions",
+  "read_session",
 ]);
 
 const DEFAULT_LIMIT = 5;
