@@ -1,4 +1,4 @@
-# Unreleased
+# 0.2.0
 
 - Codemode: a `codemode` tool, on by default, that runs model-written JavaScript in a QuickJS sandbox and calls the agent's tools from it. Nested calls keep approvals and Undo, and each script shows as one card in the work log with its calls, output and source.
 - Fixed `fetch` of the WebView's own files (`https://localhost/...`) failing while the agent was loaded; those requests no longer go through native HTTP.
@@ -6,6 +6,12 @@
 - Edit (through the composer, with Cancel), Retry, and Fork buttons under messages, and a `‹ 1/2 ›` switcher between versions of an edited or retried prompt. An empty branch offers to restore the latest messages.
 - Work-log steps show how long they ran, and `/tree` shows the context size at the selected point.
 - Codemode scripts can generate images and run classifiers through `models`, and save images into the project with `saveImage()`; their cost counts toward the session.
+- The agent now reaches for codemode more often. The system prompt names when to batch (two or more calls with no decision between them), the codemode description leads with that and shows an example, and every tool scripts can call says how. Explore subagents can use codemode for their reads.
+- Session tools: `list_sessions` finds chats by title, workspace or the text of recent chats, and `read_session` reads a chat's status, branches, subagents, usage totals and turns, or one turn in full with each tool call's arguments and result. Both are loaded with `tool_search`, callable from codemode, and available to subagents.
+- ChatGPT provider: sign in with your ChatGPT Plus or Pro plan through Acode's browser and callback. Disconnect, Remove account and Manage usage are in the provider settings.
+- Codex sign-in retries brief network failures while it waits for device approval.
+- Fixed tool paths disappearing from the live work log during parallel tool calls.
+- `read` refuses folders and times out stalled reads instead of hanging.
 - Pi packages upgraded to 1.1.0.
 
 # 0.1.0
