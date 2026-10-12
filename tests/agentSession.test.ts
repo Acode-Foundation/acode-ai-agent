@@ -697,3 +697,25 @@ test("session tools find chats and read their turns, tool calls, status, and usa
   const reopened = await env.open(env.store.get("chat-old")!);
   expect(reopened.session.snapshot.messages).toHaveLength(4);
 });
+
+test("with codemode, each tool scripts can call says how", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-hints"));
+  let tools: Array<{ name: string; description: string }> = [];
+  env.faux.setResponses([
+    (context) => {
+      tools = getCurrentTools(context.messages);
+      return fauxAssistantMessage("ok");
+    },
+  ]);
+  await session.prompt("hi");
+  await settle(session, idle);
+
+  const description = (name: string) => tools.find((tool) => tool.name === name)?.description;
+  expect(description("read")).toContain(
+    "Codemode: `tools.read(args)` resolves to its text output.",
+  );
+  expect(description("todo_write")).toContain("`tools.todo_write(args)`");
+  for (const name of ["codemode", "subagent", "tool_search"])
+    expect(description(name)).not.toContain("Codemode: `tools.");
+});

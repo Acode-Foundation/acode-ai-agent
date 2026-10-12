@@ -53,7 +53,7 @@ export function preamble(
     "For broad searches or reading many files, delegate to subagent (explore) so only its report enters your context. Run independent subagents in the same turn to work in parallel.",
     ...(tools.codemode
       ? [
-          "Use codemode to batch independent tool calls (Promise.allSettled), chain them, or filter large output, instead of many separate calls. Prefer subagent when the work needs judgment rather than a script.",
+          "Use codemode whenever a step needs two or more tool calls with no decision of yours between them: reading several files, running several searches, searching then reading the matches, or listing then reading. One script runs them all (Promise.allSettled for independent calls, chained for dependent ones) and returns only what you need. Make a direct call when one call is enough or when you must see a result before choosing the next call. Prefer subagent when the work needs judgment rather than a script.",
         ]
       : []),
     ...(tools.deferred?.length

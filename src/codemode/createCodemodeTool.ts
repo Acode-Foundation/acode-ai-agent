@@ -33,6 +33,19 @@ export const CODEMODE_TOOL_NAME = "codemode";
 const NOT_CALLABLE = new Set([CODEMODE_TOOL_NAME, "subagent", "ask_user_question", "tool_search"]);
 
 /**
+ * A declared tool with a line saying how scripts call it, so codemode stays in view at every tool
+ * the model reads, not only in its own description. Tools scripts cannot reach are unchanged.
+ */
+export function withScriptCall(tool: ToolRegistration): ToolRegistration {
+  if (NOT_CALLABLE.has(tool.name)) return tool;
+  const call = `tools.${toCodemodeIdentifier(tool.name)}(args)`;
+  return {
+    ...tool,
+    description: `${tool.description.trim()}\n\nCodemode: \`${call}\` resolves to its text output.`,
+  };
+}
+
+/**
  * Heap limit for one script's VM. The worker shares the app's memory on a phone, so a runaway
  * script fails with `InternalError: out of memory` instead of growing until Android kills Acode.
  */
@@ -442,10 +455,15 @@ function codemodeDescription(tools: readonly ToolRegistration[]): string {
     return id === tool.name ? id : `${id} (${tool.name})`;
   });
   return [
-    "Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async " +
-      "function body in a QuickJS sandbox: top-level `await` and `return` work. No DOM, file system, network, or timers.",
-    "Use it to run independent calls together (`await Promise.allSettled([...])`), chain calls, or filter large " +
-      "results before you read them, instead of many separate tool calls. Only the script's output reaches you.",
+    "Run several tool calls in one step with a JavaScript script. Use it instead of separate calls whenever you need " +
+      "two or more: read several files, run several searches, grep then read the matches. Independent calls run " +
+      "together (`await Promise.allSettled([...])`), dependent ones chain, and only the script's output reaches you, " +
+      "so filter large results in the script.",
+    "The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: " +
+      "top-level `await` and `return` work. No DOM, file system, network, or timers. For example:\n" +
+      'const [a, b] = await Promise.all([tools.read({ path: "src/a.ts" }), tools.read({ path: "src/b.ts" })]);\n' +
+      'const hits = await tools.grep({ query: "parseConfig", path: "src" });\n' +
+      "return { a, b, hits };",
     "- `await tools.<name>({ ...args })` takes the same arguments as the declared tool and resolves to its text " +
       "output; it rejects with an Error on failure. Edits, deletes, and commands still need the user's approval. " +
       "Calls still running when the script ends are cancelled; calls made before a failure are not undone.",

@@ -34,7 +34,11 @@ import {
   type UsageState,
 } from "@earendil-works/pi-durable";
 import { createAskTool } from "../ask/createAskTool";
-import { CODEMODE_TOOL_NAME, createCodemodeTool } from "../codemode/createCodemodeTool";
+import {
+  CODEMODE_TOOL_NAME,
+  createCodemodeTool,
+  withScriptCall,
+} from "../codemode/createCodemodeTool";
 import { QuestionGate } from "../ask/questionGate";
 import { systemPromptSections } from "../context/contextBuilder";
 import { Signal } from "../core/events";
@@ -724,8 +728,11 @@ export class AgentSession {
         ),
       ].map(withReadableErrors),
     ];
+    // With codemode, every tool scripts can call says how, here and in subagents.
+    const declared = (list: ToolRegistration[]) =>
+      this.#codemodeInstalled ? list.map(withScriptCall) : list;
     // A subagent picks from every tool its parent has, filtered by its profile.
-    tools.push(withReadableErrors(createSubagentTool(() => [...tools, ...pluginTools])));
+    tools.push(withReadableErrors(createSubagentTool(() => declared([...tools, ...pluginTools]))));
     // Seldom-used tools stay out of requests until `tool_search` loads them.
     const deferred = [...tools, ...pluginTools].filter(
       (tool) =>
@@ -749,7 +756,7 @@ export class AgentSession {
     this.#registry.install(
       defineExtension({
         name: "acode",
-        tools,
+        tools: declared(tools),
         sections: systemPromptSections({
           workspace: this.workspace,
           settings: this.#settings,
@@ -787,7 +794,7 @@ export class AgentSession {
         ],
       }),
     );
-    this.#registry.install(defineExtension({ name: "plugins", tools: pluginTools }));
+    this.#registry.install(defineExtension({ name: "plugins", tools: declared(pluginTools) }));
   }
 
   /**

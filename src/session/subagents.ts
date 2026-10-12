@@ -42,8 +42,12 @@ const PARENT_ONLY_TOOLS = new Set([
   "tool_search",
 ]);
 
-/** Tools an `explore` child may use: it reads and searches, and never changes the workspace. */
+/**
+ * Tools an `explore` child may use: it reads and searches, and never changes the workspace. Its
+ * codemode scripts can call only these tools, so they batch its reads without widening them.
+ */
 const READ_ONLY_TOOLS = new Set([
+  "codemode",
   "read",
   "list_dir",
   "grep",

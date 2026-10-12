@@ -6,7 +6,7 @@ const workspace = { info: { name: "demo", remote: false, scheme: "file" } } as A
 
 test("adds the codemode guideline only when the tool is offered", () => {
   expect(preamble(workspace, { codemode: true })).toContain(
-    "Use codemode to batch independent tool calls",
+    "Use codemode whenever a step needs two or more tool calls",
   );
   expect(preamble(workspace)).not.toContain("codemode");
 });
