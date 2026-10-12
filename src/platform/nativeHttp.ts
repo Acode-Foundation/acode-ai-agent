@@ -159,7 +159,7 @@ export const nativeFetch: typeof fetch = async (input, init) => {
       },
       (response) => finish(() => resolve(toFetchResponse(response))),
       (error) => {
-        if (typeof error?.status === "number") {
+        if (typeof error?.status === "number" && error.status >= 200 && error.status <= 599) {
           finish(() => resolve(toFetchResponse(error)));
           return;
         }

@@ -44,6 +44,8 @@ import {
   refreshPortableCodexModels,
 } from "./portableOAuth";
 import { withRemoteCatalog, type RemoteCatalog } from "./remoteCatalog";
+import { ChatGPTAccount, refreshChatGPTModels } from "./chatgptOAuth";
+import { createChatGPTProvider } from "./chatgptProvider";
 
 export type ProviderDescriptor = {
   id: ProviderId;
@@ -79,6 +81,13 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     hint: "ChatGPT subscription",
     apiKey: false,
     subscriptionLabel: "Sign in with ChatGPT",
+  },
+  {
+    id: "chatgpt",
+    name: "ChatGPT",
+    hint: "Use your ChatGPT plan",
+    apiKey: false,
+    subscriptionLabel: "Continue with ChatGPT",
   },
   {
     id: "anthropic",
@@ -230,6 +239,7 @@ export function providerDescriptors(
 
 export class ProviderRegistry {
   readonly models: MutableModels;
+  readonly chatgptAccount: ChatGPTAccount;
   #credentials: PortableCredentialStore;
   #customModels: () => Record<string, string[]>;
   #customEndpoints: () => CustomEndpoint[];
@@ -246,6 +256,7 @@ export class ProviderRegistry {
     customEndpoints: () => CustomEndpoint[] = () => [],
   ) {
     this.#credentials = credentials;
+    this.chatgptAccount = new ChatGPTAccount(credentials);
     this.#customModels = customModels;
     this.#customEndpoints = customEndpoints;
     const models = createModels({
@@ -256,7 +267,11 @@ export class ProviderRegistry {
         fileExists: async () => false,
       },
     });
-    for (const provider of portableProviders(credentials)) {
+    for (const provider of portableProviders(credentials, this.chatgptAccount)) {
+      if (provider.id === "chatgpt") {
+        models.setProvider(provider);
+        continue;
+      }
       const catalog = withRemoteCatalog(provider, catalogStore);
       this.#catalogs.set(provider.id, catalog);
       models.setProvider(catalog.provider);
@@ -322,7 +337,7 @@ export class ProviderRegistry {
       [...this.models.getModels(providerId)].filter((model) => model.input.includes("text")),
     ).sort((left, right) => left.name.localeCompare(right.name));
     const available = this.#availableModelIds.get(providerId);
-    if (providerId === "openai-codex" && available?.size) {
+    if ((providerId === "openai-codex" || providerId === "chatgpt") && available?.size) {
       const known = new Map(catalog.map((model) => [model.id, model]));
       catalog = [...available].map((id) => known.get(id) ?? createCustomModel(providerId, id));
     }
@@ -338,6 +353,43 @@ export class ProviderRegistry {
   /** Cache pi's credential-specific model policy for the synchronous mobile picker. */
   async refreshModelAvailability(providerId: ProviderId, force = false): Promise<Model<any>[]> {
     let credential = await this.#credentials.read(providerId);
+    if (providerId === "chatgpt") {
+      if (credential?.type !== "oauth") {
+        this.#availableModelIds.set(providerId, new Set());
+        return [];
+      }
+      if (
+        force ||
+        !Array.isArray(credential.availableModels) ||
+        typeof credential.availableModelsFetchedAt !== "number" ||
+        Date.now() - credential.availableModelsFetchedAt > 60 * 60_000
+      ) {
+        try {
+          await this.models.getAuth(providerId);
+          credential = await this.#credentials.modify(providerId, async (current) => {
+            if (current?.type !== "oauth") return undefined;
+            return refreshChatGPTModels(current);
+          });
+        } catch (error) {
+          credential = await this.#credentials.read(providerId);
+          if (credential?.type !== "oauth" || !Array.isArray(credential.availableModels))
+            throw error;
+        }
+      }
+      const available =
+        credential?.type === "oauth" && Array.isArray(credential.availableModels)
+          ? (credential.availableModels as { id: string; name: string }[])
+          : [];
+      this.#availableModelIds.set(providerId, new Set(available.map((model) => model.id)));
+      for (const entry of available) {
+        const known = this.models.getModel(providerId, entry.id);
+        this.#overrides.set(`${providerId}:${entry.id}`, {
+          ...(known ?? createCustomModel(providerId, entry.id)),
+          name: entry.name,
+        });
+      }
+      return this.getModels(providerId);
+    }
     if (
       providerId === "openai-codex" &&
       credential?.type === "oauth" &&
@@ -456,7 +508,10 @@ export class ProviderRegistry {
   }
 }
 
-function portableProviders(credentials: PortableCredentialStore): Provider[] {
+function portableProviders(
+  credentials: PortableCredentialStore,
+  accounts: ChatGPTAccount,
+): Provider[] {
   const openrouter = openrouterProvider();
   const anthropic = anthropicProvider();
   const githubCopilot = githubCopilotProvider();
@@ -469,6 +524,7 @@ function portableProviders(credentials: PortableCredentialStore): Provider[] {
       auth: { ...openrouter.auth, oauth: createPortableOpenRouterOAuth(credentials) },
     },
     openaiProvider(),
+    createChatGPTProvider(accounts),
     { ...codex, auth: { ...codex.auth, oauth: portableCodexOAuth } },
     // Drop pi's built-in Claude Pro / Max OAuth too; Anthropic policy disallows it here.
     { ...anthropic, auth: { ...anthropic.auth, oauth: undefined } },

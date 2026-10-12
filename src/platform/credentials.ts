@@ -18,6 +18,7 @@ export class PortableCredentialStore implements CredentialStore {
   #chains = new Map<string, Promise<unknown>>();
   #extraIds: () => readonly string[];
   #pending = new Map<string, PendingSignIn>();
+  #oauthStates = new Map<string, unknown>();
 
   constructor(ctx: Acode.PluginContext | null, extraIds: () => readonly string[] = () => []) {
     this.#ctx = ctx;
@@ -41,6 +42,7 @@ export class PortableCredentialStore implements CredentialStore {
         "openrouter",
         "openai",
         "openai-codex",
+        "chatgpt",
         "anthropic",
         "github-copilot",
         "google",
@@ -94,10 +96,15 @@ export class PortableCredentialStore implements CredentialStore {
     );
   }
 
-  delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+  delete(
+    providerId: string,
+    options?: AuthOperationOptions,
+    beforeDelete?: (current: Credential | undefined) => Promise<void>,
+  ): Promise<void> {
     return this.#enqueue(
       providerId,
       async () => {
+        if (beforeDelete) await beforeDelete(await this.read(providerId));
         this.#memory.delete(providerId);
         if (this.#ctx) await this.#ctx.setSecret(`${SECRET_PREFIX}${providerId}`, "");
         this.changes.emit(providerId);
@@ -108,6 +115,33 @@ export class PortableCredentialStore implements CredentialStore {
 
   pendingSignIn(providerId: string): Promise<PendingSignIn | undefined> {
     return this.#enqueue(`pending:${providerId}`, () => this.#readPending(providerId));
+  }
+
+  /** Provider-owned registration/profile state, protected like the active credential. */
+  oauthState<T>(providerId: string): Promise<T | undefined> {
+    return this.#enqueue(`state:${providerId}`, () => this.#readOAuthState<T>(providerId));
+  }
+
+  updateOAuthState<T>(providerId: string, update: (state: T | undefined) => T): Promise<T> {
+    return this.#enqueue(`state:${providerId}`, async () => {
+      const next = update(await this.#readOAuthState<T>(providerId));
+      if (this.#ctx) await this.#ctx.setSecret(`oauth-state:${providerId}`, JSON.stringify(next));
+      else this.#oauthStates.set(providerId, next);
+      this.changes.emit(providerId);
+      return next;
+    });
+  }
+
+  async #readOAuthState<T>(providerId: string): Promise<T | undefined> {
+    if (!this.#ctx) return this.#oauthStates.get(providerId) as T | undefined;
+    const raw = await this.#ctx.getSecret(`oauth-state:${providerId}`, "");
+    if (!raw) return undefined;
+    try {
+      const value = JSON.parse(raw);
+      return value && typeof value === "object" && !Array.isArray(value) ? (value as T) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   savePendingSignIn(providerId: string, pending: PendingSignIn): Promise<void> {

@@ -344,6 +344,35 @@ test("received credentials stay in the connecting phase until model loading comp
   expect(controller.state.authFlow?.status).toBe("connected");
 });
 
+test("ChatGPT account cleanup preserves a newer provider sign-in", async () => {
+  let finishDisconnect!: (revoked: boolean) => void;
+  const disconnect = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        finishDisconnect = resolve;
+      }),
+  );
+  Object.assign(controller.providers, {
+    chatgptAccount: { disconnect, forget: vi.fn().mockResolvedValue(undefined) },
+    refreshModelAvailability: vi.fn().mockResolvedValue([]),
+  });
+  const removing = controller.removeCredential("chatgpt");
+  await vi.waitFor(() => expect(disconnect).toHaveBeenCalledOnce());
+  login.mockImplementation(
+    (_id: string, _kind: string, options: LoginOptions) =>
+      new Promise<void>((resolve) => options.signal.addEventListener("abort", () => resolve())),
+  );
+  const signingIn = controller.loginSubscription("github-copilot");
+  const flow = controller.state.authFlow;
+  await controller.forgetChatGPTAccount();
+  expect(controller.state.authFlow).toBe(flow);
+  finishDisconnect(true);
+  await removing;
+  expect(controller.state.authFlow).toBe(flow);
+  controller.cancelSubscriptionLogin();
+  await signingIn;
+});
+
 test.each(["cancel", "dispose"])(
   "%s closes its auth browser before aborting listeners",
   async (action) => {

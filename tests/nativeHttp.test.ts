@@ -218,6 +218,19 @@ test("drops native payloads for Fetch statuses that forbid a response body", asy
   }
 });
 
+test("rejects Cordova transport errors instead of inventing an HTTP 502 response", async () => {
+  installHttp({
+    sendRequest(_url, _options, _success, failure) {
+      failure({ status: -3, error: "Host could not be resolved: auth.openai.com" });
+      return 1;
+    },
+    abort() {},
+  });
+  await expect(nativeFetch("https://auth.openai.com/oauth/token")).rejects.toThrow(
+    "Host could not be resolved: auth.openai.com",
+  );
+});
+
 test("aborts the native request when the signal fires", async () => {
   let aborted = 0;
   installHttp({
