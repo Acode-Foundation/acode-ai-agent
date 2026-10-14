@@ -1,9 +1,36 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { Stream } from "openai/core/streaming";
 import { nativeFetch } from "../src/platform/nativeHttp";
+import { PortableCredentialStore } from "../src/platform/credentials";
+import { ProviderRegistry } from "../src/providers/providerRegistry";
 import acodeSystem from "./fixtures/acode-http-stream.cjs";
 
 afterEach(() => vi.unstubAllGlobals());
+
+test("Gemini uses its SDK-supported fetch without changing the host transport", async () => {
+  const credentials = new PortableCredentialStore(null);
+  await credentials.setApiKey("google", "fixture-key");
+  const registry = new ProviderRegistry(credentials);
+  const model = registry.models.getModels("google")[0]!;
+  const httpStream = vi.fn();
+  const hostFetch = vi.fn(
+    async () =>
+      new Response(
+        `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "Hello" }], role: "model" }, finishReason: "STOP" }] })}\n\n`,
+        { headers: { "Content-Type": "text/event-stream" } },
+      ),
+  );
+  vi.stubGlobal("fetch", hostFetch);
+  vi.stubGlobal("system", { httpStream });
+  const response = await registry.models.completeSimple(model, {
+    messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
+  });
+  expect(response.stopReason).toBe("stop");
+  expect(response.content).toContainEqual(expect.objectContaining({ type: "text", text: "Hello" }));
+  expect(hostFetch).toHaveBeenCalledOnce();
+  expect(httpStream).not.toHaveBeenCalled();
+  expect(globalThis.fetch).toBe(hostFetch);
+});
 
 test("passes fragmented UTF-8 and SSE frames through the actual provider parser", async () => {
   const events = [

@@ -1,17 +1,17 @@
 import { afterEach, expect, test, vi } from "vitest";
 import {
   getCordovaHttp,
-  installNativeFetch,
+  initializeNativeHttp,
   nativeFetch,
-  uninstallNativeFetch,
+  disposeNativeHttp,
 } from "../src/platform/nativeHttp.ts";
 
 afterEach(() => {
-  uninstallNativeFetch();
+  disposeNativeHttp();
   vi.unstubAllGlobals();
 });
 
-test("selects ordered Cordova callbacks once when installing native fetch", async () => {
+test("selects ordered Cordova callbacks once without replacing host fetch", async () => {
   const setNativeToJsBridgeMode = vi.fn();
   vi.stubGlobal("system", { httpStream: vi.fn(async () => new Response("ok")) });
   vi.stubGlobal("cordova", {
@@ -20,15 +20,15 @@ test("selects ordered Cordova callbacks once when installing native fetch", asyn
       setNativeToJsBridgeMode,
     },
   });
-  expect(installNativeFetch()).toBe(true);
-  expect(installNativeFetch()).toBe(true);
+  initializeNativeHttp();
+  initializeNativeHttp();
   expect(setNativeToJsBridgeMode).toHaveBeenCalledOnce();
   expect(setNativeToJsBridgeMode).toHaveBeenCalledWith(2);
   await nativeFetch("https://api.example.test/chat");
   expect(setNativeToJsBridgeMode).toHaveBeenCalledOnce();
 });
 
-test("restores EVAL_BRIDGE when uninstalling native fetch", () => {
+test("restores EVAL_BRIDGE when disposing native HTTP", () => {
   const setNativeToJsBridgeMode = vi.fn();
   const previousFetch = globalThis.fetch;
   vi.stubGlobal("system", { httpStream: vi.fn() });
@@ -38,8 +38,8 @@ test("restores EVAL_BRIDGE when uninstalling native fetch", () => {
       setNativeToJsBridgeMode,
     },
   });
-  installNativeFetch();
-  uninstallNativeFetch();
+  initializeNativeHttp();
+  disposeNativeHttp();
   expect(setNativeToJsBridgeMode.mock.calls.map((call) => call[0])).toEqual([2, 3]);
   expect(globalThis.fetch).toBe(previousFetch);
 });
@@ -53,8 +53,8 @@ test("does not change the Cordova bridge when only buffered HTTP is available", 
     },
     plugin: { http: { sendRequest: vi.fn(), abort: vi.fn() } },
   });
-  expect(installNativeFetch()).toBe(true);
-  uninstallNativeFetch();
+  initializeNativeHttp();
+  disposeNativeHttp();
   expect(setNativeToJsBridgeMode).not.toHaveBeenCalled();
 });
 
@@ -99,13 +99,29 @@ test("prefers httpStream and delivers bytes before the response finishes", async
   expect(cancel).toHaveBeenCalledOnce();
 });
 
-test("installs native fetch with only the new system API available", () => {
-  vi.stubGlobal("cordova", undefined);
-  vi.stubGlobal("system", { httpStream: vi.fn() });
-  vi.stubGlobal("fetch", globalThis.fetch);
-  expect(installNativeFetch()).toBe(true);
-  expect(globalThis.fetch).toBe(nativeFetch);
-});
+test.each(["stream", "buffered"])(
+  "%s setup and disposal leave global fetch untouched",
+  async (transport) => {
+    const hostFetch = vi.fn(async () => new Response("account"));
+    const httpStream = vi.fn(async () => new Response("provider"));
+    const sendRequest = vi.fn((_url, _options, success) => {
+      success({ status: 200, data: "provider" });
+      return 1;
+    });
+    vi.stubGlobal("fetch", hostFetch);
+    vi.stubGlobal("system", transport === "stream" ? { httpStream } : undefined);
+    vi.stubGlobal("cordova", { plugin: { http: { sendRequest, abort: vi.fn() } } });
+    initializeNativeHttp();
+    expect(globalThis.fetch).toBe(hostFetch);
+    const options: RequestInit = { credentials: "include", cache: "no-store" };
+    expect(await (await fetch("https://dev.acode.app/api/login", options)).text()).toBe("account");
+    expect(hostFetch).toHaveBeenCalledWith("https://dev.acode.app/api/login", options);
+    expect(await (await nativeFetch("https://api.example.test/chat")).text()).toBe("provider");
+    expect(transport === "stream" ? httpStream : sendRequest).toHaveBeenCalledOnce();
+    disposeNativeHttp();
+    expect(globalThis.fetch).toBe(hostFetch);
+  },
+);
 
 test("preserves native HTTP errors and never retries a failed stream", async () => {
   const denied = new Response('{"error":"denied"}', { status: 401 });

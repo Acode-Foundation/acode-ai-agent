@@ -22,6 +22,7 @@ type CordovaHttp = {
   abort(requestId: number, success?: () => void, failure?: () => void): void;
 };
 
+// Keep the host's app-file transport even if a legacy plugin wraps fetch later.
 const originalFetch = globalThis.fetch.bind(globalThis);
 
 type StreamingSystem = {
@@ -49,7 +50,6 @@ type CordovaExec = {
 
 let orderedCallbacksActive = false;
 let previousNativeToJsMode: number | undefined;
-let previousFetch: typeof fetch | undefined;
 
 function getCordovaExec(): CordovaExec | undefined {
   return (globalThis as { cordova?: { exec?: CordovaExec } }).cordova?.exec;
@@ -96,10 +96,9 @@ function isOwnOrigin(url: string): boolean {
 export const nativeFetch: typeof fetch = async (input, init) => {
   const system = getStreamingSystem();
   const http = getCordovaHttp();
-  if (!system && !http) {
-    const fallback = globalThis.fetch === nativeFetch ? originalFetch : globalThis.fetch;
-    return fallback(input, init);
-  }
+  // Without a native bridge, honor the current host fetch; app-file requests below
+  // retain the captured WebView transport even if another plugin wraps fetch later.
+  if (!system && !http) return globalThis.fetch(input, init);
 
   const request = input instanceof Request && !init ? input : new Request(input, init);
   const url = request.url;
@@ -169,20 +168,12 @@ export const nativeFetch: typeof fetch = async (input, init) => {
   });
 };
 
-export function installNativeFetch(): boolean {
-  if (!getStreamingSystem() && !getCordovaHttp()) return false;
+export function initializeNativeHttp(): void {
   if (getStreamingSystem()) selectOrderedNativeCallbacks();
-  if (globalThis.fetch !== nativeFetch) {
-    previousFetch = globalThis.fetch;
-    globalThis.fetch = nativeFetch;
-  }
-  return true;
 }
 
-export function uninstallNativeFetch(): void {
+export function disposeNativeHttp(): void {
   restoreNativeCallbacks();
-  if (globalThis.fetch === nativeFetch && previousFetch) globalThis.fetch = previousFetch;
-  previousFetch = undefined;
 }
 
 function toFetchResponse(raw: CordovaHttpResponse): Response {

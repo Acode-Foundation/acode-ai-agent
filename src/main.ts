@@ -11,7 +11,7 @@ import {
   type HostActionRequest,
 } from "./platform/hostMenus";
 import { createHomeProject } from "./platform/randomProject";
-import { installNativeFetch, uninstallNativeFetch } from "./platform/nativeHttp";
+import { initializeNativeHttp, disposeNativeHttp } from "./platform/nativeHttp";
 import { setPluginBaseUrl } from "./platform/pluginAssets";
 import { AGENT_ICON_CLASS, installPluginIcon } from "./platform/pluginIcon";
 import { mountApp, unmountApp } from "./ui/mount";
@@ -54,7 +54,7 @@ class AcodeAiAgentPlugin {
     _$page: Acode.WCPage,
     options: Acode.PluginInitOptions,
   ): Promise<void> {
-    installNativeFetch();
+    initializeNativeHttp();
     setPluginBaseUrl(baseUrl);
     this.#disposeIcon = installPluginIcon();
     const controller = new AgentController(options.ctx);
@@ -85,7 +85,7 @@ class AcodeAiAgentPlugin {
     this.#disposeIcon = null;
     await this.#controller?.dispose();
     this.#controller = null;
-    uninstallNativeFetch();
+    disposeNativeHttp();
     for (const command of COMMANDS) acode.removeCommand(command);
   }
 
