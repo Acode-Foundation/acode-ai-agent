@@ -1,5 +1,6 @@
 import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
 import type { PortableCredentialStore } from "../platform/credentials";
+import { nativeFetch } from "../platform/nativeHttp";
 import { OPENROUTER_CALLBACK_URL, waitForOpenRouterCallback } from "../platform/oauthCallback";
 import { sanitizeModelId } from "./customModels";
 
@@ -763,7 +764,7 @@ async function requestJson(
   url: string,
   init: RequestInit,
 ): Promise<{ ok: boolean; status: number; body: Json; url: string }> {
-  const response = await fetch(url, init);
+  const response = await nativeFetch(url, init);
   const body = (await response.json().catch(() => ({}))) as Json;
   return { ok: response.ok, status: response.status, body, url };
 }

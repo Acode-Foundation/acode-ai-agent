@@ -1,6 +1,7 @@
 import {
   createModels,
   InMemoryModelsStore,
+  type AnyModel,
   type Model,
   type ModelsStore,
   type MutableModels,
@@ -547,11 +548,35 @@ function portableProviders(
 }
 
 function withNativeFetch(models: MutableModels): MutableModels {
+  const stream = models.stream.bind(models);
   const streamSimple = models.streamSimple.bind(models);
-  const completeSimple = models.completeSimple.bind(models);
+  const streamDeferred = models.streamDeferred.bind(models);
+  const cancelDeferred = models.cancelDeferred.bind(models);
+  const generateImages = models.generateImages.bind(models);
+  const classify = models.classify.bind(models);
+  // complete(), completeSimple(), and fetchDeferred() delegate to these streams.
+  models.stream = (model, context, options) =>
+    stream(
+      model,
+      context,
+      Object.assign({}, options, { fetch: providerFetch(model, options?.fetch) }),
+    );
   models.streamSimple = (model, context, options) =>
-    streamSimple(model, context, { ...options, fetch: nativeFetch });
-  models.completeSimple = (model, context, options) =>
-    completeSimple(model, context, { ...options, fetch: nativeFetch });
+    streamSimple(model, context, { ...options, fetch: providerFetch(model, options?.fetch) });
+  models.streamDeferred = (model, handle, options) =>
+    streamDeferred(model, handle, { ...options, fetch: providerFetch(model, options?.fetch) });
+  models.cancelDeferred = (model, handle, options) =>
+    cancelDeferred(model, handle, { ...options, fetch: providerFetch(model, options?.fetch) });
+  models.generateImages = (model, context, options) =>
+    generateImages(model, context, { ...options, fetch: providerFetch(model, options?.fetch) });
+  models.classify = (model, context, options) =>
+    classify(model, context, { ...options, fetch: providerFetch(model, options?.fetch) });
   return models;
+}
+
+function providerFetch(model: AnyModel, requestFetch?: typeof fetch): typeof fetch {
+  // Google rejects custom fetch, so it must use WebView networking, including on Android.
+  return model.api === "google-generative-ai" || model.api === "google-vertex"
+    ? globalThis.fetch
+    : (requestFetch ?? nativeFetch);
 }

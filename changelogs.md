@@ -1,3 +1,7 @@
+# 0.2.1
+
+- Fixed the agent intercepting Acode's own network requests, including login. Agent requests now select their transport without replacing the WebView's global `fetch`.
+
 # 0.2.0
 
 - Codemode: a `codemode` tool, on by default, that runs model-written JavaScript in a QuickJS sandbox and calls the agent's tools from it. Nested calls keep approvals and Undo, and each script shows as one card in the work log with its calls, output and source.

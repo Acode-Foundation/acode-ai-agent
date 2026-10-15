@@ -1,9 +1,9 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { portableCodexOAuth } from "../src/providers/portableOAuth.ts";
-import { installNativeFetch, uninstallNativeFetch } from "../src/platform/nativeHttp.ts";
+import { initializeNativeHttp, disposeNativeHttp } from "../src/platform/nativeHttp.ts";
 
 afterEach(() => {
-  uninstallNativeFetch();
+  disposeNativeHttp();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -135,7 +135,7 @@ test.each(["stream", "buffered"])(
         },
       });
     }
-    installNativeFetch();
+    initializeNativeHttp();
     const notify = vi.fn();
     const login = portableCodexOAuth.login({ prompt: vi.fn(), notify });
     const result = expect(login).resolves.toMatchObject({
