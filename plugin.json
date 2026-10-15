@@ -3,7 +3,7 @@
   "id": "acode.ai.agent",
   "name": "Acode AI Agent",
   "main": "main.js",
-  "version": "0.3.0",
+  "version": "0.2.1",
   "readme": "readme.md",
   "changelogs": "changelogs.md",
   "repository": "https://github.com/Acode-Foundation/acode-ai-agent",
