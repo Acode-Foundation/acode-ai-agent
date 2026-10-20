@@ -28,6 +28,10 @@ export function systemPromptSections(options: {
         tag: false,
       },
     ),
+    section("user_instructions", () => {
+      const instructions = settings().aiInstructions.trim();
+      return instructions ? `Additional user instructions:\n${instructions}` : undefined;
+    }),
     section("project_instructions", () => projectInstructions(workspace)),
     section("available_skills", () => skillCatalog(skills()), { tag: false }),
     section("plugin_context", () => pluginContext(extensions)),

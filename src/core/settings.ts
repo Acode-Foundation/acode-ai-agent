@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   modelId: "qwen/qwen3.7-flash",
   thinkingLevel: "medium",
   permissionMode: "ask",
+  aiInstructions: "",
   includeSelection: true,
   hideThinkingBlock: false,
   autoCompaction: DEFAULT_COMPACTION_POLICY.enabled,

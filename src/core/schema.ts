@@ -68,6 +68,8 @@ const settingsFields = {
   modelId: text("qwen/qwen3.7-flash"),
   thinkingLevel: oneOf(THINKING_LEVELS, "medium"),
   permissionMode: oneOf(PERMISSION_MODE_IDS, "ask"),
+  aiInstructions: ((value) =>
+    typeof value === "string" ? value.slice(0, 12_000) : "") as Field<string>,
   includeSelection: flag(true),
   hideThinkingBlock: flag(false),
   autoCompaction: flag(DEFAULT_COMPACTION_POLICY.enabled),

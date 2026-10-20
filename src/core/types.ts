@@ -24,6 +24,7 @@ export type AgentSettings = {
   modelId: string;
   thinkingLevel: ModelThinkingLevel;
   permissionMode: PermissionMode;
+  aiInstructions: string;
   includeSelection: boolean;
   hideThinkingBlock: boolean;
   autoCompaction: boolean;

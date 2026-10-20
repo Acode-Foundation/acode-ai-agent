@@ -20,6 +20,14 @@ test("settings accept permission modes and migrate unknown junk", () => {
   });
 });
 
+test("AI instructions default to empty and are limited to 12,000 characters", () => {
+  expect(parseSettings({}).aiInstructions).toBe("");
+  expect(parseSettings({ aiInstructions: 42 }).aiInstructions).toBe("");
+  expect(parseSettings({ aiInstructions: "a".repeat(12_001) }).aiInstructions).toHaveLength(
+    12_000,
+  );
+});
+
 test("compaction defaults come from Pi instead of a local copy", () => {
   expect(DEFAULT_SETTINGS.autoCompaction).toBe(DEFAULT_COMPACTION_SETTINGS.enabled);
   expect(DEFAULT_SETTINGS.compactionReserveTokens).toBe(DEFAULT_COMPACTION_SETTINGS.reserveTokens);

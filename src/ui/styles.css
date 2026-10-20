@@ -3817,6 +3817,20 @@ span.file-glyph.file {
   padding: 15px 2px;
   border-bottom: 1px solid var(--line);
 }
+.pi-ai-instructions {
+  width: 100%;
+  min-height: 112px;
+  max-height: 300px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px;
+  background: var(--surface);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
 .skill-root {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 32px;

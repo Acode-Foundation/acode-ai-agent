@@ -1485,6 +1485,20 @@ function PiSettingsSheet({
             </div>
           </header>
           <div class="pi-settings-body">
+            <section class="settings-section">
+              <header>
+                <b>AI instructions</b>
+                <small>Additional instructions included in every conversation</small>
+              </header>
+              <textarea
+                class="pi-ai-instructions"
+                aria-label="AI instructions"
+                value={settings.aiInstructions}
+                maxLength={12_000}
+                rows={5}
+                onInput={(event) => update({ aiInstructions: event.currentTarget.value })}
+              />
+            </section>
             <SettingsToggle
               label="Auto-compact"
               hint="Automatically compact context when it gets too large"
