@@ -35,24 +35,27 @@ export function loadDiffViewRuntime(): Promise<AcodeDiffViewRuntime> {
   const ready = window.acodeAiDiffViewRuntime;
   if (ready) return Promise.resolve(ready);
   if (diffRuntimePromise) return diffRuntimePromise;
-  const pending = new Promise<AcodeDiffViewRuntime>((resolve, reject) => {
-    if (!pluginBaseUrl) {
-      reject(new Error("The diff viewer asset path is unavailable."));
-      return;
-    }
-    const script = document.createElement("script");
-    script.async = true;
-    script.src = `${pluginBaseUrl}/diff-view.js`;
-    script.onload = () => {
-      if (window.acodeAiDiffViewRuntime) resolve(window.acodeAiDiffViewRuntime);
-      else reject(new Error("The diff viewer did not initialize."));
-    };
-    script.onerror = () => {
-      script.remove();
-      reject(new Error("Could not load the diff viewer."));
-    };
-    document.head.append(script);
-  });
+  const pending = readPluginAsset("diff-view.js").then(
+    (source) =>
+      new Promise<AcodeDiffViewRuntime>((resolve, reject) => {
+        const script = document.createElement("script");
+        const scriptUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+        const releaseScriptUrl = () => URL.revokeObjectURL(scriptUrl);
+        script.async = true;
+        script.src = scriptUrl;
+        script.onload = () => {
+          releaseScriptUrl();
+          if (window.acodeAiDiffViewRuntime) resolve(window.acodeAiDiffViewRuntime);
+          else reject(new Error("The diff viewer did not initialize."));
+        };
+        script.onerror = () => {
+          releaseScriptUrl();
+          script.remove();
+          reject(new Error("Could not load the diff viewer."));
+        };
+        document.head.append(script);
+      }),
+  );
   diffRuntimePromise = pending.catch((error) => {
     diffRuntimePromise = undefined;
     throw error;
