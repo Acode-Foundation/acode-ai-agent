@@ -9,6 +9,7 @@ import {
   idbTransaction,
   openAgentDatabase,
 } from "../platform/idbFileSystem";
+import type { ModelSelection } from "../core/types";
 import { redactingFileSystem } from "../platform/secretRedaction";
 
 /** Index row for one chat. The transcript itself lives in the chat's own Pi storage. */
@@ -21,6 +22,8 @@ export type ChatMeta = {
   updatedAt: number;
   /** Pi conversation the chat shows; other conversations are branches made from /tree. */
   conversationId?: number;
+  /** The chat's own model; chats saved before it existed take the one Pi recorded. */
+  model?: ModelSelection;
 };
 
 /**

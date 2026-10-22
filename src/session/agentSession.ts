@@ -46,6 +46,7 @@ import type { ExtensionRegistry } from "../core/extensionRegistry";
 import { resourceSlashCommands, type SlashCommand } from "../core/slashCommands";
 import type {
   AgentSettings,
+  ModelSelection,
   QueuedPrompt,
   RestoredPrompt,
   RunRecovery,
@@ -165,6 +166,8 @@ export class AgentSession {
   #providers: ProviderRegistry;
   #extensions: ExtensionRegistry;
   #settings: () => AgentSettings;
+  /** App-wide settings; their model is the one a chat without its own starts on. */
+  #defaults: () => AgentSettings;
   #store: ChatStore;
   #env: WorkspaceExecutionEnv;
   #registry: Registry = createRegistry();
@@ -227,7 +230,9 @@ export class AgentSession {
     this.workspace = options.workspace;
     this.#providers = options.providers;
     this.#extensions = options.extensions;
-    this.#settings = options.settings;
+    this.#defaults = options.settings;
+    // Tools and prompt sections read the chat's own model through the settings.
+    this.#settings = () => ({ ...this.#defaults(), ...this.model });
     this.#store = options.store;
     this.mutationGate = options.mutationGate;
     this.#env = new WorkspaceExecutionEnv(options.workspace);
@@ -240,6 +245,12 @@ export class AgentSession {
 
   get meta(): ChatMeta {
     return { ...this.#meta };
+  }
+
+  /** The model this chat runs on. */
+  get model(): ModelSelection {
+    const { providerId, modelId, thinkingLevel } = this.#meta.model ?? this.#defaults();
+    return { providerId, modelId, thinkingLevel };
   }
 
   get snapshot(): AgentSessionSnapshot {
@@ -292,19 +303,42 @@ export class AgentSession {
         this.#publish();
       }),
     );
+    if (!this.#meta.model) {
+      // Chats saved before they kept their own model stay on the one Pi recorded for them.
+      const agent = await conversation.agent(context);
+      await this.#saveMeta(
+        {
+          model: agent.model
+            ? {
+                providerId: agent.model.provider,
+                modelId: agent.model.modelId,
+                thinkingLevel: agent.thinkingLevel,
+              }
+            : this.model,
+        },
+        false,
+      );
+    }
     await this.#refreshStopped();
     await this.#activate(conversation);
-    await this.applyModel(settings.providerId, settings.modelId, settings.thinkingLevel);
   }
 
-  /** Point the chat at its model; Pi stores the choice on the conversation. */
-  async applyModel(
-    providerId: string,
-    modelId: string,
-    thinkingLevel: AgentSettings["thinkingLevel"],
-  ): Promise<void> {
-    const conversation = this.#conversation;
-    if (!conversation) return;
+  /** Switch the chat to another model. It takes effect at once; storage follows. */
+  async applyModel(selection: ModelSelection): Promise<void> {
+    const { providerId, modelId, thinkingLevel } = selection;
+    const current = this.#meta.model;
+    if (
+      current?.providerId !== providerId ||
+      current.modelId !== modelId ||
+      current.thinkingLevel !== thinkingLevel
+    )
+      await this.#saveMeta({ model: { providerId, modelId, thinkingLevel } }, false);
+    if (this.#conversation) await this.#configure(this.#conversation);
+  }
+
+  /** Point a conversation at the chat's model; Pi stores the choice on it. */
+  async #configure(conversation: Conversation): Promise<void> {
+    const { providerId, modelId, thinkingLevel } = this.model;
     const agent = await conversation.agent(context);
     if (
       agent.model?.provider === providerId &&
@@ -656,6 +690,8 @@ export class AgentSession {
     this.#conversation = conversation;
     if (this.#meta.conversationId !== conversation.id)
       await this.#saveMeta({ conversationId: conversation.id }, false);
+    // A branch made from /tree runs on the chat's model, not the one it was forked with.
+    await this.#configure(conversation);
     await Promise.all([this.#loadTasks(), this.#refreshEdits(), this.#refreshUsage()]);
     const view = await conversation.viewState(context);
     this.#view = view;

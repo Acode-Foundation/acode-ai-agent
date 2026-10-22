@@ -33,7 +33,7 @@ function environment() {
   vi.stubGlobal("acode", { require: () => undefined });
   databases += 1;
   const store = new ChatStore(openAgentDatabase(`session-test-${databases}`));
-  const faux = fauxProvider();
+  const faux = fauxProvider({ models: [{ id: "faux-a" }, { id: "faux-b" }] });
   const models = createModels();
   models.setProvider(faux.provider);
   const providers = {
@@ -285,6 +285,86 @@ test("tree navigation branches before a user message and can return to the old b
 
   await session.navigateTree(oldTip.id);
   expect(session.snapshot.messages).toHaveLength(4);
+});
+
+/** A reply naming the model that answered, to see which one a run used. */
+const answerWithModel: FauxResponseStep = (_context, _options, _state, model) =>
+  fauxAssistantMessage(`answered by ${model.id}`);
+
+function lastAnswer(session: AgentSession): string {
+  const message = session.snapshot.messages.findLast((item) => item.role === "assistant");
+  return JSON.stringify(message ?? "");
+}
+
+test("each chat runs on its own model and keeps it when reopened", async () => {
+  const env = environment();
+  const a = await env.open(env.newMeta("chat-a"));
+  const b = await env.open(env.newMeta("chat-b"));
+  await b.session.applyModel({
+    providerId: env.faux.provider.id,
+    modelId: "faux-b",
+    thinkingLevel: "off",
+  });
+  expect(a.session.model.modelId).toBe("faux-a");
+  expect(b.session.model.modelId).toBe("faux-b");
+
+  env.faux.setResponses([answerWithModel, answerWithModel]);
+  await a.session.prompt("which model?");
+  await settle(a.session, idle);
+  await b.session.prompt("which model?");
+  await settle(b.session, idle);
+  expect(lastAnswer(a.session)).toContain("answered by faux-a");
+  expect(lastAnswer(b.session)).toContain("answered by faux-b");
+
+  await b.session.dispose();
+  expect(env.store.get("chat-b")?.model).toEqual({
+    providerId: env.faux.provider.id,
+    modelId: "faux-b",
+    thinkingLevel: "off",
+  });
+  const reopened = await env.open(env.store.get("chat-b")!);
+  expect(reopened.session.model.modelId).toBe("faux-b");
+  env.faux.setResponses([answerWithModel]);
+  await reopened.session.prompt("still?");
+  await settle(reopened.session, (snapshot) => idle(snapshot) && snapshot.messages.length === 4);
+  expect(lastAnswer(reopened.session)).toContain("answered by faux-b");
+});
+
+test("a chat saved without its own model stays on the one Pi recorded for it", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-old"));
+  await session.applyModel({
+    providerId: env.faux.provider.id,
+    modelId: "faux-b",
+    thinkingLevel: "off",
+  });
+  await session.dispose();
+  const { model: _model, ...legacy } = env.store.get("chat-old")!;
+  await env.store.save(legacy);
+
+  const reopened = await env.open(env.store.get("chat-old")!);
+  expect(reopened.session.model.modelId).toBe("faux-b");
+  expect(env.store.get("chat-old")?.model?.modelId).toBe("faux-b");
+});
+
+test("a branch made from the tree runs on the chat's model", async () => {
+  const env = environment();
+  const { session } = await env.open(env.newMeta("chat-branch"));
+  await session.applyModel({
+    providerId: env.faux.provider.id,
+    modelId: "faux-b",
+    thinkingLevel: "off",
+  });
+  env.faux.setResponses([answerWithModel, answerWithModel]);
+  await session.prompt("first question");
+  await settle(session, idle);
+
+  const first = (await session.treeItems()).find((item) => item.kind === "user")!;
+  // Editing the first prompt starts a fresh conversation with no model of its own.
+  await session.navigateTree(first.id);
+  await session.prompt("edited question");
+  await settle(session, idle);
+  expect(lastAnswer(session)).toContain("answered by faux-b");
 });
 
 test("copies history into a new chat for /fork", async () => {

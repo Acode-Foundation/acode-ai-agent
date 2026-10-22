@@ -10,6 +10,7 @@ import type {
   AgentFeature,
   AgentSettings,
   ChatSummary,
+  ModelSelection,
   MutationDecision,
   ProviderId,
   PublicAgentState,
@@ -91,9 +92,8 @@ export class AgentController {
       tasks: [],
       edits: {},
     };
-    this.settings.subscribe((settings) => {
+    this.settings.subscribe(() => {
       this.providers.syncCustomEndpoints();
-      this.#state.settings = settings;
       this.#activeSession()?.applySettings();
       this.#emit();
     });
@@ -209,7 +209,8 @@ export class AgentController {
       };
       this.#emit();
     }
-    void this.#refreshProviderModel(this.settings.value.providerId, this.settings.value.modelId);
+    const { providerId, modelId } = this.#model();
+    void this.#refreshProviderModel(providerId, modelId);
   }
 
   async send(
@@ -229,11 +230,9 @@ export class AgentController {
     if (this.settings.value.blockImages && attached.length)
       throw new Error("Images are blocked in Pi settings.");
     if (!prompt && !attached.length) return;
-    const auth = await this.providers.models.checkAuth(this.settings.value.providerId);
-    if (!auth)
-      throw new Error(
-        `Add a ${this.settings.value.providerId} credential before sending a message.`,
-      );
+    const { providerId } = session.model;
+    if (!(await this.providers.models.checkAuth(providerId)))
+      throw new Error(`Add a ${providerId} credential before sending a message.`);
     try {
       await session.prompt(prompt, mode, attached);
     } catch (error) {
@@ -324,8 +323,8 @@ export class AgentController {
               { label: "Session ID", value: info.id },
               { label: "Tokens", value: formatTokens(info.tokens) },
               { label: "Cost", value: info.cost > 0 ? `$${info.cost.toFixed(4)}` : "—" },
-              { label: "Provider", value: this.settings.value.providerId },
-              { label: "Model", value: this.#state.model?.name ?? this.settings.value.modelId },
+              { label: "Provider", value: session.model.providerId },
+              { label: "Model", value: this.#state.model?.name ?? session.model.modelId },
             ],
           },
         };
@@ -579,14 +578,25 @@ export class AgentController {
     if (remaining.length === this.settings.value.customEndpoints.length) return;
     const customModels = { ...this.settings.value.customModels };
     delete customModels[id];
-    const switching = this.settings.value.providerId === id;
+    const fallback = remaining[0]?.id ?? "openrouter";
+    const activeUses = this.#model().providerId === id;
+    const defaultUses = this.settings.value.providerId === id;
     this.settings.update({ customEndpoints: remaining, customModels });
     await this.credentials.delete(id);
-    if (switching) await this.selectProvider(remaining[0]?.id ?? "openrouter");
+    if (activeUses) await this.selectProvider(fallback);
+    else if (defaultUses) {
+      // Only new chats started on it; the open chat keeps its own model.
+      const models = await this.providers.refreshModelAvailability(fallback);
+      if (models.length)
+        this.settings.update({
+          providerId: fallback,
+          modelId: preferredModel(fallback, models).id,
+        });
+    }
   }
 
   async refreshCustomEndpointModels(
-    providerId: ProviderId = this.settings.value.providerId,
+    providerId: ProviderId = this.#model().providerId,
   ): Promise<string[]> {
     const endpoint = this.providers.customEndpoint(providerId);
     if (!endpoint) throw new Error("That provider is not a custom OpenAI-compatible endpoint.");
@@ -614,51 +624,53 @@ export class AgentController {
           : `No models are available for this ${providerId} account.`,
       );
     }
+    const current = this.#model();
     const currentModel =
-      providerId === this.settings.value.providerId
-        ? models.find((model) => model.id === this.settings.value.modelId)
+      providerId === current.providerId
+        ? models.find((model) => model.id === current.modelId)
         : undefined;
     const model = currentModel ?? preferredModel(providerId, models);
-    const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
-    this.settings.update({ providerId, modelId: model.id, thinkingLevel });
+    const thinkingLevel = clampThinkingLevel(model, current.thinkingLevel);
     this.#state.models = models;
-    void this.#applyModel();
     this.#state.model = model;
+    this.#chooseModel({ providerId, modelId: model.id, thinkingLevel });
     this.#emit();
     void this.#refreshProviderModel(providerId, model.id);
   }
 
   selectModel(modelId: string): void {
-    const model = this.providers.resolveModel(this.settings.value.providerId, modelId);
-    const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
-    this.settings.update({ modelId: model.id, thinkingLevel });
-    void this.#applyModel();
+    const { providerId, thinkingLevel } = this.#model();
+    const model = this.providers.resolveModel(providerId, modelId);
     this.#state.model = model;
+    this.#chooseModel({
+      modelId: model.id,
+      thinkingLevel: clampThinkingLevel(model, thinkingLevel),
+    });
     this.#refreshModels();
-    void this.#refreshProviderModel(this.settings.value.providerId, model.id);
+    void this.#refreshProviderModel(providerId, model.id);
   }
 
   addCustomModel(modelId: string): void {
     const id = sanitizeModelId(modelId);
     if (!id) throw new Error("Enter a model id like anthropic/claude-sonnet-4.6");
-    const providerId = this.settings.value.providerId;
+    const providerId = this.#model().providerId;
     const existing = this.settings.value.customModels[providerId] ?? [];
-    const inCatalog = Boolean(this.providers.models.getModel(providerId, id));
-    this.settings.update({
-      modelId: id,
-      customModels: inCatalog
-        ? this.settings.value.customModels
-        : { ...this.settings.value.customModels, [providerId]: [...new Set([id, ...existing])] },
-    });
+    if (!this.providers.models.getModel(providerId, id))
+      this.settings.update({
+        customModels: {
+          ...this.settings.value.customModels,
+          [providerId]: [...new Set([id, ...existing])],
+        },
+      });
     const model = this.providers.resolveModel(providerId, id);
-    void this.#applyModel();
     this.#state.model = model;
+    this.#chooseModel({ modelId: id });
     this.#refreshModels();
     void this.#refreshProviderModel(providerId, model.id);
   }
 
   removeCustomModel(modelId: string): void {
-    const providerId = this.settings.value.providerId;
+    const { providerId, modelId: currentId } = this.#model();
     const remaining = (this.settings.value.customModels[providerId] ?? []).filter(
       (id) => id !== modelId,
     );
@@ -666,32 +678,29 @@ export class AgentController {
     if (remaining.length) customModels[providerId] = remaining;
     else delete customModels[providerId];
     const nextId =
-      this.settings.value.modelId === modelId
+      currentId === modelId
         ? (remaining[0] ??
           this.providers.getModels(providerId).find((model) => model.id !== modelId)?.id)
-        : this.settings.value.modelId;
-    this.settings.update({ customModels, ...(nextId ? { modelId: nextId } : {}) });
+        : currentId;
+    this.settings.update({ customModels });
     if (nextId) this.selectModel(nextId);
     else this.#refreshModels();
   }
 
   setThinkingLevel(level: AgentSettings["thinkingLevel"]): void {
-    this.settings.update({ thinkingLevel: level });
-    void this.#applyModel();
+    this.#chooseModel({ thinkingLevel: level });
   }
 
   async refreshModels(force = false): Promise<void> {
-    await this.#refreshProviderModel(
-      this.settings.value.providerId,
-      this.settings.value.modelId,
-      force,
-    );
+    const { providerId, modelId } = this.#model();
+    await this.#refreshProviderModel(providerId, modelId, force);
   }
 
   async saveApiKey(providerId: ProviderId, key: string): Promise<void> {
     await this.credentials.setApiKey(providerId, key);
-    if (this.settings.value.providerId === providerId) {
-      await this.#refreshProviderModel(providerId, this.settings.value.modelId, true);
+    const current = this.#model();
+    if (current.providerId === providerId) {
+      await this.#refreshProviderModel(providerId, current.modelId, true);
     }
     this.#state.error = undefined;
     this.#emit();
@@ -814,7 +823,7 @@ export class AgentController {
         ? await this.providers.chatgptAccount.disconnect()
         : (await this.providers.models.logout(providerId), true);
     await this.providers.refreshModelAvailability(providerId);
-    if (this.settings.value.providerId === providerId) this.#refreshModels();
+    if (this.#model().providerId === providerId) this.#refreshModels();
     if (this.#state.authFlow === flow) this.#state.authFlow = undefined;
     this.#emit();
     if (!revoked)
@@ -839,7 +848,7 @@ export class AgentController {
   }
 
   async #requireProviderAuth(): Promise<void> {
-    const providerId = this.settings.value.providerId;
+    const { providerId } = this.#model();
     if (!(await this.providers.models.checkAuth(providerId))) {
       throw new Error(`Add a ${providerId} credential before running this command.`);
     }
@@ -991,7 +1000,7 @@ export class AgentController {
   }
 
   #refreshModels(): void {
-    this.#state.models = this.providers.getModels(this.settings.value.providerId);
+    this.#state.models = this.providers.getModels(this.#model().providerId);
     this.#emit();
   }
 
@@ -1000,6 +1009,7 @@ export class AgentController {
     modelId: string,
     force = false,
   ): Promise<void> {
+    const chatId = this.#activeId;
     let model: Model<any>;
     try {
       const available = await this.providers.refreshModelAvailability(providerId, force);
@@ -1011,28 +1021,39 @@ export class AgentController {
       console.warn(`${providerId} model metadata could not be refreshed`, error);
       return;
     }
-    if (this.settings.value.providerId !== providerId) return;
-    if (this.settings.value.modelId !== model.id) this.settings.update({ modelId: model.id });
-    const thinkingLevel = clampThinkingLevel(model, this.settings.value.thinkingLevel);
-    if (thinkingLevel !== this.settings.value.thinkingLevel)
-      this.settings.update({ thinkingLevel });
-    await this.#applyModel();
+    // Another chat is showing, or the user picked again while this ran.
+    const current = this.#model();
+    if (
+      this.#activeId !== chatId ||
+      current.providerId !== providerId ||
+      current.modelId !== modelId
+    )
+      return;
+    const thinkingLevel = clampThinkingLevel(model, current.thinkingLevel);
+    if (model.id !== current.modelId || thinkingLevel !== current.thinkingLevel)
+      this.#chooseModel({ modelId: model.id, thinkingLevel });
     this.#state.model = model;
     this.#refreshModels();
   }
 
-  /** Chats follow the global model picker; Pi records the choice on the conversation. */
-  async #applyModel(): Promise<void> {
-    const { providerId, modelId, thinkingLevel } = this.settings.value;
-    try {
-      await this.#activeSession()?.applyModel(providerId, modelId, thinkingLevel);
-    } catch (error) {
-      console.warn("AI model could not be applied to the chat", error);
-    }
+  /** The active chat's model, or the one a new chat starts with. */
+  #model(): ModelSelection {
+    const { providerId, modelId, thinkingLevel } =
+      this.#activeSession()?.model ?? this.settings.value;
+    return { providerId, modelId, thinkingLevel };
+  }
+
+  /** Change the active chat's model; new chats start on the latest choice. */
+  #chooseModel(patch: Partial<ModelSelection>): void {
+    const next = { ...this.#model(), ...patch };
+    void this.#activeSession()
+      ?.applyModel(next)
+      .catch((error) => console.warn("AI model could not be applied to the chat", error));
+    this.settings.update(next);
   }
 
   #emit(): void {
-    this.#state.settings = this.settings.value;
+    this.#state.settings = { ...this.settings.value, ...this.#model() };
     this.#state.chats = this.#summaries();
     this.#state.activeChatId = this.#activeId;
     this.changes.emit(this.state);
@@ -1124,8 +1145,24 @@ export class AgentController {
     this.#state.workspace = info;
     this.#state.approval = session.mutationGate.pending;
     this.#state.questionnaire = session.questionGate.pending;
-    this.#state.models = this.providers.getModels(this.settings.value.providerId);
+    await this.#showChatModel(session);
     this.#applyActiveSnapshot();
+  }
+
+  /** Point the picker at the chat's model, falling back when its provider is gone. */
+  async #showChatModel(session: AgentSession): Promise<void> {
+    if (!this.providers.models.getProvider(session.model.providerId)) {
+      const { providerId, modelId, thinkingLevel } = this.settings.value;
+      await session.applyModel({ providerId, modelId, thinkingLevel });
+    }
+    const { providerId, modelId } = session.model;
+    this.#state.models = this.providers.getModels(providerId);
+    try {
+      this.#state.model = this.providers.resolveModel(providerId, modelId);
+    } catch {
+      this.#state.model = undefined;
+    }
+    void this.#refreshProviderModel(providerId, modelId);
   }
 
   #applyActiveSnapshot(): void {

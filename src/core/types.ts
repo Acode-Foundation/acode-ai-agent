@@ -19,6 +19,9 @@ export type ProviderId = string;
 
 export type { PermissionMode };
 
+/** The model one chat runs on. The settings hold the choice new chats start with. */
+export type ModelSelection = Pick<AgentSettings, "providerId" | "modelId" | "thinkingLevel">;
+
 export type AgentSettings = {
   providerId: ProviderId;
   modelId: string;
@@ -183,6 +186,7 @@ export type PublicAgentState = {
   workspace?: WorkspaceInfo;
   model?: Model<any>;
   models: Model<any>[];
+  /** App settings, with the active chat's own provider, model, and thinking level. */
   settings: AgentSettings;
   usage: { tokens: number; cost: number };
   contextTokens: number;
