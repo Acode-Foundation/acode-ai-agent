@@ -146,7 +146,7 @@ export function createSubagentTool(tools: () => readonly ToolRegistration[]): To
           `The subagent did not finish (${settled.status === "unanswered" ? settled.reason : settled.status}).`,
         );
       const text = await answerText(api, settled.answer, callContext);
-      return { content: [{ type: "text", text: capAnswer(text) }], details };
+      return { output: [{ type: "text", text: capAnswer(text) }], details };
     },
   });
 }

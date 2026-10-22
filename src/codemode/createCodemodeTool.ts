@@ -69,6 +69,7 @@ export const CodemodeStoreDoc = defineDoc<{ values: { [key: string]: JsonValue }
   history: "latest",
   fork: "current",
   initial: () => ({ values: {} }),
+  checkpointWhen: () => false,
 });
 
 /** One nested call as the work log and the error summary show it. */
@@ -283,7 +284,7 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
       const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
       const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
       return {
-        content: joinAdjacentText([{ type: "text", text: header }, ...output]),
+        output: joinAdjacentText([{ type: "text", text: header }, ...output]),
         details: details as unknown as JsonValue,
         ...(usage ? { usage } : {}),
         ...(result.ok ? {} : { isError: true }),
@@ -373,6 +374,7 @@ async function runNested(
     },
     // The nested tool keeps the head of its output; skips would bypass the collection above.
     outputWindow: undefined,
+    retainedOutput: () => ({ text: chunks.join(""), truncated: false }),
     diagnostic: (diagnostic) => {
       diagnostics.push(diagnostic);
     },
@@ -380,14 +382,17 @@ async function runNested(
     details: async () => {},
   };
   const result = await tool.execute(args, nestedApi, withAbortSignal(signal, context));
-  const text = result.content
-    ? result.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
+  const text = result.output
+    ? result.output.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
     : chunks.join("");
   const failure = [...diagnostics, ...(result.diagnostics ?? [])].find(
     (diagnostic) => diagnostic.severity === "error",
   );
+  // A failed `bash` keeps its output next to the exit code, so the script sees both.
   if (result.isError || failure)
-    throw new Error(failure?.message || text || `Tool "${tool.name}" failed`);
+    throw new Error(
+      [failure?.message, text].filter(Boolean).join("\n") || `Tool "${tool.name}" failed`,
+    );
   return text;
 }
 

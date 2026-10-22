@@ -36,6 +36,8 @@ export async function runTool(
     callId: "call",
     env: options.env,
     outputWindow: undefined,
+    now: () => Date.now(),
+    retainedOutput: () => ({ text: output.join(""), truncated: false }),
     output: (chunk: string | Uint8Array) =>
       output.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk)),
     diagnostic: (item: ToolDiagnostic) => diagnostics.push(item),
@@ -49,7 +51,7 @@ export async function runTool(
     : BACKGROUND_CONTEXT;
   const result = await tool.execute(prepared as never, api, context);
   return {
-    content: (result.content as ToolOutput["content"] | undefined) ?? [
+    content: (result.output as ToolOutput["content"] | undefined) ?? [
       { type: "text", text: output.join("") },
     ],
     details: result.details ?? details,

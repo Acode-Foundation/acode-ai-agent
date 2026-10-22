@@ -194,5 +194,5 @@ function result(
   text: string,
   details: FileOperationDetails,
 ): ToolExecutionResult<FileOperationDetails> {
-  return { content: [{ type: "text", text }], details };
+  return { output: [{ type: "text", text }], details };
 }

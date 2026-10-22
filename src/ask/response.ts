@@ -29,7 +29,7 @@ export function textResult(
   content: string,
   details: QuestionnaireResult,
 ): ToolExecutionResult<QuestionnaireResult> {
-  return { content: [{ type: "text", text: content }], details };
+  return { output: [{ type: "text", text: content }], details };
 }
 
 function formatSegment(answer: QuestionAnswer): string {

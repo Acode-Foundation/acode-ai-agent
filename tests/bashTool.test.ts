@@ -92,9 +92,14 @@ test("reports non-zero exits as tool errors", async () => {
       onData("exit", "7");
     }),
   );
-  await expect(
-    bash("file:///data/user/0/com.foxdebug.acode/files/public", { command: "false" }),
-  ).rejects.toThrow("Command exited with code 7");
+  const result = await bash("file:///data/user/0/com.foxdebug.acode/files/public", {
+    command: "false",
+  });
+  expect(result.isError).toBe(true);
+  expect(result.content[0]?.text).toBe("failed\n");
+  expect(result.diagnostics).toContainEqual(
+    expect.objectContaining({ code: "exit_code", message: "Command exited with code 7" }),
+  );
 });
 
 test("stops timed-out commands", async () => {

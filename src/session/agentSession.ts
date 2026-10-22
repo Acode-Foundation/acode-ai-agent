@@ -146,6 +146,7 @@ const TasksDoc = defineDoc<{ store: JsonValue }>({
   history: "latest",
   fork: "current",
   initial: () => ({ store: null }),
+  checkpointWhen: () => false,
 });
 
 /**
@@ -899,7 +900,7 @@ export class AgentSession {
           ? await readSkillRelativeFile(this.workspace, skill.filePath, relativePath)
           : skill.content;
         return {
-          content: [
+          output: [
             {
               type: "text",
               text: `<skill name="${skill.name}" location="${skill.filePath}"${relativePath ? ` file="${relativePath}"` : ""}>\n${text}\n</skill>`,

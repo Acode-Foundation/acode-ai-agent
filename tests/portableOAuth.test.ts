@@ -179,15 +179,15 @@ test("filters pi's complete Copilot catalog to models available for the signed-i
     access: "access",
     refresh: "refresh",
     expires: Date.now() + 60_000,
-    availableModelIds: ["gpt-5-mini"],
+    availableModelIds: ["gpt-5.4-nano"],
   }));
   const registry = new ProviderRegistry(credentials);
   expect(registry.getModels("github-copilot").length).toBeGreaterThan(10);
   const modelIds = (await registry.refreshModelAvailability("github-copilot")).map(
     (model) => model.id,
   );
-  expect(modelIds).toEqual(["gpt-5-mini"]);
-  expect(registry.resolveModel("github-copilot", "gpt-4.1").id).toBe("gpt-5-mini");
+  expect(modelIds).toEqual(["gpt-5.4-nano"]);
+  expect(registry.resolveModel("github-copilot", "gpt-5.3-codex").id).toBe("gpt-5.4-nano");
   expect(await credentials.list()).toContainEqual({ providerId: "github-copilot", type: "oauth" });
 });
 

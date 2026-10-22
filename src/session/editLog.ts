@@ -37,6 +37,7 @@ export const EditsDoc = defineDoc<{ runs: Record<string, RunEdits> }>({
   history: "latest",
   fork: "current",
   initial: () => ({ runs: {} }),
+  checkpointWhen: () => false,
 });
 
 /**
