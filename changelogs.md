@@ -1,3 +1,11 @@
+# 0.3.0
+
+- Each chat keeps its own provider, model, and thinking level, so chats in different projects or tabs can run on different providers at once, such as two local endpoints. Picking a model changes only the open chat, and new chats start on your latest choice. Existing chats keep the model they last used.
+- A branch made from `/tree` runs on the chat's model.
+- Switching a chat's model no longer shows the new model the previous model's reasoning as part of its replies.
+- Pi packages upgraded to 1.4.0, with better retries for gateway and proxy errors, compaction fixes, and lower memory use in long sessions.
+- Fixed a failed `bash` command inside a codemode script losing its output.
+
 # 0.2.1
 
 - Fixed the agent intercepting Acode's own network requests, including login. Agent requests now select their transport without replacing the WebView's global `fetch`.
