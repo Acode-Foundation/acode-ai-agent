@@ -42,6 +42,7 @@ const DeferredToolsDoc = defineDoc<{ known: string[] }>({
   history: "latest",
   fork: "current",
   initial: () => ({ known: [] }),
+  checkpointWhen: () => false,
 });
 
 /**
@@ -147,7 +148,7 @@ export function createToolSearchTool(deferred: readonly ToolRegistration[]): Too
           ? `Already loaded: ${already.join(", ")}.`
           : `No matching tools. Not loaded yet: ${candidates.map((tool) => tool.name).join(", ") || "none"}.`;
       return {
-        content: [{ type: "text", text }],
+        output: [{ type: "text", text }],
         details: { loaded } as JsonValue,
         ...(loaded.length ? { control: { addTools: loaded } } : {}),
       };

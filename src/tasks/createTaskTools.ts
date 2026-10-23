@@ -75,7 +75,7 @@ function textResult(
   content: string,
   count = 0,
 ): ToolExecutionResult<{ operation: string; count: number }> {
-  return { content: [{ type: "text", text: content }], details: { operation: "todos", count } };
+  return { output: [{ type: "text", text: content }], details: { operation: "todos", count } };
 }
 
 function isTaskDraft(item: unknown): item is TaskDraft {

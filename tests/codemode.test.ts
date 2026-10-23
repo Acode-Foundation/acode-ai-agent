@@ -186,7 +186,7 @@ function codemodeHarness(options: {
   };
   const run = async (code: string) => {
     const result = await tool.execute({ code } as never, api as never, BACKGROUND_CONTEXT);
-    const text = (result.content ?? [])
+    const text = (result.output ?? [])
       .map((part) => (part.type === "text" ? part.text : `[${part.type}]`))
       .join("");
     return { result, text };
@@ -513,7 +513,7 @@ describe("codemode models", () => {
       return made.stopReason;
     `);
     expect(text).toContain("stop");
-    expect(result.content?.some((part) => part.type === "image")).toBe(true);
+    expect(result.output?.some((part) => part.type === "image")).toBe(true);
     expect(result.usage?.cost.total).toBeCloseTo(0.04);
     expect(result.details).toMatchObject({
       calls: [

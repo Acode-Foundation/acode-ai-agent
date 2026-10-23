@@ -116,7 +116,7 @@ describe("tool_search", () => {
   test("loads matches through the tool round's control", async () => {
     const result = await run("rename_path");
     expect(result.control).toEqual({ addTools: ["rename_path"] });
-    expect(JSON.stringify(result.content)).toContain(
+    expect(JSON.stringify(result.output)).toContain(
       "rename_path: Rename a file or folder in place",
     );
   });
@@ -124,7 +124,7 @@ describe("tool_search", () => {
   test("skips tools that are already loaded", async () => {
     const result = await run("rename_path", ["rename_path"]);
     expect(result.control).toBeUndefined();
-    expect(JSON.stringify(result.content)).toContain("Already loaded: rename_path.");
+    expect(JSON.stringify(result.output)).toContain("Already loaded: rename_path.");
   });
 });
 

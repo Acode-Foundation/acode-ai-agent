@@ -454,7 +454,7 @@ function cut(text: string, max: number): { text: string; truncated?: true } {
 
 function json(value: unknown, operation: string, count: number): ToolExecutionResult<Details> {
   return {
-    content: [{ type: "text", text: JSON.stringify(value) }],
+    output: [{ type: "text", text: JSON.stringify(value) }],
     details: { operation, count },
   };
 }

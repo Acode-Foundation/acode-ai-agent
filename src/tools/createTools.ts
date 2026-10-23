@@ -87,7 +87,7 @@ export function createWorkspaceTools(
             });
           const hints = processed.hints.length ? `\n${processed.hints.join("\n")}` : "";
           return {
-            content: [
+            output: [
               { type: "text", text: `Read image file [${processed.mimeType}]${hints}` },
               { type: "image", data: processed.data, mimeType: processed.mimeType },
             ],
@@ -538,12 +538,12 @@ function noteBufferTarget<T extends JsonValue>(
   const env = api.env as WorkspaceExecutionEnv | undefined;
   if (env?.takeWriteTarget(path) !== "buffer") return output;
   const note = "The file is open in the editor, so the change is in its unsaved buffer.";
-  const content = [...(output.content ?? [])];
+  const content = [...(output.output ?? [])];
   const last = content.at(-1);
   if (last?.type === "text")
     content[content.length - 1] = { ...last, text: `${last.text} ${note}` };
   else content.push({ type: "text", text: note });
-  return { ...output, content };
+  return { ...output, output: content };
 }
 
 /**
@@ -627,7 +627,7 @@ function capOutput(lines: string[]): string {
 }
 
 function result(content: string, details: ToolDetails): ToolExecutionResult<ToolDetails> {
-  return { content: [{ type: "text", text: content }], details };
+  return { output: [{ type: "text", text: content }], details };
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

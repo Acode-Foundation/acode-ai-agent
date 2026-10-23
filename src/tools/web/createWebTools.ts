@@ -125,7 +125,7 @@ export function createWebTools(ctx: WebSearchContext): ToolRegistration[] {
 }
 
 function result(content: string, details: ToolDetails): ToolResult {
-  return { content: [{ type: "text", text: content }], details };
+  return { output: [{ type: "text", text: content }], details };
 }
 
 function normalizeQueries(query?: string, queries?: string[]): string[] {
