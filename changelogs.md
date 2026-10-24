@@ -1,3 +1,14 @@
+# 0.4.0
+
+- The agent now knows Acode and can act in it. Ask how to use Acode or this agent, where a setting lives, or to do something in the app, and it reads the live app instead of guessing. Six tools cover it, loaded only when needed so they cost no tokens otherwise:
+  - `acode_guide`: how Acode and the agent work, by topic (menus, run and preview, terminal, plugins, themes, language servers, formatting, files).
+  - `acode_settings` finds a setting's value, label, page and allowed values; `acode_update_settings` changes settings, including the app and editor themes.
+  - `acode_commands` searches every Acode and plugin command with its shortcut; `acode_run_command` runs one.
+  - `acode_plugins` lists installed plugins, searches the store (by name, id, keywords or author), shows a plugin's description, and installs one with Acode's own confirmation.
+- `acode_ui` operates Acode's screens when no command or setting does the job: it reads the top screen (dialog, menu, phone sidebar, page or editor) as numbered items, including tabs, switches, setting values and store prices, and taps, types and goes back.
+- Approvals for Acode changes: changing settings, running commands, and tapping toggles or buttons ask in Ask and Allow edits modes. Destructive taps (delete, uninstall, reset, replace…), confirming a dialog, and typing (except into search boxes) ask every time, even in Full access. Purchases, ads and sponsorship are refused.
+- While the agent works out of sight, behind a page, the sidebar or another tab, a small pill says what it is doing and lets you answer an approval in place. Tap it to return to the chat.
+
 # 0.3.0
 
 - Each chat keeps its own provider, model, and thinking level, so chats in different projects or tabs can run on different providers at once, such as two local endpoints. Picking a model changes only the open chat, and new chats start on your latest choice. Existing chats keep the model they last used.
