@@ -1,21 +1,21 @@
 # 0.4.1
 
-- The Acode tools load the next one you need: looking up a setting makes the update tool ready, finding a command makes running it ready, and the guide readies settings, commands and plugins. The agent no longer fails with "Tool … is not available" when it goes from finding to changing.
-- Changing a setting works even when the model guesses the tool's arguments, such as `settings` instead of `changes`, a JSON string, or a plain number.
-- Fixed the app theme list showing `[object Object]` and refusing every app theme change. Paid themes are refused without Pro.
-- Settings Acode reads without a screen of their own, like `maxFileSize` (in MB), are described and marked as settings.json only. Settings nothing reads anymore are no longer listed.
-- Asking for all your settings lists every one, grouped by settings page, instead of stopping after 60.
+- Fixed: "Tool … is not available" when the agent goes from finding a setting or command to changing or running it. Related Acode tools now load together.
+- Fixed: setting changes failing when the model sends `settings`, a JSON string, or non-string values instead of `changes`.
+- Fixed: app theme list showing `[object Object]`, and app theme changes being refused.
+- Added: descriptions for settings.json-only settings such as `maxFileSize` (MB). Unused settings are no longer listed.
+- Changed: listing all settings returns every setting, grouped by page, instead of the first 60.
 
 # 0.4.0
 
-- The agent now knows Acode and can act in it. Ask how to use Acode or this agent, where a setting lives, or to do something in the app, and it reads the live app instead of guessing. Six tools cover it, loaded only when needed so they cost no tokens otherwise:
-  - `acode_guide`: how Acode and the agent work, by topic (menus, run and preview, terminal, plugins, themes, language servers, formatting, files).
-  - `acode_settings` finds a setting's value, label, page and allowed values; `acode_update_settings` changes settings, including the app and editor themes.
-  - `acode_commands` searches every Acode and plugin command with its shortcut; `acode_run_command` runs one.
-  - `acode_plugins` lists installed plugins, searches the store (by name, id, keywords or author), shows a plugin's description, and installs one with Acode's own confirmation.
-- `acode_ui` operates Acode's screens when no command or setting does the job: it reads the top screen (dialog, menu, phone sidebar, page or editor) as numbered items, including tabs, switches, setting values and store prices, and taps, types and goes back.
-- Approvals for Acode changes: changing settings, running commands, and tapping toggles or buttons ask in Ask and Allow edits modes. Destructive taps (delete, uninstall, reset, replace…), confirming a dialog, and typing (except into search boxes) ask every time, even in Full access. Purchases, ads and sponsorship are refused.
-- While the agent works out of sight, behind a page, the sidebar or another tab, a small pill says what it is doing and lets you answer an approval in place. Tap it to return to the chat.
+- Added: Acode tools, loaded only when needed:
+  - `acode_guide`: how Acode and the agent work, by topic.
+  - `acode_settings`, `acode_update_settings`: find and change settings.
+  - `acode_commands`, `acode_run_command`: find and run Acode and plugin commands.
+  - `acode_plugins`: list installed plugins, search the store, show a plugin's details, install.
+- Added: `acode_ui` to read Acode's screens and tap, type, and go back.
+- Added: approvals for Acode changes. Destructive taps, dialog confirms, and typing (except in search boxes) always ask. Purchases and ads are refused.
+- Added: a status pill while the chat is hidden, with approvals in place. Tap it to return to the chat.
 
 # 0.3.0
 
