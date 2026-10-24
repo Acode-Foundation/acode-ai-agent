@@ -6,6 +6,7 @@ import {
   ACODE_SETTINGS_TOOL,
   acodeActionPreview,
 } from "../tools/acodeTools";
+import { ACODE_UI_TOOL, acodeUiApproval, clearHighlight } from "../tools/acodeUi";
 import { editPairs } from "../tools/textEdits";
 import { formatSize } from "../tools/truncate";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
@@ -52,9 +53,12 @@ export class MutationGate {
     source: string | undefined,
     onPrompt: (() => void) | undefined,
   ): Promise<{ block?: boolean; reason?: string }> {
-    const category = categoryOf(toolName);
+    const ui = toolName === ACODE_UI_TOOL ? acodeUiApproval(args) : undefined;
+    const category = ui ? UI_CATEGORIES[ui.risk ?? "free"] : categoryOf(toolName);
     if (!category) return {};
-    if (mode === "full-access") return {};
+    // Risky UI actions ask every time: no mode or earlier grant covers them.
+    const once = category === "acode-risky";
+    if (mode === "full-access" && !once) return {};
     // Checked after waiting: an earlier "Allow this session" also covers queued requests.
     if (this.#sessionGrants.has(category) || (category === "edit" && mode === "allow-edits"))
       return {};
@@ -63,8 +67,11 @@ export class MutationGate {
       return { block: true, reason: `${capitalize(noun)} was aborted before approval.` };
 
     const path =
-      category === "shell" || category === "acode" ? "." : String(args.path ?? args.source ?? "");
-    const preview = await this.#buildPreview(toolName, args, workspace);
+      category === "shell" || category.startsWith("acode")
+        ? "."
+        : String(args.path ?? args.source ?? "");
+    const preview = ui ? ui.preview : await this.#buildPreview(toolName, args, workspace);
+    const title = ui ? ui.title : approvalTitle(toolName, path);
     const decision = await new Promise<MutationDecision>((resolve) => {
       const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
       const abort = () => this.resolve("deny");
@@ -76,10 +83,9 @@ export class MutationGate {
         id,
         toolName,
         path,
-        title: source
-          ? `${source} · ${approvalTitle(toolName, path)}`
-          : approvalTitle(toolName, path),
+        title: source ? `${source} · ${title}` : title,
         preview,
+        ...(once ? { once } : {}),
         resolve: finish,
       };
       this.changes.emit(this.#pending);
@@ -87,7 +93,8 @@ export class MutationGate {
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort();
     });
-    if (decision === "allow-session") this.#sessionGrants.add(category);
+    if (ui && decision === "deny") clearHighlight();
+    if (decision === "allow-session" && !once) this.#sessionGrants.add(category);
     return decision === "deny" ? { block: true, reason: `User denied this ${noun}.` } : {};
   }
 
@@ -168,7 +175,14 @@ export class MutationGate {
 
 const DELETE_PREVIEW_ENTRIES = 20;
 
-type Category = "edit" | "delete" | "shell" | "acode";
+type Category = "edit" | "delete" | "shell" | "acode" | "acode-risky";
+
+/** UI taps that change something share the Acode change grant; free ones need no category. */
+const UI_CATEGORIES: Record<"free" | "change" | "risky", Category | undefined> = {
+  free: undefined,
+  change: "acode",
+  risky: "acode-risky",
+};
 
 const EDIT_TOOLS = new Set([
   "write",
@@ -184,6 +198,7 @@ const NOUNS: Record<Category, string> = {
   delete: "delete",
   shell: "terminal command",
   acode: "Acode change",
+  "acode-risky": "Acode action",
 };
 
 /** Edits pass in Allow edits mode; deletes, shell commands and Acode changes still ask. */

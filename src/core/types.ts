@@ -133,6 +133,8 @@ export type MutationRequest = {
   path: string;
   title: string;
   preview: string;
+  /** Asks every time: "Allow this session" is not offered. */
+  once?: boolean;
   resolve: (decision: MutationDecision) => void;
 };
 

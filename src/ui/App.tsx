@@ -2405,9 +2405,11 @@ function ApprovalPanel({
         <button type="button" onClick={() => onApprove("deny")}>
           Deny
         </button>
-        <button type="button" onClick={() => onApprove("allow-session")}>
-          Allow this session
-        </button>
+        {approval.once ? null : (
+          <button type="button" onClick={() => onApprove("allow-session")}>
+            Allow this session
+          </button>
+        )}
         <button class="primary" type="button" onClick={() => onApprove("allow")}>
           Allow once
         </button>

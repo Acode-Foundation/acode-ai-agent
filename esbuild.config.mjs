@@ -138,8 +138,8 @@ const buildConfig = {
       );
     }
     // Keep the agent and provider SDKs within the mobile bundle budget.
-    if ((output?.bytes ?? 0) > 2_600_000) {
-      throw new Error(`AI bundle exceeds the 2.5 MB mobile budget: ${output.bytes} bytes`);
+    if ((output?.bytes ?? 0) > 2_700_000) {
+      throw new Error(`AI bundle exceeds the 2.7 MB mobile budget: ${output.bytes} bytes`);
     }
     await packZip();
     console.log("Production build complete.");

@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-durable";
 import { ACODE_GUIDE, GUIDE_TOPICS } from "./acodeGuide";
 import { HIDDEN_SETTINGS, SETTINGS_CATALOG, type SettingInfo } from "./acodeSettingsCatalog";
+import { createAcodeUiTool } from "./acodeUi";
 import { webRequest } from "./web/request";
 
 /** Tools that change Acode itself; each asks for approval like a workspace edit. */
@@ -21,7 +22,7 @@ const VALUE_PREVIEW = 160;
 type Details = { operation: string; count?: number };
 
 /**
- * Tools for Acode itself: how it works, its settings, its commands, and its plugins. All of them
+ * Tools for Acode itself: how it works, its settings, commands, plugins, and screens. All of them
  * are deferred, so they cost nothing until the model loads them for an Acode question.
  */
 export function createAcodeTools(): ToolRegistration[] {
@@ -276,7 +277,7 @@ export function createAcodeTools(): ToolRegistration[] {
     },
   });
 
-  return [guide, settings, updateSettings, commands, runCommand, plugins];
+  return [guide, settings, updateSettings, commands, runCommand, plugins, createAcodeUiTool()];
 }
 
 /** What an approval prompt shows for the Acode tools that change something. */

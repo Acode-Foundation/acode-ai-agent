@@ -17,6 +17,8 @@ import { AGENT_ICON_CLASS, installPluginIcon } from "./platform/pluginIcon";
 import { mountApp, unmountApp } from "./ui/mount";
 import { mountSidebar, unmountSidebar } from "./ui/sidebar/mountSidebar";
 import styles from "./ui/styles.css";
+import { installWorkingPill } from "./ui/workingPill";
+import { closablePageCount } from "./tools/acodeUi";
 import { PathSandbox } from "./workspace/pathSandbox";
 
 const OPEN_COMMAND = `${plugin.id}:open`;
@@ -48,6 +50,7 @@ class AcodeAiAgentPlugin {
   #sidebarApps: Acode.SidebarApps | null = null;
   #disposeHostMenus: (() => void) | null = null;
   #disposeIcon: (() => void) | null = null;
+  #disposePill: (() => void) | null = null;
 
   async init(
     baseUrl: string,
@@ -65,6 +68,14 @@ class AcodeAiAgentPlugin {
     this.#disposeHostMenus = registerHostMenus(plugin.id, (request) =>
       this.#runHostActionSafely(request),
     );
+    this.#disposePill = installWorkingPill({
+      state: () => controller.state,
+      subscribe: (listener) => controller.changes.subscribe(listener),
+      approve: (decision) => controller.approve(decision),
+      agentTabActive: () =>
+        [...this.#tabs.values()].some((record) => editorManager.activeFile === record.file),
+      openChat: () => this.#returnToChat(),
+    });
 
     try {
       await controller.initialize();
@@ -79,6 +90,8 @@ class AcodeAiAgentPlugin {
   async destroy(): Promise<void> {
     this.#disposeHostMenus?.();
     this.#disposeHostMenus = null;
+    this.#disposePill?.();
+    this.#disposePill = null;
     this.#removeSidebar();
     await this.#closeTabs();
     this.#disposeIcon?.();
@@ -87,6 +100,17 @@ class AcodeAiAgentPlugin {
     this.#controller = null;
     disposeNativeHttp();
     for (const command of COMMANDS) acode.removeCommand(command);
+  }
+
+  /**
+   * Close the pages and menus covering the editor, then show the chat. Dialogs stay: closing one
+   * would answer it.
+   */
+  #returnToChat(): void {
+    const stack = acode.require("actionStack") as Acode.ActionStack | undefined;
+    const covering = Math.min(closablePageCount(), stack?.length ?? 0);
+    if (covering) stack?.pop(covering);
+    this.open();
   }
 
   open(chatId?: string): void {

@@ -33,6 +33,7 @@ export const DEFERRED_BUILTIN_TOOLS: ReadonlySet<string> = new Set([
   "acode_commands",
   "acode_run_command",
   "acode_plugins",
+  "acode_ui",
 ]);
 
 const DEFAULT_LIMIT = 5;
