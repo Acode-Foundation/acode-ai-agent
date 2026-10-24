@@ -57,6 +57,9 @@ const READ_ONLY_TOOLS = new Set([
   "fetch_content",
   "list_sessions",
   "read_session",
+  "acode_guide",
+  "acode_settings",
+  "acode_commands",
 ]);
 
 type Profile = { tools: (name: string) => boolean; instructions: string };

@@ -2394,7 +2394,9 @@ function ApprovalPanel({
             ? "Terminal"
             : approval.toolName === "delete_path"
               ? "Delete"
-              : "Edit"}
+              : approval.toolName.startsWith("acode_")
+                ? "Acode"
+                : "Edit"}
         </span>
         <strong>{approval.title}</strong>
       </header>

@@ -27,6 +27,12 @@ export const DEFERRED_BUILTIN_TOOLS: ReadonlySet<string> = new Set([
   "ask_user_question",
   "list_sessions",
   "read_session",
+  "acode_guide",
+  "acode_settings",
+  "acode_update_settings",
+  "acode_commands",
+  "acode_run_command",
+  "acode_plugins",
 ]);
 
 const DEFAULT_LIMIT = 5;

@@ -74,6 +74,7 @@ import {
 } from "../tasks/reminder";
 import { parseTaskStore, TaskList } from "../tasks/taskList";
 import type { Task, TaskStatus } from "../tasks/types";
+import { createAcodeTools } from "../tools/acodeTools";
 import { createWorkspaceTools, withReadableErrors } from "../tools/createTools";
 import { formatSize } from "../tools/truncate";
 import { editPairs } from "../tools/textEdits";
@@ -763,6 +764,7 @@ export class AgentSession {
         ...createWebTools(
           createWebSearchContext({ models: this.#providers.models, settings: this.#settings }),
         ),
+        ...createAcodeTools(),
       ].map(withReadableErrors),
     ];
     // With codemode, every tool scripts can call says how, here and in subagents.

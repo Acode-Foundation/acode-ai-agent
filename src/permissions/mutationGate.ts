@@ -1,6 +1,11 @@
 import type { PermissionMode } from "../core/schema";
 import type { MutationDecision, MutationRequest } from "../core/types";
 import { Signal } from "../core/events";
+import {
+  ACODE_RUN_COMMAND_TOOL,
+  ACODE_SETTINGS_TOOL,
+  acodeActionPreview,
+} from "../tools/acodeTools";
 import { editPairs } from "../tools/textEdits";
 import { formatSize } from "../tools/truncate";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
@@ -57,7 +62,8 @@ export class MutationGate {
     if (signal?.aborted)
       return { block: true, reason: `${capitalize(noun)} was aborted before approval.` };
 
-    const path = category === "shell" ? "." : String(args.path ?? args.source ?? "");
+    const path =
+      category === "shell" || category === "acode" ? "." : String(args.path ?? args.source ?? "");
     const preview = await this.#buildPreview(toolName, args, workspace);
     const decision = await new Promise<MutationDecision>((resolve) => {
       const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
@@ -108,6 +114,8 @@ export class MutationGate {
     workspace: AcodeWorkspace,
   ): Promise<string> {
     if (toolName === "bash") return truncate(String(args.command ?? ""), 2_800);
+    if (categoryOf(toolName) === "acode")
+      return truncate(acodeActionPreview(toolName, args), 2_800);
     if (typeof args.image === "string")
       return `Save image (${args.image}) to ${String(args.path ?? "")}`;
     if (toolName === "delete_path") return this.#deletePreview(args, workspace);
@@ -160,7 +168,7 @@ export class MutationGate {
 
 const DELETE_PREVIEW_ENTRIES = 20;
 
-type Category = "edit" | "delete" | "shell";
+type Category = "edit" | "delete" | "shell" | "acode";
 
 const EDIT_TOOLS = new Set([
   "write",
@@ -175,11 +183,13 @@ const NOUNS: Record<Category, string> = {
   edit: "workspace edit",
   delete: "delete",
   shell: "terminal command",
+  acode: "Acode change",
 };
 
-/** Edits pass in Allow edits mode; deletes and shell commands still ask. */
+/** Edits pass in Allow edits mode; deletes, shell commands and Acode changes still ask. */
 function categoryOf(toolName: string): Category | undefined {
   if (toolName === "bash") return "shell";
+  if (toolName === ACODE_SETTINGS_TOOL || toolName === ACODE_RUN_COMMAND_TOOL) return "acode";
   if (toolName === "delete_path") return "delete";
   return EDIT_TOOLS.has(toolName) ? "edit" : undefined;
 }
@@ -188,6 +198,10 @@ function approvalTitle(toolName: string, path: string): string {
   switch (toolName) {
     case "bash":
       return "Run terminal command";
+    case ACODE_SETTINGS_TOOL:
+      return "Change Acode settings";
+    case ACODE_RUN_COMMAND_TOOL:
+      return "Run Acode command";
     case "write":
       return `Write ${path}`;
     case "move_path":
