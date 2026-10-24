@@ -15,6 +15,7 @@ export type ToolOutput = {
   details?: unknown;
   isError?: boolean;
   diagnostics: ToolDiagnostic[];
+  control?: { addTools?: readonly string[] };
 };
 
 /**
@@ -57,6 +58,7 @@ export async function runTool(
     details: result.details ?? details,
     isError: result.isError,
     diagnostics: [...diagnostics, ...(result.diagnostics ?? [])],
+    ...(result.control ? { control: result.control } : {}),
   };
 }
 

@@ -1,12 +1,16 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { acodeActionPreview, createAcodeTools } from "../src/tools/acodeTools";
+import { acodeActionPreview, createAcodeTools, normalizeChanges } from "../src/tools/acodeTools";
 import { runTool } from "./toolHarness";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function stubAcode(values: Record<string, unknown>, commands: Acode.RegisteredCommand[] = []) {
+function stubAcode(
+  values: Record<string, unknown>,
+  commands: Acode.RegisteredCommand[] = [],
+  extra: Record<string, unknown> = {},
+) {
   const update = vi.fn(async (changes: Record<string, unknown>) => {
     Object.assign(values, changes);
   });
@@ -14,6 +18,7 @@ function stubAcode(values: Record<string, unknown>, commands: Acode.RegisteredCo
   const modules: Record<string, unknown> = {
     settings: { value: values, update },
     commands: { registry: { list: () => commands, execute } },
+    ...extra,
   };
   vi.stubGlobal("acode", { require: (name: string) => modules[name] });
   return { update, execute };
@@ -109,4 +114,71 @@ test("the approval preview shows each setting's current and new value", () => {
   expect(
     acodeActionPreview("acode_update_settings", { changes: [{ key: "tabSize", value: "4" }] }),
   ).toBe("Tab size (tabSize): 2 → 4");
+});
+
+test("acode_update_settings accepts the argument shapes models guess", () => {
+  const expected = [{ key: "maxFileSize", value: "50" }];
+  expect(normalizeChanges({ settings: '[{"key": "maxFileSize", "value": 50}]' })).toEqual(expected);
+  expect(normalizeChanges({ changes: [{ key: "maxFileSize", value: 50 }] })).toEqual(expected);
+  expect(normalizeChanges({ key: "maxFileSize", value: 50 })).toEqual(expected);
+  expect(normalizeChanges({ values: { maxFileSize: 50, textWrap: true } })).toEqual([
+    ...expected,
+    { key: "textWrap", value: "true" },
+  ]);
+  expect(normalizeChanges({ changes: [{ key: "fontSize", value: "14px" }] })).toEqual([
+    { key: "fontSize", value: "14px" },
+  ]);
+});
+
+test("app themes are offered by id, and a paid theme without Pro is refused", async () => {
+  const themes = {
+    list: () => [
+      { id: "dark", name: "Dark", version: "free" },
+      { id: "ocean", name: "Ocean", version: "paid" },
+    ],
+    apply: vi.fn(),
+  };
+  stubAcode({ appTheme: "dark" }, [], { themes, config: { HAS_PRO: false } });
+
+  expect(text(await runTool(tool("acode_settings"), { keys: ["appTheme"] }))).toContain(
+    "one of: dark, ocean",
+  );
+  await expect(
+    runTool(tool("acode_update_settings"), { changes: [{ key: "appTheme", value: "ocean" }] }),
+  ).rejects.toThrow("ocean is a paid theme");
+  expect(themes.apply).not.toHaveBeenCalled();
+});
+
+test("listing every setting shows each value, grouped by page, without cutting any off", async () => {
+  const values: Record<string, unknown> = { maxFileSize: 12, tabSize: 2, customTheme: {} };
+  for (let index = 0; index < 100; index++) values[`plugin${index}`] = index;
+  stubAcode(values);
+
+  const output = text(await runTool(tool("acode_settings"), {}));
+
+  expect(output).toContain("Settings → Editor settings:\n  tabSize = 2");
+  expect(output).toContain(
+    "settings.json only (Settings → Edit settings.json):\n  maxFileSize = 12",
+  );
+  expect(output).toContain("  plugin99 = 99");
+  expect(output).not.toContain("more; narrow");
+  expect(output).not.toContain("customTheme");
+});
+
+test("a result loads the tool for the obvious next step, in user chats only", async () => {
+  stubAcode({ tabSize: 2 });
+  const chat = (userChat: boolean) => ({
+    api: {
+      commit: async () => userChat,
+      agent: async () => ({ tools: [{ name: "acode_settings" }] }),
+    },
+  });
+
+  const loaded = await runTool(tool("acode_settings"), { query: "tab" }, chat(true));
+  expect(loaded.control).toEqual({ addTools: ["acode_update_settings"] });
+  expect(loaded.details).toMatchObject({ loaded: ["acode_update_settings"] });
+  expect(text(loaded)).toContain("Loaded for your next turn: acode_update_settings.");
+
+  const subagent = await runTool(tool("acode_settings"), { query: "tab" }, chat(false));
+  expect(subagent.control).toBeUndefined();
 });

@@ -11,6 +11,9 @@ const PAGES = {
   plugins: "Settings → Plugins",
   files: "File browser → ⋮ → Settings",
   search: "Search bar (quick tools) → settings",
+  icon: "Settings → App icon",
+  /** Read by Acode but on no settings screen; Settings → Edit settings.json changes them by hand. */
+  json: "settings.json only (Settings → Edit settings.json)",
 } as const;
 
 export type SettingInfo = {
@@ -204,14 +207,49 @@ const ROWS: Row[] = [
   ],
   ["fileBrowser", "files", "File browser", "Object: showHiddenFiles, sortByName, listFiles."],
   ["search", "search", "Search options", "Object: caseSensitive, regExp, wholeWord."],
+  ["appIcon", "icon", "App icon", "Launcher icon shown on the device."],
+  [
+    "maxFileSize",
+    "json",
+    "Max file size",
+    "Largest file Acode opens, in MB; bigger files are refused.",
+  ],
+  ["cursorWidth", "json", "Cursor width", "Editor cursor width in px."],
+  ["autoIndent", "json", "Auto indent", "Indent new lines to match the line above."],
+  ["codeFolding", "json", "Code folding", "Fold markers in the gutter."],
+  ["autoCloseBrackets", "json", "Auto close brackets", "Insert the closing bracket or quote."],
+  ["bracketMatching", "json", "Bracket matching", "Highlight the bracket matching the cursor."],
+  ["highlightActiveLine", "json", "Highlight active line", "Highlight the line with the cursor."],
+  [
+    "highlightSelectionMatches",
+    "json",
+    "Highlight selection matches",
+    "Highlight other occurrences of the selected text.",
+  ],
+  [
+    "showAnnotations",
+    "json",
+    "Show annotations",
+    "Leave room for diagnostics beside line numbers.",
+  ],
+  ["maxRetryCount", "json", "Max retry count", "Retries when listing a remote folder fails."],
+  ["showRetryToast", "json", "Show retry toast", "Show a toast on each of those retries."],
 ];
 
-/** Settings Acode keeps out of reach of the agent: purchase, migration and storage internals. */
+/** Settings kept from the agent: purchase, migration and storage internals, and dead keys. */
 export const HIDDEN_SETTINGS: ReadonlySet<string> = new Set([
   "customTheme",
   "quicktoolsItems",
   "lineHeightMigrated",
   "prettier",
+  // Left over from the Ace editor: nothing in this Acode reads them.
+  "autoCorrect",
+  "inlineAutoCompletion",
+  "useTextareaForIME",
+  "elasticTabstops",
+  "printMargin",
+  "showPrintMargin",
+  "desktopMode",
 ]);
 
 /** Settings that only apply after Acode reloads. */

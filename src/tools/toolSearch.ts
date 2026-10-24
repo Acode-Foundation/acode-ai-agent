@@ -89,19 +89,20 @@ export async function syncDeferredTools(
 }
 
 /**
- * Tools the model context still shows in use: ones it called, and ones a `tool_search` result it
- * still holds loaded. Calls made inside codemode scripts do not count; scripts need no loading.
+ * Tools the model context still shows in use: ones it called, and ones a result it still holds
+ * loaded (`tool_search`, or a tool that loads its next step, listed in `details.loaded`). Calls
+ * made inside codemode scripts do not count; scripts need no loading.
  */
 export function toolsInUse(messages: readonly Message[]): Set<string> {
   const used = new Set<string>();
   for (const message of messages) {
     if (message.role === "assistant") {
       for (const part of message.content) if (part.type === "toolCall") used.add(part.name);
-    } else if (message.role === "toolResult" && message.toolName === TOOL_SEARCH_TOOL_NAME) {
+    } else if (message.role === "toolResult") {
       const loaded = (message.details as { loaded?: unknown } | undefined)?.loaded;
       if (Array.isArray(loaded)) {
         for (const name of loaded) if (typeof name === "string") used.add(name);
-      } else {
+      } else if (message.toolName === TOOL_SEARCH_TOOL_NAME) {
         // Results without details: the text lists each loaded tool as "- name: summary".
         for (const part of message.content)
           if (part.type === "text")

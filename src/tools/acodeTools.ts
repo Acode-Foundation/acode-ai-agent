@@ -1,12 +1,15 @@
+import type { Context } from "@earendil-works/chord";
 import { Type } from "@earendil-works/pi-ai";
 import {
   defineTool,
+  type ToolExecutionApi,
   type ToolExecutionResult,
   type ToolRegistration,
 } from "@earendil-works/pi-durable";
 import { ACODE_GUIDE, GUIDE_TOPICS } from "./acodeGuide";
 import { HIDDEN_SETTINGS, SETTINGS_CATALOG, type SettingInfo } from "./acodeSettingsCatalog";
 import { createAcodeUiTool } from "./acodeUi";
+import { offersAllTools } from "./toolSearch";
 import { webRequest } from "./web/request";
 
 /** Tools that change Acode itself; each asks for approval like a workspace edit. */
@@ -14,12 +17,12 @@ export const ACODE_SETTINGS_TOOL = "acode_update_settings";
 export const ACODE_RUN_COMMAND_TOOL = "acode_run_command";
 
 const PLUGIN_API = "https://acode.app/api";
-const SETTINGS_LIMIT = 60;
 const COMMANDS_LIMIT = 80;
 const PLUGINS_LIMIT = 20;
 const VALUE_PREVIEW = 160;
 
-type Details = { operation: string; count?: number };
+/** `loaded`: tools this result loaded for the next turn, which keeps them loaded (see `toolsInUse`). */
+type Details = { operation: string; count?: number; loaded?: string[] };
 
 /**
  * Tools for Acode itself: how it works, its settings, commands, plugins, and screens. All of them
@@ -37,16 +40,19 @@ export function createAcodeTools(): ToolRegistration[] {
     }),
     executionMode: "parallel",
     replay: "safe",
-    execute: async (args) => {
+    execute: async (args, api, context) => {
       const topic = args.topic.trim().toLowerCase();
       const text = ACODE_GUIDE[topic];
       if (!text)
         throw new Error(`Unknown topic "${args.topic}". Topics: ${GUIDE_TOPICS.join(", ")}.`);
-      return result(
-        `${text}\n\nOther topics: ${GUIDE_TOPICS.filter((name) => name !== topic).join(", ")}.`,
-        {
-          operation: "guide",
-        },
+      return withNext(
+        result(
+          `${text}\n\nOther topics: ${GUIDE_TOPICS.filter((name) => name !== topic).join(", ")}.`,
+          { operation: "guide" },
+        ),
+        ["acode_settings", "acode_commands", "acode_plugins"],
+        api,
+        context,
       );
     },
   });
@@ -64,7 +70,7 @@ export function createAcodeTools(): ToolRegistration[] {
     }),
     executionMode: "parallel",
     replay: "safe",
-    execute: async (args) => {
+    execute: async (args, api, context) => {
       const values = settingsValues();
       const visible = Object.keys(values).filter((key) => !HIDDEN_SETTINGS.has(key));
       let keys: string[];
@@ -87,16 +93,21 @@ export function createAcodeTools(): ToolRegistration[] {
       } else {
         keys = visible;
       }
-      const lines = keys
-        .slice(0, SETTINGS_LIMIT)
-        .map((key) => describeSetting(key, values[key], Boolean(args.keys?.length)));
-      if (keys.length > SETTINGS_LIMIT)
-        lines.push(`[${keys.length - SETTINGS_LIMIT} more; narrow the query.]`);
+      // Everything at once reads best as one short line per setting, by page; details on request.
+      const lines =
+        keys === visible
+          ? overview(keys, values)
+          : keys.map((key) => describeSetting(key, values[key], Boolean(args.keys?.length)));
       if (missing.length) lines.push(`Not Acode settings: ${missing.join(", ")}.`);
-      return result(lines.join("\n") || "No matching settings.", {
-        operation: "settings",
-        count: keys.length,
-      });
+      return withNext(
+        result(lines.join("\n") || "No matching settings.", {
+          operation: "settings",
+          count: keys.length,
+        }),
+        [ACODE_SETTINGS_TOOL],
+        api,
+        context,
+      );
     },
   });
 
@@ -115,6 +126,8 @@ export function createAcodeTools(): ToolRegistration[] {
         }),
       ),
     }),
+    // Models that guess the shape send `settings`, a JSON string, `{ key, value }`, or a plain map.
+    prepareArguments: (args) => ({ changes: normalizeChanges(args) }),
     executionMode: "sequential",
     execute: async (args) => {
       if (!args.changes.length) throw new Error("Pass at least one change.");
@@ -161,7 +174,7 @@ export function createAcodeTools(): ToolRegistration[] {
     }),
     executionMode: "parallel",
     replay: "safe",
-    execute: async (args) => {
+    execute: async (args, api, context) => {
       const terms = (args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
       const all = commandRegistry().list();
       const matches = all.filter((command) => {
@@ -177,10 +190,15 @@ export function createAcodeTools(): ToolRegistration[] {
         );
       if (matches.length > COMMANDS_LIMIT)
         lines.push(`[${matches.length - COMMANDS_LIMIT} more; narrow the query.]`);
-      return result(lines.join("\n") || "No matching commands.", {
-        operation: "commands",
-        count: matches.length,
-      });
+      return withNext(
+        result(lines.join("\n") || "No matching commands.", {
+          operation: "commands",
+          count: matches.length,
+        }),
+        [ACODE_RUN_COMMAND_TOOL],
+        api,
+        context,
+      );
     },
   });
 
@@ -373,7 +391,7 @@ function describeSetting(key: string, value: unknown, full: boolean): string {
 /** Allowed values; themes come from what is installed. */
 function optionsFor(key: string, info: SettingInfo): readonly (string | number)[] | undefined {
   try {
-    if (key === "appTheme") return (acode.require("themes") as Acode.Themes | undefined)?.list();
+    if (key === "appTheme") return appThemes()?.map((theme) => theme.id);
     if (key === "editorTheme") {
       const list = (acode.require("editorThemes") as Acode.EditorThemes | undefined)?.list() ?? [];
       return list.map((theme) => (typeof theme === "string" ? theme : theme.id));
@@ -382,6 +400,22 @@ function optionsFor(key: string, info: SettingInfo): readonly (string | number)[
     // Fall back to the catalog.
   }
   return info.options;
+}
+
+type AppTheme = { id: string; version?: string };
+
+/** Installed app themes. Acode lists objects; older versions listed names. */
+function appThemes(): AppTheme[] | undefined {
+  const list = (acode.require("themes") as { list(): (string | AppTheme)[] } | undefined)?.list();
+  return list?.map((theme) => (typeof theme === "string" ? { id: theme } : theme));
+}
+
+/** A paid theme applies only with Acode Pro; buying it is the user's to do. */
+function assertThemeUsable(id: string): void {
+  const theme = appThemes()?.find((entry) => entry.id === id);
+  const config = acode.require("config") as { HAS_PRO?: boolean } | undefined;
+  if (theme?.version === "paid" && config?.HAS_PRO === false)
+    throw new Error(`${id} is a paid theme. The user can unlock it in Settings → Theme.`);
 }
 
 type PlannedChange = { key: string; current: unknown; next: unknown };
@@ -406,6 +440,7 @@ function planChange(key: string, raw: string): PlannedChange {
   const options = info ? optionsFor(key, info) : undefined;
   if (options?.length && !options.includes(next as string | number))
     throw new Error(`${key} must be one of: ${options.join(", ")}.`);
+  if (key === "appTheme") assertThemeUsable(next as string);
   return { key, current, next };
 }
 
@@ -493,4 +528,67 @@ function requireId(id: string | undefined): string {
 
 function result(text: string, details: Details): ToolExecutionResult<Details> {
   return { output: [{ type: "text", text }], details };
+}
+
+/**
+ * Loads the tools a result leads to (settings → updating them, commands → running one) for the
+ * next turn, so the model needs no `tool_search` for the obvious next step. User chats only:
+ * a subagent's tool list is fixed, and adding to it would widen what it may do.
+ */
+async function withNext(
+  output: ToolExecutionResult<Details>,
+  next: readonly string[],
+  api: ToolExecutionApi,
+  context: Context,
+): Promise<ToolExecutionResult<Details>> {
+  try {
+    if (!(await api.commit((tx) => offersAllTools(tx, api.conversationId), context))) return output;
+    const active = new Set((await api.agent(context)).tools.map((tool) => tool.name));
+    const loaded = next.filter((name) => !active.has(name));
+    if (!loaded.length) return output;
+    return {
+      output: [
+        ...(output.output ?? []),
+        { type: "text", text: `\n(Loaded for your next turn: ${loaded.join(", ")}.)` },
+      ],
+      details: { ...output.details!, loaded },
+      control: { addTools: loaded },
+    };
+  } catch {
+    // Outside a harness (tests, scripts) there is nothing to load into.
+    return output;
+  }
+}
+
+/** `{ changes: [...] }` from the shapes models send when guessing this tool's parameters. */
+export function normalizeChanges(args: unknown): { key: string; value: string }[] {
+  const input = (isPlainObject(args) ? args : {}) as Record<string, unknown>;
+  let changes: unknown =
+    input.changes ?? input.settings ?? input.values ?? input.updates ?? input.change;
+  if (changes === undefined && typeof input.key === "string") changes = [input];
+  if (typeof changes === "string") changes = parseValue(changes);
+  if (isPlainObject(changes) && typeof changes.key === "string") changes = [changes];
+  // A plain map: { fontSize: "14px", tabSize: 4 }.
+  if (isPlainObject(changes))
+    changes = Object.entries(changes).map(([key, value]) => ({ key, value }));
+  if (!Array.isArray(changes)) return [];
+  return changes.filter(isPlainObject).map((change) => ({
+    key: String(change.key ?? change.name ?? ""),
+    value: typeof change.value === "string" ? change.value : JSON.stringify(change.value ?? null),
+  }));
+}
+
+/** Every setting as `key = value`, grouped by where it lives, with nothing cut off. */
+function overview(keys: readonly string[], values: Record<string, unknown>): string[] {
+  const groups = new Map<string, string[]>();
+  for (const key of keys) {
+    const page = SETTINGS_CATALOG.get(key)?.page ?? "Other (settings.json)";
+    const group = groups.get(page) ?? [];
+    group.push(`${key} = ${preview(values[key])}`);
+    groups.set(page, group);
+  }
+  return [
+    ...[...groups].flatMap(([page, lines]) => [`${page}:`, ...lines.map((line) => `  ${line}`)]),
+    "Ask with query or keys for a setting's label, description and allowed values.",
+  ];
 }

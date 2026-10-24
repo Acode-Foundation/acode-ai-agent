@@ -170,3 +170,26 @@ test("toolsInUse counts calls and tools a search result still holds", () => {
   ]);
   expect([...used].sort()).toEqual(["delete_path", "move_path", "rename_path"]);
 });
+
+test("toolsInUse keeps tools that another tool's result loaded", () => {
+  const used = toolsInUse([
+    {
+      role: "toolResult",
+      toolCallId: "1",
+      toolName: "acode_settings",
+      content: [{ type: "text", text: "tabSize = 2" }],
+      details: { operation: "settings", loaded: ["acode_update_settings"] },
+      isError: false,
+      timestamp: 1,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "2",
+      toolName: "read",
+      content: [{ type: "text", text: "- not_a_tool: a markdown list item" }],
+      isError: false,
+      timestamp: 1,
+    },
+  ]);
+  expect([...used]).toEqual(["acode_update_settings"]);
+});
