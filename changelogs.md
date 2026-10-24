@@ -1,3 +1,11 @@
+# 0.4.1
+
+- The Acode tools load the next one you need: looking up a setting makes the update tool ready, finding a command makes running it ready, and the guide readies settings, commands and plugins. The agent no longer fails with "Tool … is not available" when it goes from finding to changing.
+- Changing a setting works even when the model guesses the tool's arguments, such as `settings` instead of `changes`, a JSON string, or a plain number.
+- Fixed the app theme list showing `[object Object]` and refusing every app theme change. Paid themes are refused without Pro.
+- Settings Acode reads without a screen of their own, like `maxFileSize` (in MB), are described and marked as settings.json only. Settings nothing reads anymore are no longer listed.
+- Asking for all your settings lists every one, grouped by settings page, instead of stopping after 60.
+
 # 0.4.0
 
 - The agent now knows Acode and can act in it. Ask how to use Acode or this agent, where a setting lives, or to do something in the app, and it reads the live app instead of guessing. Six tools cover it, loaded only when needed so they cost no tokens otherwise:
