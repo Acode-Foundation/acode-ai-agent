@@ -27,7 +27,7 @@
     "@earendil-works/pi-durable": "1.4.0",
     "acode-plugin-types": "^1.12.9",
     "diff": "8.0.4",
-    "dompurify": "^3.4.13",
+    "dompurify": "^3.4.17",
     "lucide-preact": "^1.32.0",
     "marked": "^18.0.10",
     "motion": "^13.1.0",
@@ -45,7 +45,7 @@
     "oxfmt": "^0.67.0",
     "oxlint": "^1.82.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   },
   "browserslist": "cover 100%,not android < 5"
 }
