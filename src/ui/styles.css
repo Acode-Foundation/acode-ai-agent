@@ -1459,6 +1459,28 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.md-code.has-diagram pre,
+.md-code.has-diagram [data-wrap] {
+  display: none;
+}
+.md-mermaid {
+  --pele-bg: var(--surface);
+  --pele-fg: var(--fg);
+  --pele-muted: var(--muted);
+  --pele-line: color-mix(in srgb, var(--fg) 70%, transparent);
+  --pele-surface: color-mix(in srgb, var(--fg) 6%, var(--surface));
+  --pele-surface-alt: color-mix(in srgb, var(--fg) 3%, var(--surface));
+  --pele-border: color-mix(in srgb, var(--fg) 28%, transparent);
+  --pele-accent: var(--accent);
+  --pele-critical: var(--danger);
+  --pele-error: var(--danger);
+  --pele-radius: 6px;
+  padding: 12px;
+}
+.md-mermaid svg {
+  display: block;
+  margin: 0 auto;
+}
 .md-alert {
   margin: 10px 0;
   padding: 2px 0 2px 12px;

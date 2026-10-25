@@ -1,5 +1,5 @@
 let pluginBaseUrl = "";
-let diffRuntimePromise: Promise<AcodeDiffViewRuntime> | undefined;
+const runtimePromises = new Map<string, Promise<unknown>>();
 
 export type DiffViewInput = {
   path: string;
@@ -9,6 +9,11 @@ export type DiffViewInput = {
 
 export type AcodeDiffViewRuntime = {
   mount(container: HTMLElement, input: DiffViewInput): () => void;
+};
+
+export type AcodeMermaidRuntime = {
+  /** Draws `source` into `container`; calls `onError` instead of throwing when it cannot. */
+  mount(container: HTMLElement, source: string, onError: (error: unknown) => void): () => void;
 };
 
 export function setPluginBaseUrl(baseUrl: string): void {
@@ -32,36 +37,53 @@ export async function readPluginAsset(name: string): Promise<ArrayBuffer> {
 }
 
 export function loadDiffViewRuntime(): Promise<AcodeDiffViewRuntime> {
-  const ready = window.acodeAiDiffViewRuntime;
+  return loadRuntimeScript("diff-view.js", "diff viewer", () => window.acodeAiDiffViewRuntime);
+}
+
+export function loadMermaidRuntime(): Promise<AcodeMermaidRuntime> {
+  return loadRuntimeScript(
+    "mermaid-view.js",
+    "diagram renderer",
+    () => window.acodeAiMermaidRuntime,
+  );
+}
+
+/** Load a script shipped next to `main.js` once and resolve the global it defines. */
+function loadRuntimeScript<T>(file: string, label: string, read: () => T | undefined): Promise<T> {
+  const ready = read();
   if (ready) return Promise.resolve(ready);
-  if (diffRuntimePromise) return diffRuntimePromise;
-  const pending = new Promise<AcodeDiffViewRuntime>((resolve, reject) => {
+  const existing = runtimePromises.get(file) as Promise<T> | undefined;
+  if (existing) return existing;
+  const pending = new Promise<T>((resolve, reject) => {
     if (!pluginBaseUrl) {
-      reject(new Error("The diff viewer asset path is unavailable."));
+      reject(new Error(`The ${label} asset path is unavailable.`));
       return;
     }
     const script = document.createElement("script");
     script.async = true;
-    script.src = `${pluginBaseUrl}/diff-view.js`;
+    script.src = `${pluginBaseUrl}/${file}`;
     script.onload = () => {
-      if (window.acodeAiDiffViewRuntime) resolve(window.acodeAiDiffViewRuntime);
-      else reject(new Error("The diff viewer did not initialize."));
+      const runtime = read();
+      if (runtime) resolve(runtime);
+      else reject(new Error(`The ${label} did not initialize.`));
     };
     script.onerror = () => {
       script.remove();
-      reject(new Error("Could not load the diff viewer."));
+      reject(new Error(`Could not load the ${label}.`));
     };
     document.head.append(script);
   });
-  diffRuntimePromise = pending.catch((error) => {
-    diffRuntimePromise = undefined;
+  const settled = pending.catch((error) => {
+    runtimePromises.delete(file);
     throw error;
   });
-  return diffRuntimePromise;
+  runtimePromises.set(file, settled);
+  return settled;
 }
 
 declare global {
   interface Window {
     acodeAiDiffViewRuntime?: AcodeDiffViewRuntime;
+    acodeAiMermaidRuntime?: AcodeMermaidRuntime;
   }
 }

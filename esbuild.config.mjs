@@ -90,6 +90,7 @@ const buildConfig = {
   entryPoints: {
     main: "src/main.ts",
     "diff-view": "src/ui/diffViewRuntime.ts",
+    "mermaid-view": "src/ui/mermaidViewRuntime.ts",
     "codemode-worker": "src/codemode/worker.ts",
   },
   bundle: true,

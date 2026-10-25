@@ -5,6 +5,7 @@ import { highlightCodeBlocks } from "../platform/codeHighlight";
 import { PathSandbox } from "../workspace/pathSandbox";
 import { copyText, playCopiedFeedback, swapCopyGlyphs } from "./CopyButton";
 import { renderMarkdown } from "./markdownRender";
+import { mountMermaidBlocks } from "./mermaidBlocks";
 
 export function Markdown({ text, workspace }: { text: string; workspace?: WorkspaceInfo }) {
   const root = useRef<HTMLDivElement>(null);
@@ -18,8 +19,10 @@ export function Markdown({ text, workspace }: { text: string; workspace?: Worksp
     });
     let cancelled = false;
     void highlightCodeBlocks(host, { cancelled: () => cancelled });
+    const unmountDiagrams = mountMermaidBlocks(host);
     return () => {
       cancelled = true;
+      unmountDiagrams();
     };
   }, [html]);
   return (
