@@ -17,6 +17,16 @@ test("normalizes safe workspace-relative paths", () => {
   });
 });
 
+test("normalizes absolute paths and URIs only when they are inside the workspace", () => {
+  const sandbox = new PathSandbox("file:///project", join);
+  expect(sandbox.normalize("/project/src/main.ts")).toBe("src/main.ts");
+  expect(sandbox.normalize("file:///project/src/main.ts")).toBe("src/main.ts");
+  expect(() => sandbox.normalize("/etc/passwd")).toThrow(/outside the active workspace/);
+  expect(() => sandbox.normalize("file:///other/src/main.ts")).toThrow(
+    /outside the active workspace/,
+  );
+});
+
 test("rejects traversal, schemes, absolute paths, backslashes, and null bytes", () => {
   const sandbox = new PathSandbox("content://provider/tree/root", join);
   for (const unsafe of [

@@ -237,6 +237,15 @@ test("read_file turns Cordova FileError objects into readable messages", async (
   );
 });
 
+test.each(["/project/src/a.ts", "file:///project/src/a.ts"])(
+  "read_file accepts an absolute path within the workspace: %s",
+  async (path) => {
+    const read = tool(memoryWorkspace({ "src/a.ts": "const answer = 42;" }), "read", 10);
+
+    expect(text(await read.execute("r", { path }))).toContain("const answer = 42;");
+  },
+);
+
 test("tools never surface [object Object] for non-Error rejections", async () => {
   vi.stubGlobal("acode", {
     joinUrl: (root: string, path: string) => `${root}/${path}`,

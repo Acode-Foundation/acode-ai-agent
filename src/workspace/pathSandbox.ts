@@ -21,6 +21,16 @@ export class PathSandbox {
     validatePathSafety(decoded);
     const stripped = stripWorkspacePrefixes(decoded, this.#rootSaf);
     if (!stripped || stripped === ".") return "";
+    if (stripped.startsWith("/") || /^[a-z][a-z\d+.-]*:/i.test(stripped)) {
+      const uri =
+        stripped.startsWith("/") && this.rootUri.startsWith("file:")
+          ? `file://${stripped}`
+          : stripped;
+      const relative = this.relative(uri);
+      if (relative === undefined)
+        throw new Error("Absolute path or URI is outside the active workspace.");
+      return relative;
+    }
     validatePathInput(stripped);
     const segments = stripped.split("/").filter((segment) => segment && segment !== ".");
     return segments.join("/");
@@ -235,6 +245,6 @@ function validatePathSafety(value: string): void {
 function validatePathInput(value: string): void {
   validatePathSafety(value);
   if (/^[a-z][a-z\d+.-]*:/i.test(value) || value.startsWith("/")) {
-    throw new Error("Absolute paths and URI schemes are not allowed.");
+    throw new Error("Absolute path or URI is outside the active workspace.");
   }
 }
