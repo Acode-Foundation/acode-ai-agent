@@ -85,6 +85,6 @@ test("pushBackAction is a no-op without a host stack", () => {
 });
 
 test("backActionId is stable unless unique is requested", () => {
-  expect(backActionId("sheet")).toBe("acode.ai.agent:sheet");
+  expect(backActionId("sheet")).toBe("acagent.a.code:sheet");
   expect(backActionId("sheet", true)).not.toBe(backActionId("sheet", true));
 });

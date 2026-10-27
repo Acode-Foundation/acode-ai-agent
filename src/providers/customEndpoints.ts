@@ -316,6 +316,12 @@ export function customEndpointModel(
   modelId: string,
 ): Model<"openai-completions"> {
   const id = sanitizeModelId(modelId) ?? modelId;
+  const compat = {
+    ...(endpoint.localCompat ? LOCAL_OPENAI_COMPAT : {}),
+    ...(isVercelAiGateway(endpoint.baseUrl)
+      ? { requiresReasoningContentOnAssistantMessages: true }
+      : {}),
+  };
   return {
     id,
     name: id,
@@ -327,8 +333,16 @@ export function customEndpointModel(
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 128_000,
     maxTokens: 16_384,
-    compat: endpoint.localCompat ? { ...LOCAL_OPENAI_COMPAT } : undefined,
+    compat: Object.keys(compat).length ? compat : undefined,
   };
+}
+
+function isVercelAiGateway(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === "ai-gateway.vercel.sh";
+  } catch {
+    return false;
+  }
 }
 
 export function createOpenAICompatibleProvider(

@@ -1,4 +1,5 @@
-import { InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { InMemoryModelsStore, normalizeContext, type AssistantMessage } from "@earendil-works/pi-ai";
+import { stream as openAIStream } from "@earendil-works/pi-ai/api/openai-completions";
 import { expect, test } from "vitest";
 import { PortableCredentialStore } from "../src/platform/credentials.ts";
 import {
@@ -129,6 +130,74 @@ test("builds a streamable openai-completions provider from the endpoint", () => 
   const provider = createOpenAICompatibleProvider(endpoint);
   expect(provider.id).toBe("ollama");
   expect(provider.getModels().map((item) => item.id)).toEqual(["gpt-oss:20b"]);
+});
+
+test("marks Vercel AI Gateway endpoint models for reasoning replay", () => {
+  const endpoint = finalizeCustomEndpoint(
+    {
+      name: "Vercel AI Gateway",
+      baseUrl: "https://ai-gateway.vercel.sh/v1",
+      models: "reflection/beam-free",
+    },
+    [],
+  );
+
+  expect(customEndpointModel(endpoint, "reflection/beam-free")).toMatchObject({
+    reasoning: true,
+    compat: { requiresReasoningContentOnAssistantMessages: true },
+  });
+});
+
+test("adds reasoning_content to replayed assistant messages before gateway requests", async () => {
+  const endpoint = finalizeCustomEndpoint(
+    {
+      name: "Vercel AI Gateway",
+      baseUrl: "https://ai-gateway.vercel.sh/v1",
+      models: "reflection/beam-free",
+    },
+    [],
+  );
+  const model = customEndpointModel(endpoint, "reflection/beam-free");
+  const earlierMessage: AssistantMessage = {
+    role: "assistant",
+    content: [{ type: "text", text: "Earlier response" }],
+    api: "openai-completions",
+    provider: endpoint.id,
+    model: model.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: 1,
+  };
+  let payload: unknown;
+
+  await openAIStream(
+    model,
+    normalizeContext({
+      messages: [earlierMessage, { role: "user", content: "Continue", timestamp: 2 }],
+    }),
+    {
+      apiKey: "test-key",
+      onPayload: (request) => {
+        payload = request;
+        throw new Error("Inspect request payload without sending it");
+      },
+    },
+  ).result();
+
+  expect(payload).toEqual(
+    expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ role: "assistant", reasoning_content: "" }),
+      ]),
+    }),
+  );
 });
 
 test("local presets use LAN IPs and llama.cpp / vLLM ports", () => {

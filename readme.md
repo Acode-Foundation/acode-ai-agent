@@ -284,7 +284,7 @@ Folder walks on remote storage are sequential and capped (200 files by default, 
 Other Acode plugins can extend the agent once it has loaded:
 
 ```js
-const runtime = acode.require("acode.ai.agent.runtime");
+const runtime = acode.require("acagent.a.code.runtime");
 
 runtime.registerTool(myPiAgentTool);
 runtime.registerTool(myRarelyUsedTool, { exposure: "deferred" });
