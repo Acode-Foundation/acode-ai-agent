@@ -828,7 +828,7 @@ export class AgentController {
     this.#emit();
     if (!revoked)
       throw new Error(
-        "Signed out locally. Remote revocation could not be confirmed; disconnect Acode AI Agent in ChatGPT Settings → Usage.",
+        "Signed out locally. Remote revocation could not be confirmed; disconnect AcAgent in ChatGPT Settings → Usage.",
       );
   }
 

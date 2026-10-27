@@ -52,7 +52,7 @@ jobs:
           MESSAGE: ${{ steps.publish.outputs.message }}
         run: |
           {
-            echo "### Acode AI Agent $VERSION: $RESULT"
+            echo "### AcAgent $VERSION: $RESULT"
             echo
             echo "$MESSAGE"
           } >> "$GITHUB_STEP_SUMMARY"

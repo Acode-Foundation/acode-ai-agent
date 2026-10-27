@@ -126,7 +126,7 @@ export function createChatGPTOAuth(accounts: ChatGPTAccount): OAuthAuth {
         const authorization = new URL(`${AUTH_BASE}/api/accounts/authorize`);
         authorization.search = new URLSearchParams({
           client_id: registration?.clientId ?? "dynamic_agent_client",
-          ...(registration ? {} : { agent_name_hint: "Acode AI Agent" }),
+          ...(registration ? {} : { agent_name_hint: "AcAgent" }),
           ext_agent_host_id: state.hostId,
           response_type: "code",
           redirect_uri: callback.redirectUri,

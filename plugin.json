@@ -1,7 +1,7 @@
 {
   "$schema": "https://acode.app/schema/plugin/v0.1.0.json",
   "id": "acagent.a.code",
-  "name": "Acode AI Agent",
+  "name": "AcAgent",
   "main": "main.js",
   "version": "0.3.0",
   "readme": "readme.md",

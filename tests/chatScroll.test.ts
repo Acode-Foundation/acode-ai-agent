@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import {
   createMotionGate,
   readThreadSnapshot,
+  shouldFollowAfterScroll,
   scrollTopAfterViewport,
 } from "../src/ui/useChatScroll.ts";
 
@@ -23,6 +24,14 @@ test("a small scroll away from the latest message is not treated as at-end", () 
   expect(before.fromEnd).toBe(80);
   expect(before.atEnd).toBe(false);
   expect(scrollTopAfterViewport(before, 2000, 400)).toBe(1120);
+});
+
+test("upward scrolling pauses following until the user scrolls back to the bottom", () => {
+  const bottom = readThreadSnapshot(2000, 1200, 800);
+  const scrolledUp = readThreadSnapshot(2000, 1180, 800);
+
+  expect(shouldFollowAfterScroll(bottom, scrolledUp)).toBe(false);
+  expect(shouldFollowAfterScroll(scrolledUp, bottom)).toBe(true);
 });
 
 test("a collapse animation that never reports its end releases following after the fallback", () => {

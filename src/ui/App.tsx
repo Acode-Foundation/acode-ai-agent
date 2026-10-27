@@ -120,7 +120,17 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
   useEffect(() => {
     setDismissedTray("");
   }, [state.activeChatId]);
-  const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}:${state.questionnaire?.id ?? ""}:${state.recovery?.kind ?? ""}:${state.retry?.attempt ?? ""}`;
+  const streamingKey =
+    state.streamingMessage?.content
+      .map((block) =>
+        block.type === "thinking"
+          ? `thinking:${block.thinking.length}`
+          : block.type === "text"
+            ? `text:${block.text.length}`
+            : `tool:${block.id}`,
+      )
+      .join(",") ?? "";
+  const followKey = `${state.activeChatId}:${state.messages.length}:${running ? "run" : "idle"}:${streamingKey}:${state.queued.length}:${state.compacting ? "c" : ""}:${state.activities.length}:${state.activities.at(-1)?.status ?? ""}:${state.approval?.id ?? ""}:${state.questionnaire?.id ?? ""}:${state.recovery?.kind ?? ""}:${state.retry?.attempt ?? ""}`;
   const { showLatest, jumpToLatest, pin, captureThread } = useChatScroll(scrollRef, followKey);
 
   const turns = useMemo(() => {

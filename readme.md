@@ -1,4 +1,4 @@
-# Acode AI Agent
+# AcAgent
 
 A coding agent for [Acode](https://acode.app). It opens as an editor tab, reads and edits your project, searches the web, and runs shell commands on Terminal-backed folders. You connect your own model provider.
 
@@ -25,7 +25,7 @@ There is no backend. Requests go straight to the provider you connect.
 
 ## Install
 
-From the plugin store: **Settings → Plugins**, search for **Acode AI Agent**, install and enable it.
+From the plugin store: **Settings → Plugins**, search for **AcAgent**, install and enable it.
 
 From a zip: run `npm run build` (or download a release), then **Settings → Plugins → + → LOCAL** and pick `plugin.zip`.
 

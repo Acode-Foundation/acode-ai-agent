@@ -68,6 +68,13 @@ export function readThreadSnapshot(
   return { scrollTop, fromEnd, atEnd: fromEnd <= AT_END_PX };
 }
 
+export function shouldFollowAfterScroll(
+  previous: ThreadSnapshot | null,
+  current: ThreadSnapshot,
+): boolean {
+  return current.atEnd && (!previous || current.scrollTop >= previous.scrollTop);
+}
+
 export function scrollTopAfterViewport(
   snapshot: ThreadSnapshot,
   scrollHeight: number,
@@ -112,12 +119,6 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
   const [showLatest, setShowLatest] = useState(false);
 
   const animating = () => gate.current?.busy === true;
-
-  const distanceFromEnd = () => {
-    const element = containerRef.current;
-    if (!element) return 0;
-    return element.scrollHeight - element.scrollTop - element.clientHeight;
-  };
 
   const rememberUser = () => {
     const element = containerRef.current;
@@ -179,18 +180,22 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
         setShowLatest(false);
         return;
       }
-      const away = distanceFromEnd() > AWAY_PX;
-      pinned.current = !away;
+      const element = containerRef.current;
+      if (!element) return;
+      const snapshot = snapshotOf(element);
+      const away = snapshot.fromEnd > AWAY_PX;
+      pinned.current = snapshot.atEnd;
       setShowLatest(away);
       rememberUser();
     }, KEYBOARD_HOLD_MS);
   };
 
   const syncFromPosition = () => {
-    const away = distanceFromEnd() > AWAY_PX;
     if (animating() || viewportLock.current > 0) return;
-    pinned.current = !away;
-    setShowLatest(away);
+    const snapshot = containerRef.current ? snapshotOf(containerRef.current) : null;
+    if (!snapshot) return;
+    pinned.current = snapshot.atEnd;
+    setShowLatest(snapshot.fromEnd > AWAY_PX);
     rememberUser();
   };
 
@@ -230,7 +235,10 @@ export function useChatScroll(containerRef: RefObject<HTMLElement | null>, follo
       if (programmatic.current || animating() || viewportLock.current > 0) return;
       if (lastHeight.current > 0 && element.clientHeight !== lastHeight.current) return;
       pending.current = null;
-      syncFromPosition();
+      const snapshot = snapshotOf(element);
+      pinned.current = shouldFollowAfterScroll(lastUser.current, snapshot);
+      setShowLatest(snapshot.fromEnd > AWAY_PX);
+      lastUser.current = snapshot;
     };
     // A row the user opened must not be yanked away, so their position decides; a row that
     // opened by itself (a failed tool, a row regrouping) keeps following if they were pinned.

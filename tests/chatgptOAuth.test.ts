@@ -332,7 +332,7 @@ test("ChatGPT sign-in registers the app, verifies identity, discovers models and
   });
   const hostId = authorization.searchParams.get("ext_agent_host_id");
   expect(authorization.searchParams.get("client_id")).toBe("dynamic_agent_client");
-  expect(authorization.searchParams.get("agent_name_hint")).toBe("Acode AI Agent");
+  expect(authorization.searchParams.get("agent_name_hint")).toBe("AcAgent");
   expect(requests[0]?.get("client_id")).toBe("issued-client");
   expect(requests[0]?.get("redirect_uri")).toBe(authorization.searchParams.get("redirect_uri"));
   expect(requests[0]?.get("code_verifier")).not.toBe(

@@ -44,7 +44,7 @@ export function preamble(
   tools: { codemode?: boolean; deferred?: readonly string[] } = {},
 ): string {
   return [
-    "You are Acode's in-editor coding agent, powered by the Pi agent runtime.",
+    "You are AcAgent, Acode's in-editor coding agent, powered by the Pi agent runtime.",
     "Work autonomously toward the user's requested outcome and use tools to inspect evidence before guessing.",
     "File-tool paths are POSIX and workspace-relative; never pass device paths, absolute paths, or URIs.",
     "Read open buffers before editing. Edits to open files remain unsaved so the user retains editor undo/save control.",

@@ -53,7 +53,7 @@ export function chatgptPayload(value: unknown): Record<string, unknown> {
             {
               type: "namespace",
               name: "acode",
-              description: "Acode AI Agent tools",
+              description: "AcAgent tools",
               tools: functions,
             },
           ]

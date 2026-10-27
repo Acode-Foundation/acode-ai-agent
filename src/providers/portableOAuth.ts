@@ -309,7 +309,7 @@ async function loginOpenRouter(
       callback_url: callbackUrl.href,
       code_challenge: pkce.challenge,
       code_challenge_method: "S256",
-      key_label: "Acode AI Agent",
+      key_label: "AcAgent",
     }).toString();
     const code = await waitForOpenRouterCallback(
       pending.state,
