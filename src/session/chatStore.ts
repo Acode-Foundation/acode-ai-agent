@@ -24,6 +24,8 @@ export type ChatMeta = {
   conversationId?: number;
   /** The chat's own model; chats saved before it existed take the one Pi recorded. */
   model?: ModelSelection;
+  /** Auto-compaction for this chat only; undefined follows Pi settings. */
+  autoCompaction?: boolean;
 };
 
 /**

@@ -2767,6 +2767,23 @@
   font-size: 12px;
   padding: 2px 2px 6px;
 }
+.load-earlier {
+  display: block;
+  margin: 4px auto 14px;
+  min-height: 30px;
+  padding: 5px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.load-earlier:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
 .compact-status {
   color: var(--muted);
   font-size: 12px;
@@ -3244,7 +3261,8 @@ span.file-glyph.file {
   font-size: 12px;
   cursor: pointer;
 }
-.config-pills button.selected.mode {
+.config-pills button.selected.mode,
+.config-pills button.selected.compaction {
   border-color: var(--accent);
   color: var(--accent);
 }

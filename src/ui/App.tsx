@@ -87,6 +87,8 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
   const [tasksOpen, setTasksOpen] = useState(false);
   const [dismissedTray, setDismissedTray] = useState("");
   const [resuming, setResuming] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
   const shellRef = useRef<HTMLDivElement>(null);
@@ -383,6 +385,52 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     }
   }, [controller]);
 
+  // Older turns go above what is on screen; keep the view where it was.
+  const loadEarlier = useCallback(async () => {
+    const element = scrollRef.current;
+    const fromEnd = element ? element.scrollHeight - element.scrollTop : 0;
+    setLoadingEarlier(true);
+    try {
+      await controller.loadEarlier();
+      requestAnimationFrame(() => {
+        if (element) element.scrollTop = element.scrollHeight - fromEnd;
+      });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingEarlier(false);
+    }
+  }, [controller]);
+
+  const retryRun = useCallback(async () => {
+    setRetrying(true);
+    try {
+      await controller.continueRun();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRetrying(false);
+    }
+  }, [controller]);
+
+  // The newest failure gets Retry (and Sign in for a rejected login) on whichever notice shows it.
+  const failure = !running && !state.recovery ? state.failure : undefined;
+  const failureActions = failure && {
+    title: failure.title,
+    action: failure.retryable
+      ? {
+          label: retrying ? "Retrying…" : "Retry",
+          disabled: retrying,
+          onClick: () => void retryRun(),
+        }
+      : undefined,
+    secondaryAction: failure.signIn
+      ? { label: "Sign in", onClick: () => setSettingsOpen(true) }
+      : undefined,
+  };
+  const stateErrorShown = Boolean(state.error && !turns.some((turn) => turn.error === state.error));
+  const lastTurnError = turns.at(-1)?.error;
+
   return (
     <div class="agent-shell" ref={shellRef}>
       <header class="agent-header">
@@ -434,6 +482,16 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           </>
         ) : (
           <div class="thread">
+            {state.hasEarlier && (
+              <button
+                type="button"
+                class="load-earlier"
+                disabled={loadingEarlier}
+                onClick={() => void loadEarlier()}
+              >
+                {loadingEarlier ? "Loading…" : "Show earlier messages"}
+              </button>
+            )}
             {turns.map((turn, turnIndex) => (
               <section class="turn" key={turn.id}>
                 {(turn.userParts?.length || turn.user) && (
@@ -549,7 +607,12 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                     )}
                   </div>
                 )}
-                {turn.error && <ErrorNotice message={turn.error} />}
+                {turn.error && (
+                  <ErrorNotice
+                    message={turn.error}
+                    {...(turnIndex === turns.length - 1 && !stateErrorShown ? failureActions : {})}
+                  />
+                )}
                 {!turn.streaming &&
                   turn.entryId !== undefined &&
                   state.edits[String(turn.entryId)] && (
@@ -573,8 +636,9 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
               !turns.at(-1)?.answer && <WorkingIndicator label={workingLabel} />}
           </div>
         )}
-        {state.error && !turns.some((turn) => turn.error === state.error) && (
-          <ErrorNotice message={state.error} />
+        {stateErrorShown && <ErrorNotice message={state.error!} {...failureActions} />}
+        {failure && !stateErrorShown && !lastTurnError && (
+          <ErrorNotice message={failure.message} {...failureActions} />
         )}
         {state.recovery && (
           <ErrorNotice
@@ -1507,6 +1571,16 @@ function PiSettingsSheet({
               }))}
               onChange={(value) => update({ retryMaxRetries: Number(value) })}
             />
+            <SettingsSelect
+              label="Tool rounds per run"
+              hint="Stop a run after this many tool rounds; Retry continues it"
+              value={String(settings.maxTurns)}
+              options={[0, 10, 25, 50, 100, 200].map((value) => ({
+                value: String(value),
+                label: value ? String(value) : "No limit",
+              }))}
+              onChange={(value) => update({ maxTurns: Number(value) })}
+            />
             <SettingsToggle
               label="Auto-resize images"
               hint="Resize large images for model compatibility"
@@ -1902,6 +1976,32 @@ function ConfigSheet({
                     </div>
                   </div>
                 )}
+                <div class="config-row">
+                  <div>
+                    <b>Auto-compact</b>
+                    <small>For this chat; Default follows Pi settings</small>
+                  </div>
+                  <div class="config-pills">
+                    {AUTO_COMPACT_CHOICES.map((choice) => (
+                      <button
+                        type="button"
+                        class={
+                          state.chatAutoCompaction === choice.value ? "selected compaction" : ""
+                        }
+                        key={choice.label}
+                        onClick={() =>
+                          void controller
+                            .setChatAutoCompaction(choice.value)
+                            .catch((error) =>
+                              showToast(error instanceof Error ? error.message : String(error)),
+                            )
+                        }
+                      >
+                        {choice.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <button type="button" class="config-nav" onClick={() => go("providers")}>
                   <div>
                     <b>Provider</b>
@@ -1935,6 +2035,12 @@ function ConfigSheet({
     </Sheet>
   );
 }
+
+const AUTO_COMPACT_CHOICES: { label: string; value: boolean | undefined }[] = [
+  { label: "Default", value: undefined },
+  { label: "On", value: true },
+  { label: "Off", value: false },
+];
 
 function ProviderPicker({
   state,

@@ -44,6 +44,7 @@ import type {
   ModelSelection,
   QueuedPrompt,
   RestoredPrompt,
+  RunFailureNotice,
   RunRecovery,
   RunRetry,
   RunEditFile,
@@ -84,6 +85,7 @@ import {
 import { WorkspaceExecutionEnv } from "../tools/workspaceEnv";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
 import { ConversationFeed, type FeedValue } from "./conversationFeed";
+import { describeUnanswered, failureNotice } from "./runFailure";
 import type { ChatMeta, ChatStore } from "./chatStore";
 import {
   appendHistory,
@@ -126,6 +128,10 @@ export type AgentSessionSnapshot = {
   edits: Record<string, RunEditSummary>;
   recovery?: RunRecovery;
   retry?: RunRetry;
+  failure?: RunFailureNotice;
+  chatAutoCompaction?: boolean;
+  /** Older turns exist that are not loaded yet. */
+  hasEarlier: boolean;
   error?: string;
 };
 
@@ -205,6 +211,7 @@ export class AgentSession {
     queued: [],
     isRunning: false,
     compacting: false,
+    hasEarlier: false,
     usage: { tokens: 0, cost: 0 },
     contextTokens: 0,
     commands: resourceSlashCommands({}),
@@ -335,17 +342,33 @@ export class AgentSession {
   /** Point a conversation at the chat's model; Pi stores the choice on it. */
   async #configure(conversation: Conversation): Promise<void> {
     const { providerId, modelId, thinkingLevel } = this.model;
+    const maxTurns = this.#settings().maxTurns || undefined;
+    const autoCompaction = this.#meta.autoCompaction;
     const agent = await conversation.agent(context);
     if (
       agent.model?.provider === providerId &&
       agent.model.modelId === modelId &&
-      agent.thinkingLevel === thinkingLevel
+      agent.thinkingLevel === thinkingLevel &&
+      agent.maxTurns === maxTurns &&
+      agent.compaction?.enabled === autoCompaction
     )
       return;
     await conversation.configure(
-      { model: { provider: providerId, modelId }, thinkingLevel },
+      {
+        model: { provider: providerId, modelId },
+        thinkingLevel,
+        maxTurns: maxTurns ?? null,
+        compaction: autoCompaction === undefined ? null : { enabled: autoCompaction },
+      },
       context,
     );
+  }
+
+  /** Turn auto-compaction on or off for this chat; undefined follows Pi settings again. */
+  async setAutoCompaction(enabled: boolean | undefined): Promise<void> {
+    await this.#saveMeta({ autoCompaction: enabled }, false);
+    if (this.#conversation) await this.#configure(this.#conversation);
+    this.#publish();
   }
 
   refreshTools(): void {
@@ -368,6 +391,11 @@ export class AgentSession {
     // Harness settings are read live through getters; only the tool set and UI state change here.
     if (this.#harness && this.#settings().codemode !== this.#codemodeInstalled)
       this.#installExtensions();
+    // The tool round limit lives on the conversation, not in the harness settings.
+    if (this.#conversation)
+      void this.#configure(this.#conversation).catch((error) =>
+        console.warn("Pi configure", error),
+      );
     this.#publish();
   }
 
@@ -571,6 +599,24 @@ export class AgentSession {
     return restored.filter((item) => item.text || item.images.length);
   }
 
+  /** Show the turns before the oldest one loaded. */
+  async loadEarlier(): Promise<void> {
+    const view = this.#view;
+    if (!view) return;
+    await view.loadEarlier(context);
+    if (this.#view === view) this.#publish();
+  }
+
+  /** Run again from the context as it is, after a run that ended without an answer. */
+  async continueRun(): Promise<void> {
+    const conversation = this.#requireConversation();
+    this.#runError = undefined;
+    this.#recovery = undefined;
+    const submission = await conversation.submit({ type: "continue" }, context);
+    this.#publish();
+    void this.#followSubmission(submission);
+  }
+
   async resume(): Promise<void> {
     if (!this.#recovery) throw new Error("There is no interrupted run to resume.");
     this.#recovery = undefined;
@@ -691,7 +737,7 @@ export class AgentSession {
     await this.#configure(conversation);
     await Promise.all([this.#loadTasks(), this.#refreshEdits(), this.#refreshUsage()]);
     const view = await ConversationFeed.open(conversation, context, {
-      history: true,
+      history: "recent",
       onChange: () => {
         if (this.#view === view) this.#publish();
       },
@@ -749,7 +795,12 @@ export class AgentSession {
   async #followSubmission(submission: Submission): Promise<void> {
     try {
       const settled = await submission.wait(context);
-      if (settled.status === "unanswered" && settled.reason !== "aborted") {
+      // A provider error already shows under its turn; the failure notice carries the retry.
+      if (
+        settled.status === "unanswered" &&
+        settled.reason !== "aborted" &&
+        !(settled.reason === "model_error" && lastTurnError(this.#snapshot.messages))
+      ) {
         this.#runError = describeUnanswered(settled.reason, settled.detail);
       }
       if (this.#meta.title === "New chat") {
@@ -1011,6 +1062,12 @@ export class AgentSession {
               errorMessage: retry.error,
             }
           : undefined,
+      chatAutoCompaction: this.#meta.autoCompaction,
+      hasEarlier: view?.hasEarlier ?? false,
+      failure:
+        running || paused
+          ? undefined
+          : failureNotice(live?.runFailure, this.#runError ?? lastTurnError(messages)),
       error: this.#runError ?? lastTurnError(messages),
     };
     this.changes.emit(this.snapshot);
@@ -1080,7 +1137,7 @@ export class AgentSession {
         const conversation = await this.#harness?.conversation(id as ConversationId, context);
         if (!conversation) return;
         const feed = await ConversationFeed.open(conversation, context, {
-          history: false,
+          history: "none",
           onChange: () => this.#publish(),
         });
         if (!this.#children.has(id) || this.#children.get(id)) return feed.dispose();
@@ -1237,14 +1294,6 @@ function lastTurnError(messages: TranscriptMessage[]): string | undefined {
       : undefined;
   }
   return undefined;
-}
-
-function describeUnanswered(reason: string, detail: unknown): string {
-  const message =
-    detail && typeof detail === "object" && "message" in detail
-      ? String((detail as { message: unknown }).message)
-      : undefined;
-  return message || `The prompt was not answered (${reason}).`;
 }
 
 type InboxContent =

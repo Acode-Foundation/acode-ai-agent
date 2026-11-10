@@ -435,6 +435,14 @@ export class AgentController {
     return (await this.#activeSession()?.abort()) ?? [];
   }
 
+  /** Run the failed turn again from the context as it is, without a new prompt. */
+  async continueRun(): Promise<void> {
+    const session = this.#activeSession();
+    if (!session) throw new Error("Open a session before retrying a run.");
+    await this.#requireProviderAuth();
+    await session.continueRun();
+  }
+
   async resume(): Promise<void> {
     const session = this.#activeSession();
     if (!session) throw new Error("Open a session before resuming a run.");
@@ -685,6 +693,17 @@ export class AgentController {
     this.settings.update({ customModels });
     if (nextId) this.selectModel(nextId);
     else this.#refreshModels();
+  }
+
+  async loadEarlier(): Promise<void> {
+    await this.#activeSession()?.loadEarlier();
+  }
+
+  /** This chat's auto-compaction: on, off, or undefined to follow Pi settings. */
+  async setChatAutoCompaction(enabled: boolean | undefined): Promise<void> {
+    const session = this.#activeSession();
+    if (!session) throw new Error("Open a session before changing its compaction.");
+    await session.setAutoCompaction(enabled);
   }
 
   setThinkingLevel(level: AgentSettings["thinkingLevel"]): void {
@@ -1184,6 +1203,9 @@ export class AgentController {
       edits: snapshot?.edits ?? {},
       recovery: snapshot?.recovery,
       retry: snapshot?.retry,
+      failure: snapshot?.failure,
+      chatAutoCompaction: snapshot?.chatAutoCompaction,
+      hasEarlier: snapshot?.hasEarlier,
       model: this.#state.model,
       workspace: session?.workspace.info ?? this.#state.workspace,
     };

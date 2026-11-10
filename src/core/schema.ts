@@ -89,6 +89,7 @@ const settingsFields = {
   blockImages: flag(false),
   globalSkillRoots: ((value) => (isTextList(value, 20, 1_024) ? value : [])) as Field<string[]>,
   maxHistoryMessages: int(20, 200, 80),
+  maxTurns: int(0, 1_000, 0),
   maxWalkFiles: int(25, 1000, 200),
   showTaskTray: flag(true),
   activeWorkspaceId: anyText(""),

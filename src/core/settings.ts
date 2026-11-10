@@ -31,6 +31,7 @@ export const DEFAULT_SETTINGS: AgentSettings = {
   blockImages: false,
   globalSkillRoots: [],
   maxHistoryMessages: 80,
+  maxTurns: 0,
   maxWalkFiles: 200,
   showTaskTray: true,
   activeWorkspaceId: "",

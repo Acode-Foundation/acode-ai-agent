@@ -49,6 +49,8 @@ export type AgentSettings = {
   blockImages: boolean;
   globalSkillRoots: string[];
   maxHistoryMessages: number;
+  /** Tool rounds one run may take before it stops for the user; 0 means no limit. */
+  maxTurns: number;
   maxWalkFiles: number;
   showTaskTray: boolean;
   activeWorkspaceId: string;
@@ -158,6 +160,17 @@ export type RunRecovery = {
   message: string;
 };
 
+/** The newest run ended without an answer; Pi can continue it from the context as it is. */
+export type RunFailureNotice = {
+  title: string;
+  /** Shown when no turn already shows the provider's error. */
+  message: string;
+  /** Continuing can help: the run failed, it was not stopped or reset by the user. */
+  retryable: boolean;
+  /** The failure reads as an expired or rejected sign-in. */
+  signIn: boolean;
+};
+
 export type RunRetry = {
   attempt: number;
   maxAttempts: number;
@@ -199,6 +212,11 @@ export type PublicAgentState = {
   edits: Record<string, RunEditSummary>;
   recovery?: RunRecovery;
   retry?: RunRetry;
+  failure?: RunFailureNotice;
+  /** The active chat's own auto-compaction choice; undefined follows Pi settings. */
+  chatAutoCompaction?: boolean;
+  /** Older turns of the active chat exist that are not loaded yet. */
+  hasEarlier?: boolean;
   activeChatId?: string;
   authFlow?: {
     providerId: ProviderId;
