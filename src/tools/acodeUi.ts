@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { bool, num, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -184,23 +184,11 @@ export function createAcodeUiTool(): ToolRegistration {
       "snapshot; 'back' closes the top dialog, menu, or page. Each action returns the next snapshot. Opening pages " +
       "is free; changes ask per the permission mode; confirming dialogs, typing, and destructive taps always ask. " +
       "Purchases and ads are off limits.",
-    parameters: Type.Object({
-      action: Type.Union(
-        [
-          Type.Literal("snapshot"),
-          Type.Literal("click"),
-          Type.Literal("type"),
-          Type.Literal("back"),
-        ],
-        { description: "snapshot | click | type | back" },
-      ),
-      ref: Type.Optional(Type.Number({ description: "Item number from the latest snapshot" })),
-      text: Type.Optional(
-        Type.String({ description: "Text to type (replaces the field's value)" }),
-      ),
-      submit: Type.Optional(
-        Type.Boolean({ description: "After typing, press the dialog's OK button" }),
-      ),
+    parameters: obj({
+      action: oneOf(["snapshot", "click", "type", "back"]),
+      ref: opt(num({ description: "Item number from the latest snapshot" })),
+      text: opt(str({ description: "Text to type (replaces the field's value)" })),
+      submit: opt(bool({ description: "After typing, press the dialog's OK button" })),
     }),
     executionMode: "sequential",
     execute: async (args, _api, context) => {

@@ -1,9 +1,9 @@
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import type { QuestionGate } from "./questionGate";
 import { buildQuestionnaireResponse, textResult } from "./response";
 import { ASK_TOOL_NAME, MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS } from "./types";
 import { parseQuestions, validateQuestionnaire } from "./validate";
+import { arr, bool, obj, opt, str } from "@earendil-works/pi-schema";
 
 const DESCRIPTION = [
   "Ask the user a structured choice instead of guessing. 1-4 questions, 2-4 options each, with a short label and a trade-off description.",
@@ -15,20 +15,20 @@ export function createAskTool(gate: QuestionGate): ToolRegistration {
   return defineTool({
     name: ASK_TOOL_NAME,
     description: DESCRIPTION,
-    parameters: Type.Object({
-      questions: Type.Array(
-        Type.Object({
-          question: Type.String({ description: "Full question, ending with ?" }),
-          header: Type.String({ description: "Short chip, max 16 characters" }),
-          options: Type.Array(
-            Type.Object({
-              label: Type.String({ description: "1-5 words, max 60 characters" }),
-              description: Type.String({ description: "What this choice means or costs" }),
-              preview: Type.Optional(Type.String({ description: "Optional mockup or code" })),
+    parameters: obj({
+      questions: arr(
+        obj({
+          question: str({ description: "Full question, ending with ?" }),
+          header: str({ description: "Short chip, max 16 characters" }),
+          options: arr(
+            obj({
+              label: str({ description: "1-5 words, max 60 characters" }),
+              description: str({ description: "What this choice means or costs" }),
+              preview: opt(str({ description: "Optional mockup or code" })),
             }),
             { minItems: MIN_OPTIONS, maxItems: MAX_OPTIONS },
           ),
-          multiSelect: Type.Optional(Type.Boolean({ description: "Allow more than one option" })),
+          multiSelect: opt(bool({ description: "Allow more than one option" })),
         }),
         { minItems: 1, maxItems: MAX_QUESTIONS },
       ),

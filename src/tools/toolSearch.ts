@@ -1,5 +1,6 @@
-import type { JsonValue } from "@earendil-works/chord";
-import { Type, type Message } from "@earendil-works/pi-ai";
+import type { JsonValue } from "@earendil-works/chord/json";
+import type { Message } from "@earendil-works/pi-ai";
+import { num, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   AgentDoc,
   defineDoc,
@@ -129,11 +130,9 @@ export function createToolSearchTool(deferred: readonly ToolRegistration[]): Too
     description:
       "Load deferred tools (the system prompt names them) so you can call them from your next turn. " +
       "Pass tool names, or describe what you need (for example 'rename a file').",
-    parameters: Type.Object({
-      query: Type.String({ description: "Tool names, or what the tool should do" }),
-      limit: Type.Optional(
-        Type.Number({ description: `Maximum tools to load (default ${DEFAULT_LIMIT})` }),
-      ),
+    parameters: obj({
+      query: str({ description: "Tool names, or what the tool should do" }),
+      limit: opt(num({ description: `Maximum tools to load (default ${DEFAULT_LIMIT})` })),
     }),
     executionMode: "parallel",
     replay: "safe",

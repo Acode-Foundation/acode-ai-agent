@@ -1,5 +1,5 @@
+import { obj, str } from "@earendil-works/pi-schema";
 import { afterEach, expect, test, vi } from "vitest";
-import { Type } from "@earendil-works/pi-ai";
 import { PortableCredentialStore } from "../src/platform/credentials";
 import { ProviderRegistry } from "../src/providers/providerRegistry";
 import { chatgptPayload } from "../src/providers/chatgptProvider";
@@ -123,7 +123,7 @@ test("ChatGPT agent requests stream public Responses with namespaced tools and r
     {
       name: "read",
       description: "Read a project file",
-      parameters: Type.Object({ path: Type.String() }),
+      parameters: obj({ path: str() }),
     },
   ];
   const user = { role: "user" as const, content: "Read README.md", timestamp: Date.now() };

@@ -1,5 +1,5 @@
-import type { Context } from "@earendil-works/chord";
-import { Type } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import { arr, obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionApi,
@@ -35,8 +35,8 @@ export function createAcodeTools(): ToolRegistration[] {
       "How Acode (the Android editor you run in) and this AI Agent plugin work: menus, shortcuts, run/preview, " +
       "terminal, plugins, themes, language servers, formatting, files, and how the user works with you. " +
       "Use it before answering questions about Acode or about using this agent.",
-    parameters: Type.Object({
-      topic: Type.String({ description: `One of: ${GUIDE_TOPICS.join(", ")}` }),
+    parameters: obj({
+      topic: str({ description: `One of: ${GUIDE_TOPICS.join(", ")}` }),
     }),
     executionMode: "parallel",
     replay: "safe",
@@ -62,11 +62,9 @@ export function createAcodeTools(): ToolRegistration[] {
     description:
       "Find Acode settings: each with its key, current value, label, where it is in Acode's UI, and allowed values. " +
       "Search by words (e.g. 'font size', 'tab', 'theme') or pass exact keys.",
-    parameters: Type.Object({
-      query: Type.Optional(
-        Type.String({ description: "Words to match; omit to list every setting" }),
-      ),
-      keys: Type.Optional(Type.Array(Type.String(), { description: "Exact setting keys" })),
+    parameters: obj({
+      query: opt(str({ description: "Words to match; omit to list every setting" })),
+      keys: opt(arr(str(), { description: "Exact setting keys" })),
     }),
     executionMode: "parallel",
     replay: "safe",
@@ -116,11 +114,11 @@ export function createAcodeTools(): ToolRegistration[] {
     description:
       "Change Acode settings after the user approves. Look keys and allowed values up with acode_settings first. " +
       "Object settings (terminalSettings, fileBrowser, search) merge the fields you pass.",
-    parameters: Type.Object({
-      changes: Type.Array(
-        Type.Object({
-          key: Type.String({ description: "Setting key, e.g. fontSize" }),
-          value: Type.String({
+    parameters: obj({
+      changes: arr(
+        obj({
+          key: str({ description: "Setting key, e.g. fontSize" }),
+          value: str({
             description: 'New value as JSON, e.g. 4, true, "14px", {"cursorBlink":true}',
           }),
         }),
@@ -169,8 +167,8 @@ export function createAcodeTools(): ToolRegistration[] {
     description:
       "List Acode commands (built-in and plugin-added, the same as the command palette) with descriptions and " +
       "shortcuts. Search by words such as 'terminal', 'theme', 'split', 'format'.",
-    parameters: Type.Object({
-      query: Type.Optional(Type.String({ description: "Words to match; omit to list all" })),
+    parameters: obj({
+      query: opt(str({ description: "Words to match; omit to list all" })),
     }),
     executionMode: "parallel",
     replay: "safe",
@@ -208,11 +206,9 @@ export function createAcodeTools(): ToolRegistration[] {
       "Run an Acode command by name after the user approves, e.g. openTerminal, showSettingsMenu, openPluginsPage, " +
       "toggleSidebar, splitPaneRight, formatCode, saveAllChanges. Find names with acode_commands. Commands that open " +
       "a page or dialog take the user away from this chat.",
-    parameters: Type.Object({
-      name: Type.String({ description: "Command name from acode_commands" }),
-      args: Type.Optional(
-        Type.String({ description: "Optional JSON argument some commands take" }),
-      ),
+    parameters: obj({
+      name: str({ description: "Command name from acode_commands" }),
+      args: opt(str({ description: "Optional JSON argument some commands take" })),
     }),
     executionMode: "sequential",
     execute: async (args) => {
@@ -239,18 +235,10 @@ export function createAcodeTools(): ToolRegistration[] {
     description:
       "Acode plugins: list installed ones (id, version, enabled), search the plugin store, read a store plugin's " +
       "description, or install one by id (Acode asks the user to confirm).",
-    parameters: Type.Object({
-      action: Type.Union(
-        [
-          Type.Literal("installed"),
-          Type.Literal("search"),
-          Type.Literal("info"),
-          Type.Literal("install"),
-        ],
-        { description: "installed | search | info | install" },
-      ),
-      query: Type.Optional(Type.String({ description: "Plugin name words, for search" })),
-      id: Type.Optional(Type.String({ description: "Plugin id, for info and install" })),
+    parameters: obj({
+      action: oneOf(["installed", "search", "info", "install"]),
+      query: opt(str({ description: "Plugin name words, for search" })),
+      id: opt(str({ description: "Plugin id, for info and install" })),
     }),
     executionMode: "sequential",
     execute: async (args, _api, context) => {

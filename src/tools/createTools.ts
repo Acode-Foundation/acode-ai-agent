@@ -1,4 +1,5 @@
-import type { JsonValue } from "@earendil-works/chord";
+import type { JsonValue } from "@earendil-works/chord/json";
+import { bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionApi,
@@ -11,7 +12,6 @@ import {
   createReadTool,
   createWriteTool,
 } from "@earendil-works/pi-durable/tools";
-import { Type } from "@earendil-works/pi-ai";
 import { FileError } from "@earendil-works/pi-durable/env";
 import { browserReadImageProcessor, type ReadImageProcessor } from "../platform/readImageProcessor";
 import { indexOmissions, NotDirectoryError } from "../workspace/acodeWorkspace";
@@ -112,15 +112,13 @@ export function createWorkspaceTools(
       "List the direct children of a workspace directory, including hidden files. " +
       "Folders are listed first and end with '/'. Paths are workspace-relative, ready for other tools. " +
       `Shows up to ${LIST_DEFAULT_LIMIT} entries; use offset/limit to page through larger folders.`,
-    parameters: Type.Object({
-      path: Type.Optional(
-        Type.String({ description: "Workspace-relative directory, empty for root" }),
+    parameters: obj({
+      path: opt(str({ description: "Workspace-relative directory, empty for root" })),
+      offset: opt(
+        num({ description: "Number of entries to skip (to continue a truncated listing)" }),
       ),
-      offset: Type.Optional(
-        Type.Number({ description: "Number of entries to skip (to continue a truncated listing)" }),
-      ),
-      limit: Type.Optional(
-        Type.Number({
+      limit: opt(
+        num({
           description: `Maximum entries to return (default ${LIST_DEFAULT_LIMIT}, max ${LIST_MAX_LIMIT})`,
         }),
       ),
@@ -177,27 +175,23 @@ export function createWorkspaceTools(
       `Returns up to ${GREP_DEFAULT_LIMIT} matches by default. ` +
       "A result that says the search was incomplete has NOT covered every file: continue with the offset it gives " +
       "(keeping query/path/glob the same) or narrow the search with path/glob before concluding a match does not exist.",
-    parameters: Type.Object({
-      query: Type.String({ description: "Text or regular expression to find" }),
-      path: Type.Optional(
-        Type.String({ description: "Workspace-relative directory or file to search" }),
-      ),
-      glob: Type.Optional(
-        Type.String({
+    parameters: obj({
+      query: str({ description: "Text or regular expression to find" }),
+      path: opt(str({ description: "Workspace-relative directory or file to search" })),
+      glob: opt(
+        str({
           description: "Only search files matching this glob, e.g. *.ts or src/**/*.css",
         }),
       ),
-      case_sensitive: Type.Optional(Type.Boolean({ default: false })),
-      regex: Type.Optional(
-        Type.Boolean({ default: false, description: "Interpret query as a regular expression" }),
-      ),
-      limit: Type.Optional(
-        Type.Number({
+      case_sensitive: opt(bool({ default: false })),
+      regex: opt(bool({ default: false, description: "Interpret query as a regular expression" })),
+      limit: opt(
+        num({
           description: `Maximum matches to return (default ${GREP_DEFAULT_LIMIT}, max ${GREP_MAX_LIMIT})`,
         }),
       ),
-      offset: Type.Optional(
-        Type.Number({
+      offset: opt(
+        num({
           description:
             "Number of files to skip before searching. Only use the value a previous incomplete result tells you to.",
         }),
@@ -362,20 +356,18 @@ export function createWorkspaceTools(
       "Find files by a glob pattern such as **/*.ts, src/**, or **/*.{md,json,js}. Returns workspace-relative paths. " +
       `Returns up to ${GLOB_DEFAULT_LIMIT} files by default; a truncated result says which offset continues it, ` +
       "and any folders that were not searched are listed in a trailing note.",
-    parameters: Type.Object({
-      pattern: Type.String({
+    parameters: obj({
+      pattern: str({
         description: "Glob pattern, matched against workspace-relative paths",
       }),
-      path: Type.Optional(
-        Type.String({ description: "Workspace-relative directory to search in" }),
-      ),
-      limit: Type.Optional(
-        Type.Number({
+      path: opt(str({ description: "Workspace-relative directory to search in" })),
+      limit: opt(
+        num({
           description: `Maximum files to return (default ${GLOB_DEFAULT_LIMIT}, max ${GLOB_MAX_LIMIT})`,
         }),
       ),
-      offset: Type.Optional(
-        Type.Number({
+      offset: opt(
+        num({
           description: "Number of matching files to skip (to continue a truncated result)",
         }),
       ),
@@ -483,10 +475,10 @@ export function createWorkspaceTools(
   });
 
   const bash = createBashTool();
-  const bashParameters = Type.Object({
-    command: Type.String({ description: "Bash command to execute" }),
-    timeout: Type.Optional(
-      Type.Number({
+  const bashParameters = obj({
+    command: str({ description: "Bash command to execute" }),
+    timeout: opt(
+      num({
         description: `Timeout in seconds (default ${DEFAULT_BASH_TIMEOUT_SECONDS}); raise it for builds, installs, and test runs`,
       }),
     ),

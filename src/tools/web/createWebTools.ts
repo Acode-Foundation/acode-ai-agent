@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { arr, bool, num, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -26,21 +26,13 @@ export function createWebTools(ctx: WebSearchContext): ToolRegistration[] {
     description:
       "Search the live web for current documentation, APIs, package versions, news, and citations. " +
       "Uses the model host's search when it has one, otherwise the device browser. Use fetch_content to read a specific page.",
-    parameters: Type.Object({
-      query: Type.Optional(Type.String({ description: "Search query" })),
-      queries: Type.Optional(
-        Type.Array(Type.String(), { description: "Batch of queries, run in order" }),
-      ),
-      num_results: Type.Optional(
-        Type.Number({ description: "Results per query, 1-10, default 5" }),
-      ),
-      recency: Type.Optional(Type.String({ description: "day | week | month | year" })),
-      domains: Type.Optional(
-        Type.Array(Type.String(), { description: "Limit to domains; prefix with - to exclude" }),
-      ),
-      include_content: Type.Optional(
-        Type.Boolean({ description: "Fetch short excerpts from the top sources" }),
-      ),
+    parameters: obj({
+      query: opt(str({ description: "Search query" })),
+      queries: opt(arr(str(), { description: "Batch of queries, run in order" })),
+      num_results: opt(num({ description: "Results per query, 1-10, default 5" })),
+      recency: opt(str({ description: "day | week | month | year" })),
+      domains: opt(arr(str(), { description: "Limit to domains; prefix with - to exclude" })),
+      include_content: opt(bool({ description: "Fetch short excerpts from the top sources" })),
     }),
     executionMode: "parallel",
     replay: "safe",
@@ -93,9 +85,9 @@ export function createWebTools(ctx: WebSearchContext): ToolRegistration[] {
     description:
       "Fetch a public http(s) URL as readable markdown. GitHub blob URLs are rewritten to raw file contents. " +
       "Uses the device browser when the direct fetch is blocked or too thin.",
-    parameters: Type.Object({
-      url: Type.Optional(Type.String({ description: "Page URL" })),
-      urls: Type.Optional(Type.Array(Type.String(), { description: "Multiple URLs" })),
+    parameters: obj({
+      url: opt(str({ description: "Page URL" })),
+      urls: opt(arr(str(), { description: "Multiple URLs" })),
     }),
     executionMode: "parallel",
     replay: "safe",

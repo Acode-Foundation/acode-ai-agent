@@ -1,9 +1,10 @@
-import type { Context, JsonValue } from "@earendil-works/chord";
-import { withAbortSignal } from "@earendil-works/chord/context";
+import { type Context, withAbortSignal } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import type { CodemodeTool } from "@earendil-works/pi-codemode";
 import { renderToolSample, toCodemodeIdentifier } from "@earendil-works/pi-codemode/declarations";
 import { CodemodeSourceError, parseCodemodeSource } from "@earendil-works/pi-codemode/source";
-import { Type, validateToolArguments, type Usage } from "@earendil-works/pi-ai";
+import { validateToolArguments, type Usage } from "@earendil-works/pi-ai";
+import { obj, str } from "@earendil-works/pi-schema";
 import {
   defineDoc,
   defineTool,
@@ -134,8 +135,8 @@ export function createCodemodeTool(options: CodemodeToolOptions): ToolRegistrati
   return defineTool({
     name: CODEMODE_TOOL_NAME,
     description: codemodeDescription(callable),
-    parameters: Type.Object({
-      code: Type.String({
+    parameters: obj({
+      code: str({
         description:
           "Raw JavaScript source (not JSON, no code fence), run as an async function body.",
       }),

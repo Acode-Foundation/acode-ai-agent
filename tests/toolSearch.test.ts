@@ -1,6 +1,6 @@
-import { Type } from "@earendil-works/pi-ai";
 import { AgentDoc, defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { obj, str } from "@earendil-works/pi-schema";
 import { describe, expect, test } from "vitest";
 import { preamble } from "../src/context/contextBuilder";
 import {
@@ -15,7 +15,7 @@ function tool(name: string, description: string): ToolRegistration {
   return defineTool({
     name,
     description,
-    parameters: Type.Object({ path: Type.String({ description: "Workspace path" }) }),
+    parameters: obj({ path: str({ description: "Workspace path" }) }),
     execute: async () => ({}),
   });
 }

@@ -1,5 +1,6 @@
-import type { Context } from "@earendil-works/chord";
-import { Type, type AssistantMessage, type Message } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import type { AssistantMessage, Message } from "@earendil-works/pi-ai";
+import { obj, oneOf, opt, str } from "@earendil-works/pi-schema";
 import {
   AssistantEntry,
   configure,
@@ -106,10 +107,10 @@ export function createSubagentTool(tools: () => readonly ToolRegistration[]): To
       "find every caller; use agent=general for a separable change. Write a complete task: the child sees none of " +
       "this conversation. Several subagent calls in one turn run in parallel. Subagents cannot ask the user, keep " +
       "the task list, or start subagents; their edits still need the user's approval.",
-    parameters: Type.Object({
-      task: Type.String({ description: "Complete instructions; the subagent sees nothing else" }),
-      agent: Type.Optional(
-        Type.Union([Type.Literal("explore"), Type.Literal("general")], {
+    parameters: obj({
+      task: str({ description: "Complete instructions; the subagent sees nothing else" }),
+      agent: opt(
+        oneOf(["explore", "general"], {
           description: "explore: read-only research (default). general: may edit and run commands.",
         }),
       ),

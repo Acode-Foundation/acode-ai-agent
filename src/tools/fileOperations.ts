@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { bool, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -26,9 +26,9 @@ export function createFileOperationTools(workspace: AcodeWorkspace): ToolRegistr
       "Move or rename a file or folder. `destination` is the full new workspace-relative path, " +
       "not the folder to move into (src/a.ts → lib/a.ts). Missing parent folders are created. " +
       "Fails if the destination exists. Editor tabs follow the move; update imports and references yourself.",
-    parameters: Type.Object({
-      source: Type.String({ description: "Workspace-relative file or folder to move" }),
-      destination: Type.String({ description: "Full workspace-relative path after the move" }),
+    parameters: obj({
+      source: str({ description: "Workspace-relative file or folder to move" }),
+      destination: str({ description: "Full workspace-relative path after the move" }),
     }),
     executionMode: "sequential",
     execute: async (params, _api, context) => {
@@ -53,9 +53,9 @@ export function createFileOperationTools(workspace: AcodeWorkspace): ToolRegistr
     description:
       "Rename a file or folder in place. `new_name` is a name, not a path; use move_path to change folders. " +
       "Fails if the name is taken. Editor tabs follow the rename.",
-    parameters: Type.Object({
-      path: Type.String({ description: "Workspace-relative file or folder to rename" }),
-      new_name: Type.String({ description: "New file or folder name, e.g. index.ts" }),
+    parameters: obj({
+      path: str({ description: "Workspace-relative file or folder to rename" }),
+      new_name: str({ description: "New file or folder name, e.g. index.ts" }),
     }),
     executionMode: "sequential",
     execute: async (params, _api, context) => {
@@ -86,9 +86,9 @@ export function createFileOperationTools(workspace: AcodeWorkspace): ToolRegistr
     description:
       "Copy a file or folder (recursively) to a new path. `destination` is the full workspace-relative path of the copy. " +
       "Binary files are copied as-is; files open in the editor are copied from their buffer. Fails if the destination exists.",
-    parameters: Type.Object({
-      source: Type.String({ description: "Workspace-relative file or folder to copy" }),
-      destination: Type.String({ description: "Full workspace-relative path of the copy" }),
+    parameters: obj({
+      source: str({ description: "Workspace-relative file or folder to copy" }),
+      destination: str({ description: "Full workspace-relative path of the copy" }),
     }),
     executionMode: "sequential",
     execute: async (params, _api, context) => {
@@ -116,10 +116,10 @@ export function createFileOperationTools(workspace: AcodeWorkspace): ToolRegistr
     description:
       "Permanently delete a file or folder; there is no trash or undo. A folder that is not empty needs recursive: true. " +
       "Asks the user for approval even in Allow edits mode.",
-    parameters: Type.Object({
-      path: Type.String({ description: "Workspace-relative file or folder to delete" }),
-      recursive: Type.Optional(
-        Type.Boolean({
+    parameters: obj({
+      path: str({ description: "Workspace-relative file or folder to delete" }),
+      recursive: opt(
+        bool({
           default: false,
           description: "Delete a non-empty folder and everything inside it",
         }),
@@ -149,8 +149,8 @@ export function createFileOperationTools(workspace: AcodeWorkspace): ToolRegistr
     name: "create_directory",
     description:
       "Create a folder and any missing parents. Only needed for empty folders; write creates parent folders itself.",
-    parameters: Type.Object({
-      path: Type.String({ description: "Workspace-relative folder to create" }),
+    parameters: obj({
+      path: str({ description: "Workspace-relative folder to create" }),
     }),
     executionMode: "sequential",
     execute: async (params) => {

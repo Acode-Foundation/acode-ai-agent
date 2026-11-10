@@ -1,6 +1,6 @@
-import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolRegistration } from "@earendil-works/pi-durable";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import { obj, str } from "@earendil-works/pi-schema";
 import { describe, expect, it, vi } from "vitest";
 import { createCodemodeTool } from "../src/codemode/createCodemodeTool";
 import { MutationGate } from "../src/permissions/mutationGate";
@@ -129,7 +129,7 @@ function fakeTool(name: string, run: (args: Record<string, unknown>) => string):
   return defineTool({
     name,
     description: `${name} tool`,
-    parameters: Type.Object({ path: Type.String() }),
+    parameters: obj({ path: str() }),
     execute: async (args, api) => {
       // Streamed output stands in for content, like Pi's own tools.
       api.output(run(args));
@@ -294,7 +294,7 @@ describe("codemode tool", () => {
     const save = defineTool({
       name: "write",
       description: "write",
-      parameters: Type.Object({ path: Type.String(), content: Type.String() }),
+      parameters: obj({ path: str(), content: str() }),
       execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
     });
     const { run } = codemodeHarness({ tools: [save] });

@@ -1,5 +1,6 @@
-import type { Context } from "@earendil-works/chord";
-import { Type, type AssistantMessage, type Usage } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/chord/context";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import { int, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   ROOT_CONVERSATION_ID,
@@ -68,12 +69,10 @@ export function createSessionTools(store: ChatStore, currentId: string): ToolReg
       "List chats as JSON, newest first, with ids for read_session. `query` matches the title, the workspace " +
       `name, and the prompt and reply text of the ${SEARCH_CHATS} newest chats; text matches carry a snippet. ` +
       "Page with offset=nextOffset.",
-    parameters: Type.Object({
-      query: Type.Optional(Type.String({ description: "Text to find" })),
-      offset: Type.Optional(Type.Integer({ minimum: 0, description: "Results to skip" })),
-      limit: Type.Optional(
-        Type.Integer({ minimum: 1, maximum: 100, description: `Default ${DEFAULT_LIST_LIMIT}` }),
-      ),
+    parameters: obj({
+      query: opt(str({ description: "Text to find" })),
+      offset: opt(int({ minimum: 0, description: "Results to skip" })),
+      limit: opt(int({ minimum: 1, maximum: 100, description: `Default ${DEFAULT_LIST_LIMIT}` })),
     }),
     executionMode: "parallel",
     replay: "safe",
@@ -133,17 +132,13 @@ export function createSessionTools(store: ChatStore, currentId: string): ToolReg
       "usage totals by model and tool, and its turns: prompt and reply cut short, models, tools used, status, " +
       "usage; page with offset=nextOffset. With `turn`: that turn in full, in order: the prompt, each reply, and " +
       "each tool call with its arguments and result, each item cut at maxChars. Omit id for this chat.",
-    parameters: Type.Object({
-      id: Type.Optional(Type.String({ description: "Chat id from list_sessions" })),
-      turn: Type.Optional(Type.Integer({ minimum: 1, description: "Turn number to read in full" })),
-      offset: Type.Optional(
-        Type.Integer({ minimum: 1, description: "First turn to list. Default: the last turns" }),
-      ),
-      limit: Type.Optional(
-        Type.Integer({ minimum: 0, maximum: 100, description: `Default ${DEFAULT_TURN_LIMIT}` }),
-      ),
-      maxChars: Type.Optional(
-        Type.Integer({
+    parameters: obj({
+      id: opt(str({ description: "Chat id from list_sessions" })),
+      turn: opt(int({ minimum: 1, description: "Turn number to read in full" })),
+      offset: opt(int({ minimum: 1, description: "First turn to list. Default: the last turns" })),
+      limit: opt(int({ minimum: 0, maximum: 100, description: `Default ${DEFAULT_TURN_LIMIT}` })),
+      maxChars: opt(
+        int({
           minimum: 100,
           maximum: MAX_ITEM_CHARS,
           description: `Characters per item when reading a turn. Default ${DEFAULT_ITEM_CHARS}`,

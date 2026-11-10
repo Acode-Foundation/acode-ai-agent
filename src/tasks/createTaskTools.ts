@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { arr, obj, opt, str } from "@earendil-works/pi-schema";
 import {
   defineTool,
   type ToolExecutionResult,
@@ -18,28 +18,26 @@ export function createTaskTools(list: TaskList): ToolRegistration[] {
   const todoWrite = defineTool({
     name: TASK_TOOL_NAME,
     description: DESCRIPTION,
-    parameters: Type.Object({
-      todos: Type.Array(
-        Type.Object({
-          id: Type.Optional(
-            Type.String({
+    parameters: obj({
+      todos: arr(
+        obj({
+          id: opt(
+            str({
               description: "Existing task id from a previous todo_write result. Omit to create.",
             }),
           ),
-          content: Type.String({ description: "Short imperative title" }),
-          activeForm: Type.Optional(
-            Type.String({
+          content: str({ description: "Short imperative title" }),
+          activeForm: opt(
+            str({
               description: "Present continuous status shown while in_progress, e.g. Running tests",
             }),
           ),
-          status: Type.Optional(
-            Type.String({
+          status: opt(
+            str({
               description: "pending, in_progress, completed, or skipped. Defaults to pending.",
             }),
           ),
-          blockedBy: Type.Optional(
-            Type.Array(Type.String(), { description: "Task ids that must finish first" }),
-          ),
+          blockedBy: opt(arr(str(), { description: "Task ids that must finish first" })),
         }),
         { maxItems: MAX_TASKS, description: "The complete task list after this update" },
       ),

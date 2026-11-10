@@ -1,12 +1,8 @@
-import type { AttachedReplicatedState, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import {
-  Type,
-  type AssistantMessage,
-  type ImageContent,
-  type Message,
-} from "@earendil-works/pi-ai";
+import type { JsonValue } from "@earendil-works/chord/json";
+import type { AssistantMessage, ImageContent, Message } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import { diffLines } from "diff";
 import {
   createRegistry,
@@ -20,7 +16,6 @@ import {
   UserEntry,
   type Conversation,
   type ConversationId,
-  type ConversationView,
   type EntryDraft,
   type EntryId,
   type HarnessSettings,
@@ -88,6 +83,7 @@ import {
 } from "../tools/toolSearch";
 import { WorkspaceExecutionEnv } from "../tools/workspaceEnv";
 import type { AcodeWorkspace } from "../workspace/acodeWorkspace";
+import { ConversationFeed, type FeedValue } from "./conversationFeed";
 import type { ChatMeta, ChatStore } from "./chatStore";
 import {
   appendHistory,
@@ -174,8 +170,10 @@ export class AgentSession {
   #registry: Registry = createRegistry();
   #harness?: Harness;
   #conversation?: Conversation;
-  #view?: AttachedReplicatedState<ConversationView>;
-  #unsubscribeView?: () => void;
+  #view?: ConversationFeed;
+  /** Token estimate of the active context the model sees, refreshed as entries land. */
+  #contextTokens = 0;
+  #contextTokensFor?: EntryId;
   #resources: WorkspaceResources = { skills: [], promptTemplates: [], skillRoots: [] };
   #tasks = new TaskList();
   #cadence = createCadenceState();
@@ -199,10 +197,7 @@ export class AgentSession {
   /** Usage of every conversation in the chat, subagents included. */
   #chatUsage?: { tokens: number; cost: number };
   /** Live views of running subagents, for their progress line under the call. */
-  #children = new Map<
-    number,
-    { view: AttachedReplicatedState<ConversationView>; dispose: () => void }
-  >();
+  #children = new Map<number, ConversationFeed | undefined>();
   #persistTasks: Promise<void> = Promise.resolve();
   #snapshot: AgentSessionSnapshot = {
     messages: [],
@@ -669,9 +664,9 @@ export class AgentSession {
 
   async dispose(): Promise<void> {
     this.questionGate.cancel();
-    this.#unsubscribeView?.();
     this.#view?.dispose();
-    for (const child of this.#children.values()) child.dispose();
+    this.#view = undefined;
+    for (const child of this.#children.values()) child?.dispose();
     this.#children.clear();
     for (const unsubscribe of this.#unsubscribers.splice(0)) unsubscribe();
     this.mutationGate.dispose();
@@ -686,18 +681,40 @@ export class AgentSession {
   }
 
   async #activate(conversation: Conversation): Promise<void> {
-    this.#unsubscribeView?.();
     this.#view?.dispose();
+    this.#view = undefined;
+    this.#contextTokensFor = undefined;
     this.#conversation = conversation;
     if (this.#meta.conversationId !== conversation.id)
       await this.#saveMeta({ conversationId: conversation.id }, false);
     // A branch made from /tree runs on the chat's model, not the one it was forked with.
     await this.#configure(conversation);
     await Promise.all([this.#loadTasks(), this.#refreshEdits(), this.#refreshUsage()]);
-    const view = await conversation.viewState(context);
+    const view = await ConversationFeed.open(conversation, context, {
+      history: true,
+      onChange: () => {
+        if (this.#view === view) this.#publish();
+      },
+    });
+    if (this.#conversation !== conversation) return view.dispose();
     this.#view = view;
-    this.#unsubscribeView = view.subscribe(() => this.#publish());
     this.#publish();
+  }
+
+  /** Re-estimate the active context once a new entry lands; compaction can shrink it. */
+  #refreshContextTokens(): void {
+    const conversation = this.#conversation;
+    const newest = this.#view?.value.entries.at(-1)?.id;
+    if (!conversation || newest === this.#contextTokensFor) return;
+    this.#contextTokensFor = newest;
+    void conversation.context(context).then(
+      (view) => {
+        if (this.#conversation !== conversation || this.#contextTokensFor !== newest) return;
+        this.#contextTokens = estimateContextTokens(view.messages as Message[]).tokens;
+        this.#publish();
+      },
+      () => undefined,
+    );
   }
 
   async #branchAt(owner: Conversation, entryId: EntryId): Promise<Conversation> {
@@ -917,10 +934,10 @@ export class AgentSession {
       name: "load_skill",
       description:
         "Load an already-discovered project or global skill, or one of its relative reference files. Do not search the workspace for SKILL.md first; global skills are outside the workspace sandbox.",
-      parameters: Type.Object({
-        name: Type.String({ description: "Skill name from available_skills" }),
-        path: Type.Optional(
-          Type.String({
+      parameters: obj({
+        name: str({ description: "Skill name from available_skills" }),
+        path: opt(
+          str({
             description:
               "Optional file path relative to the skill folder, such as references/api.md",
           }),
@@ -957,6 +974,7 @@ export class AgentSession {
     const usage = view?.docs["pi.usage"] as unknown as UsageState | undefined;
     const entries = view?.entries ?? [];
     const messages = transcriptFromEntries(entries, this.#stopped);
+    this.#refreshContextTokens();
     // Interrupted work stays in pi.live, but nothing runs until the user resumes it.
     const paused = Boolean(this.#recovery);
     const running = Boolean(live?.run) && !paused;
@@ -980,9 +998,7 @@ export class AgentSession {
       isRunning: running || (!paused && Boolean(live?.compactions?.some((item) => item.blocking))),
       compacting,
       usage: this.#chatUsage ?? totalUsage(usage),
-      contextTokens: estimateContextTokens(
-        entries.flatMap((entry) => entry.model ?? []) as Message[],
-      ).tokens,
+      contextTokens: this.#contextTokens,
       commands: resourceSlashCommands(this.#resources, settings),
       tasks: this.#tasks.list(),
       edits: this.#editSummary,
@@ -1032,7 +1048,7 @@ export class AgentSession {
         slot.name === SUBAGENT_TOOL_NAME && isSubagentDetails(slot.details)
           ? this.#children.get(slot.details.conversationId)
           : undefined;
-      const summary = child?.view ? childProgress(child.view.value) : slot.output?.slice(-300);
+      const summary = child ? childProgress(child.value) : slot.output?.slice(-300);
       const failed = slot.diagnostics?.some((item) => item.severity === "error");
       return {
         id: slot.callId,
@@ -1058,27 +1074,23 @@ export class AgentSession {
       const id = slot.details.conversationId;
       running.add(id);
       if (this.#children.has(id)) continue;
-      const placeholder = { view: undefined as never, dispose: () => undefined };
-      this.#children.set(id, placeholder);
+      // Reserve the slot while the watch opens; it starts with the child, so its window holds every step.
+      this.#children.set(id, undefined);
       void (async () => {
         const conversation = await this.#harness?.conversation(id as ConversationId, context);
-        const view = await conversation?.viewState(context);
-        if (!view) return;
-        if (this.#children.get(id) !== placeholder) return view.dispose();
-        const unsubscribe = view.subscribe(() => this.#publish());
-        this.#children.set(id, {
-          view,
-          dispose: () => {
-            unsubscribe();
-            view.dispose();
-          },
+        if (!conversation) return;
+        const feed = await ConversationFeed.open(conversation, context, {
+          history: false,
+          onChange: () => this.#publish(),
         });
+        if (!this.#children.has(id) || this.#children.get(id)) return feed.dispose();
+        this.#children.set(id, feed);
         this.#publish();
       })().catch(() => this.#children.delete(id));
     }
     for (const [id, child] of this.#children) {
       if (running.has(id)) continue;
-      child.dispose();
+      child?.dispose();
       this.#children.delete(id);
     }
   }
@@ -1363,7 +1375,7 @@ function lineCounts(
 }
 
 /** One line on what a running subagent is doing, from its live conversation view. */
-function childProgress(view: ConversationView | undefined): string | undefined {
+function childProgress(view: FeedValue | undefined): string | undefined {
   if (!view) return undefined;
   const live = view.docs["pi.live"] as unknown as LiveState | undefined;
   const steps = view.entries.filter((entry) => entry.kind === "pi.tool-result").length;
@@ -1379,7 +1391,7 @@ function childProgress(view: ConversationView | undefined): string | undefined {
   return steps ? `${doing} · ${steps} step${steps === 1 ? "" : "s"} done` : doing;
 }
 
-function toolCallArgs(view: ConversationView, callId: string): Record<string, unknown> | undefined {
+function toolCallArgs(view: FeedValue, callId: string): Record<string, unknown> | undefined {
   for (let index = view.entries.length - 1; index >= 0; index -= 1) {
     for (const message of view.entries[index]?.model ?? []) {
       if (message.role !== "assistant") continue;
