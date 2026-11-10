@@ -1,3 +1,13 @@
+# 0.5.0
+
+- Added: Retry and Sign in on failed runs.
+- Added: tool rounds per run limit.
+- Added: Auto-compact per chat.
+- Added: Show earlier messages.
+- Changed: Pi 1.5.2.
+- Fixed: context meter counting compacted messages.
+- Fixed: duplicate error notice.
+
 # 0.4.1
 
 - Fixed: "Tool … is not available" when the agent goes from finding a setting or command to changing or running it. Related Acode tools now load together.
