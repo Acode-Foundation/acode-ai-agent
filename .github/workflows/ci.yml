@@ -13,6 +13,17 @@ permissions:
   contents: read
 
 jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
   format:
     runs-on: ubuntu-latest
     steps:
@@ -25,7 +36,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run fmt:check
 
-  typecheck:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,7 +46,16 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
+      - run: bun run build
+        env:
+          ELO_PUBLISHER_ID: ci-publisher
+          ELO_AD_UNIT_ID: ci-android
+      - name: Check packaged SDK attribution and environment files
+        run: |
+          for file in LICENSE NOTICE; do
+            unzip -p plugin.zip "licenses/elo/$file" | cmp - "node_modules/@elo-ads/web-sdk/$file"
+          done
+          if unzip -Z1 plugin.zip | grep -Eq '(^|/)\.env($|\.)'; then exit 1; fi
 
   test:
     runs-on: ubuntu-latest

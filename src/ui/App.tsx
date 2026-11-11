@@ -63,6 +63,9 @@ import { showToast } from "../platform/toast";
 import { useProviderCredential } from "./useProviderCredential";
 import { CHATGPT_USAGE_URL, type ChatGPTRegistration } from "../providers/chatgptOAuth";
 import { AgentIcon } from "./AgentIcon";
+import { useSponsor } from "./useSponsor";
+import { SponsoredCard } from "./SponsoredCard";
+import { SponsorSettings } from "./SponsorSettings";
 
 type Props = {
   controller: AgentController;
@@ -154,6 +157,25 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     entryId: string;
     saved: ComposerDraft;
   }>();
+  const sponsor = useSponsor(
+    shellRef,
+    state.activeChatId,
+    running,
+    turns.at(-1),
+    Boolean(
+      settingsOpen ||
+      piSettingsOpen ||
+      configView ||
+      chatsOpen ||
+      commandPanel ||
+      treeMode ||
+      preview ||
+      tasksOpen ||
+      state.approval ||
+      state.questionnaire ||
+      editing,
+    ),
+  );
   useEffect(() => setEditing(undefined), [state.activeChatId]);
 
   const send = useCallback(
@@ -626,6 +648,9 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
                 {turn.stopped && !turn.work.length && <div class="turn-stopped">Stopped</div>}
                 {turn.streaming && (
                   <WorkingIndicator startedAt={turn.startedAt} label={workingLabel} />
+                )}
+                {sponsor.placement?.turnId === turn.id && (
+                  <SponsoredCard placement={sponsor.placement} session={sponsor.session} />
                 )}
               </section>
             ))}
@@ -1434,6 +1459,7 @@ function SettingsSheet({
                 }
               />
             </label>
+            <SponsorSettings />
             <button
               class="config-nav"
               type="button"
@@ -2232,7 +2258,8 @@ function EndpointForm({
       </p>
       {loopback && (
         <p class="endpoint-warn">
-          localhost on Android is this phone, not your computer. Use the computer's LAN IP instead.
+          For a server running on your computer, use the computer's LAN IP address instead of
+          localhost.
         </p>
       )}
       <label class="field-label">

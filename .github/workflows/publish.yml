@@ -38,7 +38,17 @@ jobs:
 
       - run: bun install --frozen-lockfile
       - run: bun run test
-      - run: bun run build # typechecks and writes plugin.zip
+      - name: Build the release plugin
+        env:
+          ELO_PUBLISHER_ID: ${{ vars.ELO_PUBLISHER_ID }}
+          ELO_AD_UNIT_ID: ${{ vars.ELO_AD_UNIT_ID }}
+          ELO_IOS_AD_UNIT_ID: ${{ vars.ELO_IOS_AD_UNIT_ID }}
+        run: |
+          if [[ -z "${ELO_PUBLISHER_ID//[[:space:]]/}" || -z "${ELO_AD_UNIT_ID//[[:space:]]/}" ]]; then
+            echo "::error::Configure the public Android Elo identifiers for the acode-store release."
+            exit 1
+          fi
+          bun run build
 
       - id: publish
         uses: Acode-Foundation/publish-plugin@v1

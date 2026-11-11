@@ -368,7 +368,7 @@ function probeError(baseUrl: string, status: number, detail: string): string {
   const snippet = detail.replace(/\s+/g, " ").trim().slice(0, 160);
   const suffix = snippet ? `: ${snippet}` : ".";
   if (isLoopbackUrl(baseUrl)) {
-    return `GET ${baseUrl}/models returned HTTP ${status}${suffix} On Android, localhost is this phone — use your computer's LAN IP for llama.cpp, vLLM, LM Studio, or Ollama.`;
+    return `GET ${baseUrl}/models returned HTTP ${status}${suffix} If the model server runs on your computer, use its LAN IP address instead of localhost.`;
   }
   return `GET ${baseUrl}/models returned HTTP ${status}${suffix}`;
 }

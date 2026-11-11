@@ -2,12 +2,12 @@
 
 A coding agent for [Acode](https://acode.app). It opens as an editor tab, reads and edits your project, searches the web, and runs shell commands on Terminal-backed folders. You connect your own model provider.
 
-The agent core comes from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-durable` and `@earendil-works/pi-ai` 1.0.4): providers, durable sessions, compaction, queues, retries, and the `read`, `write`, `edit` and `bash` tools. This plugin adds the Acode side: the editor UI, the workspace sandbox, approvals, and everything needed to run in an Android WebView without Node.
+The agent core comes from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-durable` and `@earendil-works/pi-ai` 1.5.2): providers, durable sessions, compaction, queues, retries, and the `read`, `write`, `edit` and `bash` tools. This plugin adds the Acode side: the editor UI, the workspace sandbox, approvals, and everything needed to run in Acode’s WebView without Node.
 
 If you use Pi on a desktop, most of it carries over:
 
 - Providers, models, thinking levels, API-key and device-code login
-- Durable runs. Each model turn and tool call is saved before it is shown, so a run that Android interrupts can resume.
+- Durable runs. Each model turn and tool call is saved before it is shown, so an interrupted run can resume.
 - Branches, compaction, steer and follow-up queues, fork, clone, `/tree`
 - Skills and prompt templates (`.pi/skills`, `.agents/skills`, `/skill:name`, `load_skill`)
 - Project instructions from `AGENTS.md` or `CLAUDE.md`
@@ -88,7 +88,7 @@ Sessions are stored per project. The sidebar lists and searches them and can ope
 - **"Open a folder first"**: open a project folder in Acode's sidebar.
 - **Empty or failed response**: try another model or a lower thinking level.
 - **No `bash` tool**: commands only run on Acode Terminal folders. Elsewhere the agent can edit files but not run them.
-- **"Run interrupted"**: Android stopped the app mid-run. **Resume** continues from the last saved step; **Discard** drops it.
+- **"Run interrupted"**: The app stopped mid-run. **Resume** continues from the last saved step; **Discard** drops it.
 
 ## Providers
 
@@ -108,7 +108,7 @@ Add credentials under **Provider access**. Keys and tokens are kept in Acode's p
 | Kimi Code      | Kimi Code             |
 
 - **OpenRouter** opens a custom tab and connects when you approve. No code to paste.
-- **ChatGPT** uses OpenAI's official Sign in with ChatGPT integration. Tap **Continue with ChatGPT**, approve plan usage, then tap **Return to Acode** if needed. On Android, use Chrome for browser sign-in. One ChatGPT account is saved at a time. **Disconnect** signs out; **Remove account** then forgets the saved account so you can connect another. Reconnecting uses the saved registration directly. Use **Manage usage** to review access and limits in ChatGPT. Requests use the public Responses API and your ChatGPT plan allowance.
+- **ChatGPT** uses OpenAI's official Sign in with ChatGPT integration. Tap **Continue with ChatGPT**, approve plan usage, then tap **Return to Acode** if needed. One ChatGPT account is saved at a time. **Disconnect** signs out; **Remove account** then forgets the saved account so you can connect another. Reconnecting uses the saved registration directly. Use **Manage usage** to review access and limits in ChatGPT. Requests use the public Responses API and your ChatGPT plan allowance.
 - **Codex, xAI and Kimi Code** use device codes: tap **Copy code & sign in**, paste the code on the provider's page and approve. For Codex, first enable device-code authorization in ChatGPT under Settings → Security.
 - **GitHub Copilot** uses github.com by default. **Other sign-in options** accepts an Enterprise domain.
 
@@ -277,7 +277,15 @@ Folder walks on remote storage are sequential and capped (200 files by default, 
 - Credentials use Acode's plugin secret storage. On hosts without it, they stay in memory only.
 - Chats live in the WebView's IndexedDB, one Pi session per chat. Deleting a chat deletes its data. Keys and tokens are redacted before anything is saved.
 - `fetch_content` refuses localhost, private networks and URLs with embedded credentials.
-- A run keeps going when the app is in the background. If Android kills the app, the chat offers to resume from the last saved step.
+- If the operating system interrupts a run, the chat offers to resume from the last saved step.
+
+### Sponsored suggestions
+
+Configured builds can show an occasional **Sponsored · Elo** card to users without Acode Pro, after they allow sponsored suggestions. Turn this off in **⋯ → Sponsored suggestions**. Provider subscriptions and API keys do not determine Acode Pro status.
+
+The ad request contains only a predefined task category (for example, “Web development”), never the chat transcript, source code, attachments, tool output, or account details. Elo also receives device/network information and an anonymous advertising identifier. Ads stay outside model context and saved chats. A missing ad or failed network request leaves chat working normally.
+
+An opportunity is considered after three completed requests, with at least five minutes between attempts within the running plugin. Restored history, failed or stopped runs, and background work do not request ads.
 
 ## Extension API
 
@@ -316,11 +324,21 @@ npm test
 npm run build
 ```
 
-`npm run build` typechecks, bundles for Chrome 90 WebView, rejects Node imports, enforces a 2.5 MB limit on `dist/main.js`, and writes `plugin.zip`.
+`npm run build` typechecks, bundles for Chrome 90 WebView, rejects Node imports, enforces a 2.7 MB limit on `dist/main.js`, and writes `plugin.zip`.
 
 `npm run dev` serves on port 3000 and rebuilds on change for plugin reload.
 
 The code must stay WebView-compatible: no Node built-ins, child processes, IPC or process `cwd`.
+
+For Elo, copy `.env.example` to the ignored `.env.local` and supply the publisher and Android ad-unit IDs, or set them in the build environment. The iOS ad unit is separate; leave it empty until its App Store property is ready. These are public SDK identifiers. Never ship Elo's server API key. Builds without IDs make no ad requests. The plugin uses Elo’s React-free core. The pinned SDK runs in Acode’s WebView with access to its bridge, DOM and storage. Review changes to its networking, identifier storage and tracking before updating it.
+
+For store releases, configure the same public IDs as GitHub Actions variables in the `acode-store` environment. The publish build requires the Android pair. The iOS ID stays optional while the listing is pending.
+
+Before releasing, obtain Elo property approval, enable the placement in the dashboard, authorize the seller in the store-listed developer domain's `app-ads.txt`, and update the app's advertising/privacy disclosures. Confirm Elo's support for WebView app inventory and category-only context. The Web SDK reads web IAB consent signals; native CMP consent is not automatically bridged into WebView storage, so required regional/vendor consent needs validation before rollout. The plugin checks the WebView’s GDPR applicability and TCF signals before SDK initialization. An absent applicability signal does not establish the user’s jurisdiction. Validate the CMP flow, child-directed settings, and store disclosures with the privacy owner before enabling live inventory.
+
+Verify on a physical device with an Elo-approved test placement: the health and ad requests from Acode’s origin, image loading, identifier persistence and removal, render/impression/tap delivery, and opening and returning from the native browser. Record the WebView version and use test inventory for tracking checks.
+
+Focused checks: `npx vitest run tests/sponsors.test.ts tests/elo.test.ts tests/sponsorUi.test.ts`. Live ad fill, device behavior, and publisher onboarding remain separate release checks.
 
 ## License
 

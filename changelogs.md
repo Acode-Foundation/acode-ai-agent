@@ -1,3 +1,7 @@
+# 0.6.0
+
+- Added opt-in sponsored suggestions for free Acode users. Only a broad task category is shared from the chat. Turn suggestions off in the AI settings.
+
 # 0.5.0
 
 - Added: Retry and Sign in on failed runs.

@@ -12,6 +12,8 @@
         "@earendil-works/pi-ai": "1.5.2",
         "@earendil-works/pi-codemode": "1.5.2",
         "@earendil-works/pi-durable": "1.5.2",
+        "@earendil-works/pi-schema": "1.5.2",
+        "@elo-ads/web-sdk": "0.8.0",
         "acode-plugin-types": "^1.12.9",
         "diff": "8.0.4",
         "dompurify": "^3.4.17",
@@ -107,6 +109,8 @@
     "@earendil-works/pi-schema": ["@earendil-works/pi-schema@1.5.2", "", {}, "sha512-hJoyCXWUhsSrXY5wJo2Q4kHXUsR51pNhkJHAMkWRwVMLDRtMDPkKNaa+JlVRVqTw1hjdSxcVVaFLSDbKlaTXEQ=="],
 
     "@earendil-works/pi-telemetry": ["@earendil-works/pi-telemetry@1.5.2", "", {}, "sha512-m+cumjIqNh1aMISi/9ttcG3ZOwIdriPbz/eMyWmRMJCGa/WcgY1RX4lrb7HvsHhSfI/JUeBESA4nOCr8C3y5ow=="],
+
+    "@elo-ads/web-sdk": ["@elo-ads/web-sdk@0.8.0", "", { "peerDependencies": { "react": "^18.0.0 || ^19.0.0", "react-dom": "^18.0.0 || ^19.0.0" }, "optionalPeers": ["react", "react-dom"] }, "sha512-WIca4gWff9IS/mUQjoroAJhJ5ZQ9uFD4GNdZQ8iSSgj9k54HV7DMbOLhgSghkfyggA2qclXPlAumuRAIiEShXA=="],
 
     "@esbuild/aix-ppc64": ["@esbuild/aix-ppc64@0.28.2", "", { "os": "aix", "cpu": "ppc64" }, "sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ=="],
 
