@@ -2,11 +2,24 @@ import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { loadSponsor, sponsorsConfigured } from "../ads/elo";
 import { isFreeAcode, sponsorConsent, sponsorPreferencesChanged } from "../ads/preferences";
-import { SponsorBudget, SponsorSession, type SponsorPlacement } from "../ads/session";
+import { type SponsorBudget, SponsorSession, type SponsorPlacement } from "../ads/session";
+import { useSponsorOptInAvailable } from "./useSponsorOptInAvailable";
 import type { ChatTurn } from "./transcript";
 
-// Shared across editor tabs: opening another chat must not reset the frequency cap.
-const budget = new SponsorBudget();
+// The dock is clipped by the editor shell and can also extend outside the visible WebView.
+function halfVisible(card: HTMLElement, shell: Element): boolean {
+  const rect = card.getBoundingClientRect();
+  if (!rect.width || !rect.height) return false;
+  const clip = shell.getBoundingClientRect();
+  const viewport = window.visualViewport;
+  const left = viewport?.offsetLeft ?? 0;
+  const top = viewport?.offsetTop ?? 0;
+  const right = left + (viewport?.width ?? window.innerWidth);
+  const bottom = top + (viewport?.height ?? window.innerHeight);
+  const width = Math.min(rect.right, clip.right, right) - Math.max(rect.left, clip.left, left);
+  const height = Math.min(rect.bottom, clip.bottom, bottom) - Math.max(rect.top, clip.top, top);
+  return width > 0 && height > 0 && width * height >= rect.width * rect.height * 0.5;
+}
 
 export function useSponsor(
   root: RefObject<HTMLElement>,
@@ -15,10 +28,13 @@ export function useSponsor(
   turn: ChatTurn | undefined,
   obscured: boolean,
   isTabActive: () => boolean,
+  budget: SponsorBudget,
 ) {
+  const optInRef = useRef<HTMLElement>(null);
   const [placement, setPlacement] = useState<SponsorPlacement>();
-  const [hidden, setHidden] = useState(document.hidden);
+  const [hidden, setHidden] = useState(true);
   const [consent, setConsent] = useState(sponsorConsent);
+
   const obscuredRef = useRef(obscured);
   obscuredRef.current = obscured;
   const [session] = useState(() => {
@@ -101,14 +117,64 @@ export function useSponsor(
     turn?.stopped,
     turn?.streaming,
   ]);
-  const waiting =
-    consent === "allowed" &&
-    running &&
-    turn?.streaming &&
-    !turn.answer &&
-    !turn.error &&
-    !turn.stopped;
-  const waitingId = waiting ? turn.id : undefined;
+  const waiting = running && turn?.streaming && !turn.answer && !turn.error && !turn.stopped;
+  const offeredChat = budget.optInChatId;
+  const showOptIn = useSponsorOptInAvailable(
+    Boolean(
+      chatId &&
+      (offeredChat ? offeredChat === chatId : waiting && turn.user) &&
+      consent === "ask" &&
+      !obscured &&
+      !hidden &&
+      !document.hidden &&
+      isTabActive(),
+    ),
+  );
+  useLayoutEffect(() => {
+    if (offeredChat || !chatId || !showOptIn) return;
+    const card = optInRef.current;
+    const shell = root.current?.parentElement;
+    if (!card || !shell) return;
+    const claim = () => {
+      if (card.isConnected && !document.hidden && isTabActive() && !obscuredRef.current)
+        budget.optInChatId ??= chatId;
+    };
+    const checkBounds = () => {
+      if (halfVisible(card, shell)) claim();
+    };
+    // A fast reply can remove the card before the first observer callback.
+    checkBounds();
+    if (budget.optInChatId) return;
+    if (typeof IntersectionObserver !== "function") {
+      window.addEventListener("resize", checkBounds);
+      window.addEventListener("scroll", checkBounds, true);
+      window.visualViewport?.addEventListener("resize", checkBounds);
+      return () => {
+        window.removeEventListener("resize", checkBounds);
+        window.removeEventListener("scroll", checkBounds, true);
+        window.visualViewport?.removeEventListener("resize", checkBounds);
+      };
+    }
+    let observing = true;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          !observing ||
+          !entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.5)
+        )
+          return;
+        claim();
+        if (budget.optInChatId) observer.disconnect();
+      },
+      { threshold: 0.5 },
+    );
+    observer.observe(card);
+    return () => {
+      observing = false;
+      observer.disconnect();
+    };
+  }, [offeredChat, chatId, showOptIn, isTabActive, budget, root]);
+  const waitingId = consent === "allowed" && waiting ? turn.id : undefined;
   const waitingPrompt = waiting ? turn.user : undefined;
   useEffect(() => {
     if (!chatId || !waitingId || !waitingPrompt || obscured || hidden) return;
@@ -122,6 +188,8 @@ export function useSponsor(
     session.refresh();
   }, [session, obscured, hidden]);
   return {
+    showOptIn,
+    optInRef,
     placement: placement && !obscured && !hidden && isFreeAcode() ? placement : undefined,
     session,
   };

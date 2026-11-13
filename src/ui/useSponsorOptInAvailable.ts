@@ -11,20 +11,36 @@ export function useSponsorOptInAvailable(check: boolean) {
     }
     let current: AbortController | undefined;
     let frame = 0;
+    let recheck = false;
     const refresh = async () => {
       frame = 0;
-      current?.abort();
       if (document.hidden) {
+        current?.abort();
+        current = undefined;
+        recheck = false;
         setAvailable(false);
+        return;
+      }
+      if (current) {
+        recheck = true;
         return;
       }
       const request = new AbortController();
       current = request;
       try {
         const result = await readSponsorConsent(request.signal);
-        if (!request.signal.aborted) setAvailable(result.status === "allowed");
+        if (!request.signal.aborted && (!recheck || result.status !== "allowed"))
+          setAvailable(result.status === "allowed");
       } catch {
         if (!request.signal.aborted) setAvailable(false);
+      } finally {
+        if (current === request) {
+          current = undefined;
+          if (recheck && !request.signal.aborted) {
+            recheck = false;
+            void refresh();
+          }
+        }
       }
     };
     const onChange = () => {

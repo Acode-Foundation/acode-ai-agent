@@ -64,7 +64,7 @@ import { useProviderCredential } from "./useProviderCredential";
 import { CHATGPT_USAGE_URL, type ChatGPTRegistration } from "../providers/chatgptOAuth";
 import { ProviderSetup } from "./ProviderSetup";
 import { useSponsor } from "./useSponsor";
-import { SponsoredCard } from "./SponsoredCard";
+import { SponsoredCard, SponsorOptIn } from "./SponsoredCard";
 import { SponsorSettings } from "./SponsorSettings";
 
 type Props = {
@@ -176,6 +176,7 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
       editing,
     ),
     isTabActive,
+    controller.sponsorBudget,
   );
   useEffect(() => setEditing(undefined), [state.activeChatId]);
 
@@ -719,6 +720,7 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
           )}
         </div>
 
+        {sponsor.showOptIn && <SponsorOptIn cardRef={sponsor.optInRef} />}
         <Composer
           ref={composerRef}
           controller={controller}

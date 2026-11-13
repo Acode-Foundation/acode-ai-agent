@@ -48,6 +48,8 @@ Acode commands:
 | `AI Agent: New conversation`   | Start a session in the current folder        |
 | `AI Agent: New Random project` | Create a starter project in Home and open it |
 
+In the sidebar, **Spin up new session** suggests a project name. Keep it or enter your own, then confirm to create the folder in Home and start its first session. Cancel dismisses the prompt.
+
 Sessions are stored per project. The sidebar lists and searches them and can open one in its own tab.
 
 ## Using it
@@ -285,7 +287,7 @@ Configured builds can show an occasional **Sponsored · Elo** card to users with
 
 The ad request contains up to three predefined task topics (for example, “Web development”), never the chat transcript, source code, attachments, tool output, or account details. Elo also receives device/network information and an anonymous advertising identifier. Ads stay outside model context and saved chats. A missing ad or failed network request leaves chat working normally.
 
-The card itself is the sponsored link. The compact layout omits the CTA button and chevron and keeps a separate dismiss control. Dismissing a card or successfully opening its link removes that suggestion for the turn. After two successful turns, an opted-in user can see a compact card on the next eligible turn if the agent has spent three seconds working without an answer. The same card stays below a successful answer. Fast replies and the first opt-in prompt use the usual after-answer placement. Both placements share a five-minute interval between attempts. A failed device consent check or an empty Elo response uses that opportunity, so the plugin does not retry when the same answer finishes. A stopped or failed turn removes its waiting card. Covering the conversation, switching tabs or backgrounding Acode cancels a pending ad load. Returning to the chat does not retry that opportunity. Restored history does not start ad requests.
+The card itself is the sponsored link. The compact layout omits the CTA button and chevron and keeps a separate dismiss control. Dismissing a card or successfully opening its link removes that suggestion for the turn. After two successful turns, an opted-in user can see a compact card on the next eligible turn if the agent has spent three seconds working without an answer. The same card stays below a successful answer. Free users with device consent see a short opt-in during their first visible wait. The opt-in sits directly above the message input. Once at least half visible, it stays there in that chat until answered, including while scrolling or starting another turn. An off-screen card does not use the session’s one offer across tabs. Deleting the chat with an unanswered offer frees it for the next eligible wait. Allowing ads enables the usual schedule. Fast replies can show an eligible ad after the answer. Both placements share a five-minute interval between attempts. A failed device consent check or an empty Elo response uses that opportunity, so the plugin does not retry when the same answer finishes. A stopped or failed turn removes its waiting card. Covering the conversation, switching tabs or backgrounding Acode cancels a pending ad load. Returning to the chat does not retry that opportunity. Restored history does not start ad requests.
 
 ## Extension API
 

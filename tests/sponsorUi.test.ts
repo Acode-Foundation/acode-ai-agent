@@ -7,9 +7,9 @@ import { loadSponsor, type Sponsor } from "../src/ads/elo";
 import * as nativeConsent from "../src/ads/consent";
 import { readFileSync } from "node:fs";
 import { setSponsorConsent, sponsorConsent } from "../src/ads/preferences";
-import type { SponsorSession } from "../src/ads/session";
+import { SponsorBudget, type SponsorSession } from "../src/ads/session";
 import { openCustomTab } from "../src/platform/authTab";
-import { SponsoredCard } from "../src/ui/SponsoredCard";
+import { SponsoredCard, SponsorOptIn } from "../src/ui/SponsoredCard";
 import { SponsorSettings } from "../src/ui/SponsorSettings";
 import { useSponsor } from "../src/ui/useSponsor";
 import type { ChatTurn } from "../src/ui/transcript";
@@ -21,6 +21,7 @@ vi.mock("../src/ads/elo", async (load) => ({
 }));
 
 let root: HTMLElement;
+let budget: SponsorBudget;
 const ad = {
   title: "Hosting",
   description: "Deploy and monitor a web application from your phone.",
@@ -39,6 +40,7 @@ const sdk = {
 };
 const sponsor = { ad, sdk, consent: JSON.stringify(Array(5).fill(null)) } as unknown as Sponsor;
 beforeEach(() => {
+  budget = new SponsorBudget();
   vi.clearAllMocks();
   vi.stubGlobal("admob", {
     privacy: { getState: async () => ({ canRequestAds: true, consentStatus: "notRequired" }) },
@@ -72,11 +74,17 @@ function Chat({
   running,
   covered,
   isTabActive,
+  stopped = false,
+  error,
+  chatId = "chat",
 }: {
   id: string;
   running: boolean;
   covered: boolean;
   isTabActive: () => boolean;
+  stopped?: boolean;
+  error?: string;
+  chatId?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const turn = {
@@ -84,16 +92,36 @@ function Chat({
     user: "Help deploy",
     answer: running ? undefined : "Done",
     streaming: running,
+    stopped,
+    error,
   } as ChatTurn;
-  const { session, placement } = useSponsor(ref, "chat", running, turn, covered, isTabActive);
+  const { session, placement, showOptIn, optInRef } = useSponsor(
+    ref,
+    chatId,
+    running,
+    turn,
+    covered,
+    isTabActive,
+    budget,
+  );
   return h(
     "div",
-    { ref },
-    h("section", { class: "turn" }, placement && h(SponsoredCard, { session, placement })),
+    null,
+    h(
+      "main",
+      { ref },
+      h("section", { class: "turn" }, placement && h(SponsoredCard, { session, placement })),
+    ),
+    h(
+      "div",
+      { class: "agent-dock" },
+      showOptIn && h(SponsorOptIn, { cardRef: optInRef }),
+      h("footer", { class: "composer" }),
+    ),
   );
 }
 
-test("preserves after-answer opt-in and shows a single compact card on a later eligible wait", async () => {
+test("offers consent during the first visible wait and keeps paid ads on their usual cadence", async () => {
   const switches = new EventTarget();
   vi.stubGlobal("editorManager", {
     on: switches.addEventListener.bind(switches),
@@ -109,15 +137,53 @@ test("preserves after-answer opt-in and shows a single compact card on a later e
   const draw = (id: string, running = false, covered = false) =>
     act(() => render(h(Chat, { id, running, covered, isTabActive }), root));
   draw("0");
-  for (const id of ["1", "2", "3"]) {
-    draw(id, true);
-    draw(id);
-  }
-  await vi.waitFor(() => expect(root.textContent).toContain("Support free Acode"));
-  draw("3", false, true);
-  expect(root.textContent).toBe("");
-  draw("3");
-  await vi.waitFor(() => expect(root.textContent).toContain("Allow suggestions"));
+  expect(root.querySelector(".sponsor-consent")).toBeNull();
+  draw("1", true, true);
+  expect(root.querySelector(".sponsor-consent")).toBeNull();
+  vi.stubGlobal("admob", {
+    privacy: { getState: async () => ({ canRequestAds: false, consentStatus: "required" }) },
+  });
+  draw("1", true);
+  await act(async () => {});
+  expect(root.querySelector(".sponsor-consent")).toBeNull();
+  vi.stubGlobal("admob", {
+    privacy: { getState: async () => ({ canRequestAds: true, consentStatus: "notRequired" }) },
+  });
+  document.dispatchEvent(new Event("resume"));
+  await vi.waitFor(() => expect(root.querySelector(".sponsor-allow")).toBeTruthy());
+  expect(root.querySelector(".sponsor-allow")?.textContent).toBe("Allow Suggestions");
+  const privacy = root.querySelector<HTMLButtonElement>(".sponsor-privacy")!;
+  const card = root.querySelector(".sponsor-consent")!;
+  const originalContents = card.innerHTML;
+  expect(privacy.getAttribute("aria-haspopup")).toBe("dialog");
+  const body = document.createElement("div");
+  const dialogBox = vi.fn((_title: string, html: string) => {
+    body.innerHTML = html;
+    return {
+      onclick: (listener: (event: MouseEvent) => void) => body.addEventListener("click", listener),
+    };
+  });
+  vi.stubGlobal("acode", {
+    require: (name: string) => (name === "dialogBox" ? dialogBox : { HAS_PRO: false }),
+  });
+  act(() => privacy.click());
+  expect(dialogBox).toHaveBeenCalledExactlyOnceWith(
+    "Sponsored suggestions privacy",
+    expect.stringContaining("anonymous identifier"),
+    "Done",
+    "",
+  );
+  expect(card.innerHTML).toBe(originalContents);
+  expect(root.querySelector("dialog")).toBeNull();
+  body.querySelector("p")!.click();
+  expect(openCustomTab).not.toHaveBeenCalled();
+  const policyLink = body.querySelector("a")!;
+  expect(policyLink.textContent).toBe("Acode privacy policy");
+  policyLink.click();
+  expect(openCustomTab).toHaveBeenCalledWith("https://acode.app/policy");
+  vi.mocked(openCustomTab).mockClear();
+  expect(sponsorConsent()).toBe("ask");
+  expect(loadSponsor).not.toHaveBeenCalled();
   const changeVisibility = (hidden: boolean) =>
     act(() => {
       vi.spyOn(document, "hidden", "get").mockReturnValue(hidden);
@@ -133,6 +199,14 @@ test("preserves after-answer opt-in and shows a single compact card on a later e
     }),
   );
   act(() => root.querySelector<HTMLButtonElement>(".sponsor-allow")!.click());
+  expect(root.querySelector(".sponsor-consent")).toBeNull();
+  expect(loadSponsor).not.toHaveBeenCalled();
+  draw("1");
+  draw("2", true);
+  draw("2");
+  expect(loadSponsor).not.toHaveBeenCalled();
+  draw("3", true);
+  draw("3");
   expect(loadSponsor).toHaveBeenCalledExactlyOnceWith(
     ["Cloud hosting and deployment"],
     expect.any(AbortSignal),
@@ -225,21 +299,92 @@ test("preserves after-answer opt-in and shows a single compact card on a later e
   expect(sdk.trackRender).toHaveBeenCalledOnce();
 });
 
+test("the visible opt-in stays above the composer through later replies in its chat", async () => {
+  let intersect!: (ratio: number) => void;
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(callback: (entries: Partial<IntersectionObserverEntry>[]) => void) {
+        intersect = (ratio) => callback([{ isIntersecting: ratio > 0, intersectionRatio: ratio }]);
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const active = () => true;
+  const draw = async (id: string, running: boolean, extra = {}) =>
+    act(async () =>
+      render(h(Chat, { id, running, covered: false, isTabActive: active, ...extra }), root),
+    );
+  for (const ending of [{ stopped: true }, { error: "Failed" }]) {
+    await draw("unseen", true);
+    await vi.waitFor(() => expect(root.querySelector(".sponsor-consent")).toBeTruthy());
+    intersect(0);
+    await draw("unseen", false, ending);
+    expect(budget.optInChatId).toBeUndefined();
+    expect(root.querySelector(".sponsor-consent")).toBeNull();
+  }
+  await draw("visible", true);
+  await vi.waitFor(() => expect(root.querySelector(".sponsor-consent")).toBeTruthy());
+  const card = root.querySelector(".sponsor-consent");
+  intersect(1);
+  await draw("visible", false, { stopped: true });
+  await draw("next", true);
+  expect(root.querySelector(".sponsor-consent")).toBe(card);
+  expect(card?.nextElementSibling?.matches(".composer")).toBe(true);
+  expect(root.querySelector("main .sponsor-consent")).toBeNull();
+  await draw("other", true, { chatId: "second-chat" });
+  expect(root.querySelector(".sponsor-consent")).toBeNull();
+  await draw("next", false);
+  await vi.waitFor(() => expect(root.querySelector(".sponsor-consent + .composer")).toBeTruthy());
+});
+
+test.each(["missing", "delayed"])(
+  "a visible opt-in survives a fast answer with a %s observer",
+  async (observer) => {
+    vi.stubGlobal(
+      "IntersectionObserver",
+      observer === "missing"
+        ? undefined
+        : class {
+            observe() {}
+            disconnect() {}
+          },
+    );
+    let top = 37; // The editor ends at 72px, so less than half the card fits.
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(
+      function (this: HTMLElement) {
+        return new DOMRect(0, this.matches(".sponsor-consent") ? top : 0, 320, 72);
+      },
+    );
+    const active = () => true;
+    const draw = (running: boolean) =>
+      act(async () =>
+        render(h(Chat, { id: "fast", running, covered: false, isTabActive: active }), root),
+      );
+    await draw(true);
+    await vi.waitFor(() => expect(root.querySelector(".sponsor-consent")).toBeTruthy());
+    expect(budget.optInChatId).toBeUndefined();
+    await draw(false);
+    expect(root.querySelector(".sponsor-consent")).toBeNull();
+    top = 36;
+    await draw(true);
+    await vi.waitFor(() => expect(budget.optInChatId).toBe("chat"));
+    await draw(false);
+    expect(root.querySelector(".sponsor-consent + .composer")).toBeTruthy();
+  },
+);
+
 test("device consent gates opt-in, and a prior opt-in can always be withdrawn", async () => {
   let consentStatus = "required";
   const getState = vi.fn(async () => ({ consentStatus, canRequestAds: true }));
   vi.stubGlobal("admob", { privacy: { getState } });
-  const placement = { turnId: "settings-qa", context: ["Hosting"] };
-  const session = { clear: vi.fn() } as unknown as SponsorSession;
-  await act(async () =>
-    render(h("div", null, h(SponsorSettings, {}), h(SponsoredCard, { placement, session })), root),
-  );
+  await act(async () => render(h(SponsorSettings, {}), root));
   expect(getState).toHaveBeenCalled();
   expect(root.querySelector(".sponsor-consent, .sponsor-settings")).toBeNull();
   consentStatus = "NOT_REQUIRED";
   await act(async () => document.dispatchEvent(new Event("resume")));
-  await vi.waitFor(() => expect(root.querySelector(".sponsor-allow")).toBeTruthy());
-  expect(root.querySelector(".sponsor-settings input")).toBeTruthy();
+  await vi.waitFor(() => expect(root.querySelector(".sponsor-settings input")).toBeTruthy());
   act(() => setSponsorConsent("allowed"));
   vi.stubGlobal("admob", undefined);
   act(() => render(h(SponsorSettings, {}), root));
@@ -424,13 +569,7 @@ test("a failed SDK mount removes the ad without throwing into the chat", async (
 });
 
 test("declining suggestions persists the preference and removes advertising identifiers", async () => {
-  const session = { clear: vi.fn() } as unknown as SponsorSession;
-  act(() =>
-    render(
-      h(SponsoredCard, { session, placement: { turnId: "1", context: ["Web development"] } }),
-      root,
-    ),
-  );
+  act(() => render(h(SponsorOptIn, {}), root));
   localStorage.setItem("elo_visitor_id", "test-id");
   document.cookie = "_elo_state=test-id";
   await vi.waitFor(() => expect(root.querySelector(".sponsor-allow")).toBeTruthy());

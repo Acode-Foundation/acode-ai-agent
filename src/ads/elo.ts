@@ -64,7 +64,9 @@ function ensureRandomUUID() {
   }
 }
 
-let session: { consent: string; sdk: SponsorSDK; ready: Promise<SponsorSDK | null> } | undefined;
+let session:
+  | { consent: string; sdk: SponsorSDK; ready: Promise<SponsorSDK | null>; initialized: boolean }
+  | undefined;
 sponsorIdentityCleared.subscribe(() => {
   session = undefined;
 });
@@ -128,12 +130,14 @@ function sdkSession(signals: ConsentSignals) {
   const current = {
     consent,
     sdk,
+    initialized: false,
     ready: withSponsorConsent(signals, () => sdk.init())
       .then(({ status }) => (status === "ready" ? sdk : null))
       .catch(() => null),
   };
   session = current;
   void current.ready.then((ready) => {
+    current.initialized = Boolean(ready);
     if (!ready && session === current) session = undefined;
   });
   return current;
@@ -151,19 +155,19 @@ export async function loadSponsor(
     const initial = await readSponsorConsent(signal);
     if (initial.status !== "allowed" || !eligible()) return null;
     const current = sdkSession(initial.signals);
-    const sdk = await current.ready;
-    if (!sdk) return null;
+    // A ready SDK can use this request's fresh read immediately. When init
+    // yields to native code, check again before handing topics to the SDK.
+    if (!current.initialized) {
+      if (!(await current.ready) || !stillEligible()) return null;
+      const latest = await readSponsorConsent(signal);
+      if (latest.status !== "allowed" || current.consent !== JSON.stringify(latest.signals))
+        return null;
+    }
     function stillEligible() {
       return session === current && eligible();
     }
     if (!stillEligible()) return null;
-    const latest = await readSponsorConsent(signal);
-    if (
-      latest.status !== "allowed" ||
-      current.consent !== JSON.stringify(latest.signals) ||
-      !stillEligible()
-    )
-      return null;
+    const sdk = current.sdk;
     const { ad } = await sdk.fetchAds({
       ...dimensions,
       signal,

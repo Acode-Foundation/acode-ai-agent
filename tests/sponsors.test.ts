@@ -199,11 +199,10 @@ test("waits for consent and makes no requests for Pro, declined or unknown eligi
   f.finish("1");
   f.finish("2");
   f.finish("3");
-  expect(f.session.placement?.sponsor).toBeUndefined();
-  expect(f.session.placement?.turnId).toBe("3");
+  expect(f.session.placement).toBeUndefined();
   expect(f.load).not.toHaveBeenCalled();
   f.consent("allowed");
-  f.session.allow();
+  f.finish("opted-in");
   await vi.waitFor(() => expect(f.session.placement?.sponsor).toBe(sponsor));
   f.eligible(false);
   f.session.refresh();

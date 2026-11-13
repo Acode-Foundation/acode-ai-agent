@@ -103,6 +103,22 @@ test("passes only the category and uses public SDK identifiers", async () => {
   });
 });
 
+test("a ready SDK uses one fresh native read per fetch and honors a later denial", async () => {
+  const { loadSponsor } = await import("../src/ads/elo");
+  const state = { canRequestAds: true, consentStatus: "notRequired" };
+  const getState = vi.fn(async () => state);
+  vi.stubGlobal("admob", { privacy: { getState } });
+  const load = () => loadSponsor(["Web development"], new AbortController().signal, dimensions);
+  await load();
+  expect(getState).toHaveBeenCalledTimes(2);
+  await load();
+  expect(getState).toHaveBeenCalledTimes(3);
+  state.canRequestAds = false;
+  await load();
+  expect(getState).toHaveBeenCalledTimes(4);
+  expect(sdk.fetchAds).toHaveBeenCalledTimes(2);
+});
+
 test("honors SDK consent refusal and consent withdrawal during initialization", async () => {
   const { loadSponsor } = await import("../src/ads/elo");
   sdk.init.mockResolvedValueOnce({ status: "gdpr_consent_missing" });

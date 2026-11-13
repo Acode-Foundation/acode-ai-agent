@@ -1,26 +1,30 @@
 .acode-agent-sidebar-host {
-  --as-bg: var(--primary-color, #1b1e24);
-  --as-surface: var(--secondary-color, #121418);
-  --as-fg: var(--primary-text-color, #e8eaed);
-  --as-muted: var(--secondary-text-color, #8b919a);
-  --as-border: var(--border-color, #343941);
-  --as-accent: var(--active-color, #6aa4ff);
-  --as-button: var(--button-background, var(--as-accent));
-  --as-button-text: var(--button-text, #0c1118);
-  --as-danger: var(--error-text-color, #d46a6a);
+  --as-bg: var(--secondary-color, #23272a);
+  --as-fg: var(--secondary-text-color, #e8eaed);
+  --as-surface: var(--popup-background-color, var(--as-bg));
+  --as-on-surface: var(--popup-text-color, var(--as-fg));
+  --as-muted: var(--as-fg);
+  --as-border: var(--border-color, #80808066);
+  --as-accent: var(--link-text-color, var(--as-fg));
+  --as-tint: var(--as-bg);
   height: 100%;
   min-height: 0;
   background: var(--as-bg);
   color: var(--as-fg);
   font: inherit;
 }
+@supports (color: color-mix(in srgb, black, white)) {
+  .acode-agent-sidebar-host {
+    --as-muted: color-mix(in srgb, var(--as-fg) 80%, var(--as-bg));
+    --as-tint: color-mix(in srgb, var(--as-accent) 10%, var(--as-bg));
+  }
+}
 .acode-agent-sidebar-host *,
 .acode-agent-sidebar-host *::before,
 .acode-agent-sidebar-host *::after {
   box-sizing: border-box;
 }
-.acode-agent-sidebar-host button,
-.acode-agent-sidebar-host input {
+.acode-agent-sidebar-host :where(button, input) {
   border: 0;
   color: inherit;
   font: inherit;
@@ -36,7 +40,7 @@
 .acode-agent-sidebar {
   position: relative;
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: 54px minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -45,7 +49,7 @@
 
 .as-head {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 7px 9px;
@@ -54,11 +58,11 @@
 .as-mark {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--as-button);
-  color: var(--as-button-text);
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--as-tint);
+  color: var(--as-accent);
 }
 .as-head > div:nth-child(2) {
   min-width: 0;
@@ -67,7 +71,7 @@
 }
 .as-head b {
   overflow: hidden;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -75,7 +79,7 @@
 .as-head small {
   overflow: hidden;
   color: var(--as-muted);
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -137,18 +141,16 @@
   text-align: left;
 }
 .as-section-toggle > span {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 .as-section-toggle > small {
   min-width: 18px;
   padding: 1px 5px;
   border-radius: 999px;
   background: var(--as-surface);
-  color: var(--as-muted);
-  font-size: 8px;
+  color: var(--as-on-surface);
+  font-size: 10px;
   text-align: center;
 }
 .as-section-toggle:hover {
@@ -200,17 +202,16 @@
 .as-session-open b {
   overflow: hidden;
   color: var(--as-fg);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .as-project-select small,
-.as-session-open small,
-.as-create-project small {
+.as-session-open small {
   overflow: hidden;
   color: var(--as-muted);
-  font-size: 8.5px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -220,8 +221,7 @@
 }
 .as-icon-action:disabled,
 .as-create-project:disabled,
-.as-session-open:disabled,
-.as-session-actions button:disabled {
+.as-session-open:disabled {
   cursor: default;
   opacity: 0.45;
 }
@@ -229,7 +229,7 @@
   margin: 2px 3px 7px;
   padding: 8px;
   color: var(--as-muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .as-create-project {
@@ -245,7 +245,8 @@
   overflow: hidden;
   border: 1px solid var(--as-border) !important;
   border-radius: 9px;
-  background: var(--as-surface);
+  background: var(--as-bg);
+  color: var(--as-fg);
   cursor: pointer;
   text-align: left;
 }
@@ -266,13 +267,21 @@
   width: 32px;
   height: 32px;
   border-radius: 7px;
-  background: var(--as-button);
-  color: var(--as-button-text);
+  background: var(--as-tint);
+  color: var(--as-accent);
 }
 .as-create-project b {
   overflow: hidden;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.as-create-project small {
+  overflow: hidden;
+  color: var(--as-muted);
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -307,19 +316,19 @@
   align-items: center;
   gap: 5px;
   width: 100%;
-  height: 30px;
-  padding: 0 7px;
+  height: 34px;
+  padding: 0 8px;
   border: 1px solid var(--as-border) !important;
   border-radius: 5px;
   background: var(--as-surface);
-  color: var(--as-muted);
+  color: var(--as-on-surface);
   cursor: pointer;
   text-align: left;
 }
 .as-scope span {
   overflow: hidden;
-  color: var(--as-fg);
-  font-size: 10px;
+  color: var(--as-on-surface);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -333,8 +342,8 @@
   align-items: center;
   gap: 5px;
   width: 100%;
-  height: 30px;
-  padding: 0 7px;
+  height: 34px;
+  padding: 0 8px;
   border: 1px solid var(--as-border);
   border-radius: 5px;
   background: var(--as-bg);
@@ -354,7 +363,8 @@
   outline: none !important;
   box-shadow: none !important;
   background: transparent !important;
-  font-size: 10px;
+  color: var(--as-fg);
+  font-size: 12px;
 }
 .as-search input::placeholder {
   color: var(--as-muted);
@@ -379,63 +389,44 @@
 }
 .as-session {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 32px;
   align-items: center;
-  min-height: 40px;
+  border-radius: 7px;
 }
 .as-session-open {
+  position: relative;
   display: grid;
-  grid-template-columns: 9px minmax(0, 1fr);
   align-items: center;
-  gap: 5px;
   min-width: 0;
-  min-height: 39px;
-  padding: 4px 3px 4px 5px;
+  min-height: 46px;
+  padding: 5px 4px 5px 9px;
+  border-radius: inherit;
   background: transparent;
   cursor: pointer;
   text-align: left;
 }
-.as-session-open:disabled {
-  color: var(--as-muted);
+.as-session-open > span {
+  gap: 2px;
+}
+.as-session-open[aria-current="page"] {
+  background: var(--as-tint);
 }
 .as-status {
-  width: 6px;
-  height: 6px;
+  position: absolute;
+  left: 0;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  opacity: 0;
-}
-.as-session.running .as-status {
   background: var(--as-accent);
-  opacity: 1;
   animation: as-pulse 1.5s ease-in-out infinite;
 }
-.as-session-actions {
-  display: flex;
-  align-items: center;
-  padding-right: 2px;
+.as-session .as-icon-action {
+  width: 32px;
+  height: 40px;
 }
-.as-session-actions button {
-  display: grid;
-  place-items: center;
-  min-width: 25px;
-  height: 25px;
-  padding: 0 4px;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--as-muted);
-  cursor: pointer;
-}
-.as-session-actions button:hover {
-  color: var(--as-accent);
-}
-.as-session-actions .as-delete:hover,
-.as-session-actions .as-delete.confirm {
-  color: var(--as-danger);
-}
-.as-delete.confirm {
-  min-width: 39px;
-  font-size: 8px;
-  font-weight: 700;
+.acode-agent-sidebar button:focus-visible {
+  outline: 2px solid var(--as-accent);
+  outline-offset: -2px;
 }
 .as-empty-sessions {
   display: grid;
@@ -447,7 +438,7 @@
 }
 .as-empty-sessions p {
   margin: 0;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .as-spin {
@@ -468,7 +459,7 @@
     transition: none;
   }
   .as-spin,
-  .as-session.running .as-status {
+  .as-status {
     animation: none;
   }
 }

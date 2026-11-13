@@ -7,6 +7,7 @@ import {
   type FauxResponseStep,
 } from "@earendil-works/pi-ai/providers/faux";
 import { afterEach, expect, test, vi } from "vitest";
+import { AgentController } from "../src/app/agentController";
 import { ExtensionRegistry } from "../src/core/extensionRegistry";
 import { DEFAULT_SETTINGS } from "../src/core/settings";
 import { MutationGate } from "../src/permissions/mutationGate";
@@ -26,6 +27,27 @@ let databases = 0;
 afterEach(async () => {
   for (const fn of cleanups.splice(0).reverse()) await fn().catch(() => undefined);
   vi.unstubAllGlobals();
+});
+
+test("only deleting the chat with the unanswered sponsor offer releases it", async () => {
+  vi.stubGlobal("window", {});
+  const store = new ChatStore();
+  const meta = {
+    title: "Test",
+    workspaceId: "w",
+    workspaceName: "Demo",
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  await store.save({ ...meta, id: "offered" });
+  await store.save({ ...meta, id: "other" });
+  const controller = new AgentController(null);
+  cleanups.push(() => controller.dispose());
+  controller.sponsorBudget.optInChatId = "offered";
+  await controller.deleteChat("other");
+  expect(controller.sponsorBudget.optInChatId).toBe("offered");
+  await controller.deleteChat("offered");
+  expect(controller.sponsorBudget.optInChatId).toBeUndefined();
 });
 
 function environment() {

@@ -1,6 +1,7 @@
 import type { AuthEvent, AuthPrompt, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import type { ToolExposure } from "../tools/toolSearch";
+import { SponsorBudget } from "../ads/session";
 import { Signal } from "../core/events";
 import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";
@@ -49,6 +50,7 @@ import { subscribeToSourceFiles } from "../workspace/sourceFile";
 
 export class AgentController {
   readonly changes = new Signal<PublicAgentState>();
+  readonly sponsorBudget = new SponsorBudget();
   readonly settings = new SettingsStore();
   readonly credentials: PortableCredentialStore;
   readonly providers: ProviderRegistry;
@@ -497,6 +499,7 @@ export class AgentController {
     this.#sessions.delete(chatId);
     await session?.dispose();
     await this.#sessionStore.remove(chatId);
+    if (this.sponsorBudget.optInChatId === chatId) this.sponsorBudget.optInChatId = undefined;
     if (this.#activeId === chatId) {
       this.#activeId = undefined;
       const next = this.#sessionStore.list()[0];

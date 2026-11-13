@@ -11,7 +11,7 @@ type SponsorTurn = {
   stopped?: boolean;
   streaming?: boolean;
 };
-export type SponsorPlacement = { turnId: string; context: string[]; sponsor?: Sponsor };
+export type SponsorPlacement = { turnId: string; context: string[]; sponsor: Sponsor };
 type Dependencies = {
   eligible(): boolean;
   visible(): boolean;
@@ -21,15 +21,18 @@ type Dependencies = {
 };
 
 export class SponsorBudget {
+  /** Shared across tabs once the opt-in card has entered the viewport. */
+  optInChatId?: string;
   #seen = new Set<string>();
   #turns = 0;
   #lastAttempt = -Infinity;
 
   constructor(private now = () => Date.now()) {}
 
-  claim(key: string, waiting = false): boolean {
+  claim(key: string, consent: SponsorConsent, waiting = false): boolean {
     if (this.#seen.has(key)) return false;
-    const due = this.#turns >= 2 && this.now() - this.#lastAttempt >= 5 * 60_000;
+    const due =
+      consent === "allowed" && this.#turns >= 2 && this.now() - this.#lastAttempt >= 5 * 60_000;
     // A wait that cannot show an ad must still count normally once it succeeds.
     if (waiting && !due) return false;
     this.#seen.add(key);
@@ -102,10 +105,8 @@ export class SponsorSession {
       turn.streaming
     )
       return;
-    if (!this.deps.budget.claim(`${chatId}:${turn.id}`)) return;
-    const placement = { turnId: turn.id, context: sponsorContext(turn.user) };
-    if (this.deps.consent() === "ask") this.#publish(placement);
-    else void this.#load(placement);
+    if (!this.deps.budget.claim(`${chatId}:${turn.id}`, this.deps.consent())) return;
+    void this.#load({ turnId: turn.id, context: sponsorContext(turn.user) });
   }
 
   showWhileWaiting(chatId: string, turnId: string, prompt: string): void {
@@ -117,19 +118,13 @@ export class SponsorSession {
       this.deps.consent() !== "allowed"
     )
       return;
-    if (!this.deps.budget.claim(`${chatId}:${turnId}`, true)) return;
+    if (!this.deps.budget.claim(`${chatId}:${turnId}`, this.deps.consent(), true)) return;
     void this.#load({ turnId, context: sponsorContext(prompt) }, true);
   }
 
   refresh(): void {
     if (!this.deps.eligible() || this.deps.consent() === "declined") this.clear();
     else if (!this.deps.visible()) this.#request?.abort();
-    else if (this.placement && !this.placement.sponsor && this.deps.consent() === "allowed")
-      this.allow();
-  }
-
-  allow(): void {
-    if (this.placement && !this.placement.sponsor) void this.#load(this.placement);
   }
 
   clear(): void {
@@ -145,7 +140,7 @@ export class SponsorSession {
     this.changes.clear();
   }
 
-  async #load(placement: SponsorPlacement, waiting = false): Promise<void> {
+  async #load(placement: Omit<SponsorPlacement, "sponsor">, waiting = false): Promise<void> {
     this.clear();
     if (!this.deps.visible() || !this.deps.eligible() || this.deps.consent() !== "allowed") return;
     if (waiting) this.#waitingTurn = placement.turnId;

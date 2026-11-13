@@ -1,20 +1,20 @@
 import {
   ChevronDown,
   ExternalLink,
+  Ellipsis,
   Folder,
+  Sparkles,
   LoaderCircle,
   MessageSquarePlus,
-  PanelTopOpen,
   Plus,
   Search,
-  Sparkles,
-  Trash2,
   X,
 } from "lucide-preact";
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { AgentController } from "../../app/agentController";
 import type { ChatSummary, PublicAgentState, WorkspaceInfo } from "../../core/types";
 import { pickAcodeSelect } from "../../platform/acodeSelect";
+import { promptProjectName } from "../../platform/randomProject";
 import { showToast } from "../../platform/toast";
 import { AgentIcon } from "../AgentIcon";
 
@@ -25,7 +25,7 @@ type Props = {
   onOpenSessionInNewTab(chatId: string): Promise<void>;
   onNewSession(workspaceId: string): Promise<void>;
   onDeleteSession(chatId: string): Promise<void>;
-  onCreateProject(): Promise<WorkspaceInfo>;
+  onCreateProject(name: string): Promise<WorkspaceInfo>;
 };
 
 export function SidebarApp({
@@ -42,8 +42,8 @@ export function SidebarApp({
   const [scope, setScope] = useState(() => controller.state.workspace?.id ?? "all");
   const [foldersOpen, setFoldersOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(true);
+  const busy = useRef(false);
   const [pending, setPending] = useState<string | null>(null);
-  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   useEffect(() => controller.changes.subscribe(setState), [controller]);
   const workspaces = controller.workspaces;
@@ -64,13 +64,15 @@ export function SidebarApp({
   }, [scope, workspaceIds]);
 
   const run = async (key: string, action: () => Promise<void>) => {
-    if (pending) return;
+    if (busy.current) return;
+    busy.current = true;
     setPending(key);
     try {
       await action();
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     } finally {
+      busy.current = false;
       setPending(null);
     }
   };
@@ -90,6 +92,20 @@ export function SidebarApp({
       if (picked) setScope(picked);
     });
   };
+  const sessionActions = (chat: ChatSummary, available: boolean) =>
+    run(`actions:${chat.id}`, async () => {
+      const items = [{ value: "delete", text: "Delete session", icon: "delete" }];
+      if (available)
+        items.unshift({ value: "open", text: "Open in another tab", icon: "launchopen_in_new" });
+      const action = await pickAcodeSelect("Session actions", items);
+      if (action === "open") await onOpenSessionInNewTab(chat.id);
+      if (
+        action === "delete" &&
+        (await acode.confirm("Delete session?", "This conversation will be permanently deleted."))
+      ) {
+        await onDeleteSession(chat.id);
+      }
+    });
   const startInOpenProject = () => {
     if (!workspaces.length) {
       showToast("Open a project in Acode first.");
@@ -116,7 +132,7 @@ export function SidebarApp({
     <div class="acode-agent-sidebar">
       <header class="as-head">
         <div class="as-mark">
-          <AgentIcon size={18} />
+          <AgentIcon size={20} />
         </div>
         <div>
           <b>AI Agent</b>
@@ -211,13 +227,18 @@ export function SidebarApp({
           class="as-create-project"
           type="button"
           disabled={Boolean(pending)}
-          onClick={() =>
-            void run("project", async () => {
-              const workspace = await onCreateProject();
+          onClick={async () => {
+            const name = await promptProjectName().catch((error: unknown) => {
+              showToast(error instanceof Error ? error.message : String(error));
+              return null;
+            });
+            if (!name) return;
+            await run("project", async () => {
+              const workspace = await onCreateProject(name);
               setScope(workspace.id);
               showToast(`${workspace.name} created in Home.`);
-            })
-          }
+            });
+          }}
         >
           <span>
             {pending === "project" ? (
@@ -228,7 +249,7 @@ export function SidebarApp({
           </span>
           <span>
             <b>Spin up new session</b>
-            <small>Start in a random project</small>
+            <small>Name a new project in Home</small>
           </span>
         </button>
 
@@ -273,9 +294,10 @@ export function SidebarApp({
                   {chats.map((chat) => {
                     const available = workspaceIds.has(chat.workspaceId);
                     return (
-                      <div class={`as-session${chat.running ? " running" : ""}`} key={chat.id}>
+                      <div class="as-session" key={chat.id}>
                         <button
                           class="as-session-open"
+                          aria-current={chat.id === state.activeChatId ? "page" : undefined}
                           type="button"
                           disabled={!available || Boolean(pending)}
                           onClick={() => void run(`open:${chat.id}`, () => onOpenSession(chat.id))}
@@ -285,7 +307,7 @@ export function SidebarApp({
                               : "Open this project in Acode to resume"
                           }
                         >
-                          <i class="as-status" aria-hidden="true" />
+                          {chat.running && <i class="as-status" aria-hidden="true" />}
                           <span>
                             <b>{chat.title}</b>
                             <small>
@@ -294,42 +316,16 @@ export function SidebarApp({
                             </small>
                           </span>
                         </button>
-                        <div class="as-session-actions">
-                          <button
-                            type="button"
-                            disabled={!available || Boolean(pending)}
-                            onClick={() =>
-                              void run(`tab:${chat.id}`, () => onOpenSessionInNewTab(chat.id))
-                            }
-                            aria-label={`Open ${chat.title} in another tab`}
-                            title="Open in another tab"
-                          >
-                            <PanelTopOpen size={13} />
-                          </button>
-                          {confirmId === chat.id ? (
-                            <button
-                              class="as-delete confirm"
-                              type="button"
-                              onClick={() =>
-                                void run(`delete:${chat.id}`, async () => {
-                                  await onDeleteSession(chat.id);
-                                  setConfirmId(null);
-                                })
-                              }
-                            >
-                              Delete
-                            </button>
-                          ) : (
-                            <button
-                              class="as-delete"
-                              type="button"
-                              onClick={() => setConfirmId(chat.id)}
-                              aria-label={`Delete ${chat.title}`}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                        </div>
+                        <button
+                          class="as-icon-action"
+                          type="button"
+                          disabled={Boolean(pending)}
+                          aria-label={`More actions for ${chat.title}`}
+                          title="Session actions"
+                          onClick={() => void sessionActions(chat, available)}
+                        >
+                          <Ellipsis size={16} />
+                        </button>
                       </div>
                     );
                   })}

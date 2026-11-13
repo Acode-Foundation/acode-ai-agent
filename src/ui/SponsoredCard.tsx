@@ -1,5 +1,6 @@
 import { mountEloAd } from "@elo-ads/web-sdk/core";
-import { X } from "lucide-preact";
+import { Heart, X } from "lucide-preact";
+import type { RefObject } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { readSponsorConsent } from "../ads/consent";
 import { safeAdUrl } from "../ads/elo";
@@ -13,7 +14,6 @@ import {
 import type { SponsorPlacement, SponsorSession } from "../ads/session";
 import { openCustomTab } from "../platform/authTab";
 import { showToast } from "../platform/toast";
-import { useSponsorOptInAvailable } from "./useSponsorOptInAvailable";
 
 export function SponsoredCard({
   placement,
@@ -24,11 +24,10 @@ export function SponsoredCard({
 }) {
   const root = useRef<HTMLDivElement>(null);
   const sponsor = placement.sponsor;
-  const ad = sponsor?.ad;
-  const canOfferOptIn = useSponsorOptInAvailable(!sponsor);
+  const ad = sponsor.ad;
   useLayoutEffect(() => {
     const element = root.current;
-    if (!element || !sponsor || !safeAdUrl(sponsor.ad.click_url)) return;
+    if (!element || !safeAdUrl(sponsor.ad.click_url)) return;
     const ad = sponsor.ad;
     const creative =
       ad.image_url && !safeAdUrl(ad.image_url) ? { ...ad, image_url: undefined } : ad;
@@ -150,50 +149,6 @@ export function SponsoredCard({
     };
   }, [placement, sponsor, session]);
 
-  if (!ad || !sponsor) {
-    if (!canOfferOptIn) return null;
-    return (
-      <aside class="sponsor-consent" aria-label="Sponsored suggestions">
-        <b>Support free Acode</b>
-        <p>Allow occasional sponsored suggestions while the agent works or after an answer?</p>
-        <p class="sponsor-disclosure">{SPONSOR_DISCLOSURE}</p>
-        <div class="sponsor-choices">
-          <button
-            type="button"
-            class="text-button"
-            onClick={() => {
-              setSponsorConsent("declined");
-              session.clear();
-            }}
-          >
-            No thanks
-          </button>
-          <button
-            type="button"
-            class="text-button"
-            onClick={() =>
-              void openCustomTab("https://acode.app/policy").catch(() =>
-                showToast("Could not open privacy information."),
-              )
-            }
-          >
-            Acode privacy
-          </button>
-          <button
-            type="button"
-            class="sponsor-allow"
-            onClick={() => {
-              setSponsorConsent("allowed");
-              session.allow();
-            }}
-          >
-            Allow suggestions
-          </button>
-        </div>
-      </aside>
-    );
-  }
-
   if (!safeAdUrl(ad.click_url)) return null;
   return (
     <aside class="sponsor" aria-label="Sponsored suggestion">
@@ -206,6 +161,59 @@ export function SponsoredCard({
       >
         <X size={16} />
       </button>
+    </aside>
+  );
+}
+
+function openSponsorPrivacy() {
+  const policyUrl = "https://acode.app/policy";
+  const dialogBox = acode.require("dialogBox");
+  dialogBox(
+    "Sponsored suggestions privacy",
+    `<p>${SPONSOR_DISCLOSURE}</p><p>You can change this in AI settings.</p><p><a href="${policyUrl}">Acode privacy policy</a></p>`,
+    "Done",
+    "",
+  ).onclick((event) => {
+    if (!(event.target instanceof HTMLAnchorElement) || event.target.href !== policyUrl) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openCustomTab(policyUrl).catch(() => showToast("Could not open privacy information."));
+  });
+}
+
+export function SponsorOptIn({ cardRef }: { cardRef?: RefObject<HTMLElement> }) {
+  return (
+    <aside ref={cardRef} class="sponsor-consent" aria-label="Sponsored suggestions">
+      <header>
+        <strong>
+          <Heart size={15} aria-hidden="true" />
+          Support free Acode
+        </strong>
+        <button
+          type="button"
+          class="sponsor-privacy"
+          aria-haspopup="dialog"
+          onClick={openSponsorPrivacy}
+        >
+          Privacy
+        </button>
+      </header>
+      <p>
+        Elo uses broad coding topics, device info, and an anonymous ID stored in a cookie and local
+        storage to show sponsored suggestions.
+      </p>
+      <div class="approval-actions sponsor-choices">
+        <button type="button" onClick={() => setSponsorConsent("declined")}>
+          No thanks
+        </button>
+        <button
+          type="button"
+          class="primary sponsor-allow"
+          onClick={() => setSponsorConsent("allowed")}
+        >
+          Allow Suggestions
+        </button>
+      </div>
     </aside>
   );
 }
