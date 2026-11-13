@@ -1,22 +1,45 @@
-import { type AdCreative, EloSDK } from "@elo-ads/web-sdk/core";
-import { canRequestSponsors } from "./preferences";
+import { type AdCreative, type AdTap, EloSDK } from "@elo-ads/web-sdk/core";
+import {
+  hasSponsorConsentBridge,
+  readSponsorConsent,
+  withSponsorConsent,
+  type ConsentSignals,
+} from "./consent";
+import {
+  canRequestSponsors,
+  sponsorIdentityCleared,
+  sponsorPreferencesChanged,
+} from "./preferences";
 
 declare const ELO_PUBLISHER_ID: string;
 declare const ELO_AD_UNIT_ID: string;
 declare const ELO_IOS_AD_UNIT_ID: string;
 
-export type Sponsor = { ad: AdCreative; sdk: EloSDK };
+export type Sponsor = { ad: AdCreative; sdk: SponsorSDK; consent: string };
+const eloOrigin = "https://api.elo.ad";
 const publisherId = typeof ELO_PUBLISHER_ID === "string" ? ELO_PUBLISHER_ID.trim() : "";
 const androidUnit = typeof ELO_AD_UNIT_ID === "string" ? ELO_AD_UNIT_ID.trim() : "";
 const iosUnit = typeof ELO_IOS_AD_UNIT_ID === "string" ? ELO_IOS_AD_UNIT_ID.trim() : "";
 
 function unitId() {
   const platform = (globalThis as { cordova?: { platformId?: string } }).cordova?.platformId;
+  const androidApi = (globalThis as { ANDROID_SDK_INT?: number }).ANDROID_SDK_INT;
+  if (platform === "android" && !(Number(androidApi) >= 29)) return "";
   return platform === "ios" ? iosUnit : platform === "android" ? androidUnit : "";
 }
 
 export function sponsorsConfigured() {
-  return Boolean(publisherId && unitId() && globalThis.crypto?.getRandomValues);
+  try {
+    return Boolean(
+      publisherId &&
+      unitId() &&
+      typeof globalThis.crypto?.getRandomValues === "function" &&
+      hasSponsorConsentBridge(),
+    );
+  } catch {
+    // A Cordova property getter can throw while the native bridge is unavailable.
+    return false;
+  }
 }
 
 // Older WebViews have secure random bytes but lack the UUID convenience method used by Elo.
@@ -41,39 +64,134 @@ function ensureRandomUUID() {
   }
 }
 
-export async function loadSponsor(context: string, signal: AbortSignal): Promise<Sponsor | null> {
-  try {
-    if (!sponsorsConfigured() || document.hidden || signal.aborted || !canRequestSponsors())
-      return null;
-    ensureRandomUUID();
-    const sdk = new EloSDK({ publisherId, adUnitId: unitId() });
-    if ((await sdk.init()).status !== "ready") return null;
-    if (!(await foreground(signal)) || !canRequestSponsors()) return null;
-    const { ad } = await sdk.fetchAds({
-      signal,
-      messages: [{ role: "summary", content: context }],
-    });
-    if (!ad?.title || !safeAdUrl(ad.click_url) || signal.aborted || !canRequestSponsors())
-      return null;
-    return { ad, sdk };
-  } catch {
-    return null;
+let session: { consent: string; sdk: SponsorSDK; ready: Promise<SponsorSDK | null> } | undefined;
+sponsorIdentityCleared.subscribe(() => {
+  session = undefined;
+});
+sponsorPreferencesChanged.subscribe((consent) => {
+  if (consent !== "allowed") session = undefined;
+});
+
+// UMP can change in a native dialog without a WebView focus or visibility event.
+class SponsorSDK extends EloSDK {
+  #views = new WeakMap<AdCreative, AbortSignal>();
+
+  constructor(private readonly consentKey: string) {
+    // The pinned SDK accepts baseUrl at runtime. Use the same origin for validation.
+    const config = { publisherId, adUnitId: unitId(), baseUrl: eloOrigin };
+    super(config);
+  }
+
+  attachView(ad: AdCreative, signal: AbortSignal): boolean {
+    if (session?.sdk !== this || signal.aborted) return false;
+    this.#views.set(ad, signal);
+    return true;
+  }
+
+  async canTrack(ad: AdCreative): Promise<boolean> {
+    try {
+      const signal = this.#views.get(ad);
+      const eligible = () =>
+        !signal?.aborted && !document.hidden && canRequestSponsors() && session?.sdk === this;
+      if (!signal || !eligible()) return false;
+      const result = await readSponsorConsent(signal);
+      return (
+        eligible() &&
+        result.status === "allowed" &&
+        JSON.stringify(result.signals) === this.consentKey
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  override async trackImpression(ad: AdCreative) {
+    return (await this.canTrack(ad)) && super.trackImpression(ad);
+  }
+
+  override async trackTap(_ad: AdCreative, _tap: AdTap) {
+    // Elo 0.8.0 retries tap telemetry without a cancellation signal. Link opens
+    // and the SDK's separate, consent-checked click notices still work.
+    return false;
+  }
+
+  override async trackClick(ad: AdCreative) {
+    if (await this.canTrack(ad)) super.trackClick(ad);
   }
 }
 
-// Preserve an already claimed opportunity if the app backgrounds during SDK initialization.
-function foreground(signal: AbortSignal): Promise<boolean> | boolean {
-  if (signal.aborted || !document.hidden) return !signal.aborted;
-  return new Promise((resolve) => {
-    const resume = () => {
-      if (!signal.aborted && document.hidden) return;
-      document.removeEventListener("visibilitychange", resume);
-      signal.removeEventListener("abort", resume);
-      resolve(!signal.aborted);
-    };
-    document.addEventListener("visibilitychange", resume);
-    signal.addEventListener("abort", resume);
+function sdkSession(signals: ConsentSignals) {
+  const consent = JSON.stringify(signals);
+  if (session?.consent === consent) return session;
+  ensureRandomUUID();
+  const sdk = new SponsorSDK(consent);
+  const current = {
+    consent,
+    sdk,
+    ready: withSponsorConsent(signals, () => sdk.init())
+      .then(({ status }) => (status === "ready" ? sdk : null))
+      .catch(() => null),
+  };
+  session = current;
+  void current.ready.then((ready) => {
+    if (!ready && session === current) session = undefined;
   });
+  return current;
+}
+
+export async function loadSponsor(
+  topics: string[],
+  signal: AbortSignal,
+  dimensions: { maxHeight: number; maxWidth: number },
+  visible: () => boolean = () => !document.hidden,
+): Promise<Sponsor | null> {
+  try {
+    const eligible = () => !signal.aborted && !document.hidden && visible() && canRequestSponsors();
+    if (!topics.length || !sponsorsConfigured() || !eligible()) return null;
+    const initial = await readSponsorConsent(signal);
+    if (initial.status !== "allowed" || !eligible()) return null;
+    const current = sdkSession(initial.signals);
+    const sdk = await current.ready;
+    if (!sdk) return null;
+    function stillEligible() {
+      return session === current && eligible();
+    }
+    if (!stillEligible()) return null;
+    const latest = await readSponsorConsent(signal);
+    if (
+      latest.status !== "allowed" ||
+      current.consent !== JSON.stringify(latest.signals) ||
+      !stillEligible()
+    )
+      return null;
+    const { ad } = await sdk.fetchAds({
+      ...dimensions,
+      signal,
+      messages: [{ role: "summary", content: topics[0] }],
+      context: topics.map((description) => ({ type: "topic", description })),
+    });
+    if (!ad?.title || !safeAdUrl(ad.click_url) || !stillEligible()) return null;
+    const trackingUrl = (url: string) =>
+      safeAdUrl(url?.startsWith("/") ? `${eloOrigin}${url}` : url);
+    if (
+      ![ad.render_url, ad.impression_url].every((url) => {
+        const safe = trackingUrl(url);
+        return safe && new URL(safe).origin === eloOrigin;
+      })
+    )
+      return null;
+    // Partner notices can use third-party HTTPS origins.
+    const trackers = ad.trackers?.filter((tracker) => tracker && trackingUrl(tracker.url));
+    // Use the SDK's full-card link. Acode supplies the dismiss control.
+    const presentation = {
+      ...ad.presentation,
+      format: ad.presentation?.format ?? "card",
+      cta_enabled: false,
+    };
+    return { ad: { ...ad, presentation, trackers }, sdk, consent: current.consent };
+  } catch {
+    return null;
+  }
 }
 
 export function safeAdUrl(value: string | undefined): string | undefined {

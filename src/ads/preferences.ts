@@ -4,21 +4,15 @@ export type SponsorConsent = "ask" | "allowed" | "declined";
 const KEY = "acode.ai-agent.sponsors.v1";
 export const sponsorPreferencesChanged = new Signal<SponsorConsent>();
 
+export const sponsorIdentityCleared = new Signal<void>();
+
 let storageBlocked = false;
 
 export const SPONSOR_DISCLOSURE =
-  "Elo receives a broad task category, device and network information, and reads advertising consent signals. It stores an anonymous identifier in local storage and a cookie. Ad partners can receive network information. Your messages, code, files, and account details stay out of ad requests. Sponsored links open an external site.";
+  "Elo receives broad task topics, device and network information, and reads advertising consent signals. It stores an anonymous identifier in local storage and a cookie. Ad partners can receive network information. Your messages, code, files, and account details stay out of ad requests. Sponsored links open an external site. If this version of Acode cannot supply the required device consent signals, suggestions stay off.";
 
 export function canRequestSponsors(): boolean {
-  if (!isFreeAcode() || sponsorConsent() !== "allowed") return false;
-  try {
-    // Check before SDK initialization, which otherwise persists an ID and pings Elo first.
-    const applies = localStorage.getItem("IABTCF_gdprApplies")?.trim();
-    if (applies === undefined || applies === "0") return true;
-    return applies === "1" && Boolean(localStorage.getItem("IABTCF_TCString")?.trim());
-  } catch {
-    return false;
-  }
+  return isFreeAcode() && sponsorConsent() === "allowed";
 }
 
 export function sponsorConsent(): SponsorConsent {
@@ -40,16 +34,27 @@ export function setSponsorConsent(value: SponsorConsent): void {
     storageBlocked = true;
     value = "declined";
   }
-  if (value === "declined") {
+  if (value === "declined") clearSponsorIdentity();
+  sponsorPreferencesChanged.emit(value);
+}
+
+export function clearSponsorIdentity(): void {
+  for (const key of ["elo_visitor_id", "growl_visitor_id"]) {
     try {
-      for (const key of ["elo_visitor_id", "growl_visitor_id"]) localStorage.removeItem(key);
-      for (const name of ["_elo_state", "_growl_state"])
-        document.cookie = `${name}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+      localStorage.removeItem(key);
     } catch {
-      // Storage can be disabled by the host.
+      // Cookie access may still be available.
     }
   }
-  sponsorPreferencesChanged.emit(value);
+  for (const name of ["_elo_state", "_growl_state"]) {
+    try {
+      document.cookie = `${name}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+    } catch {
+      // The host may block cookies.
+    }
+  }
+  // Invalidate live SDK sessions even when storage was empty or inaccessible.
+  sponsorIdentityCleared.emit();
 }
 
 export function isFreeAcode(): boolean {

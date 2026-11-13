@@ -177,6 +177,7 @@ class AcodeAiAgentPlugin {
     mountApp(
       root,
       controller,
+      () => editorManager.activeFile === file,
       (activeChatId) => {
         if (editorManager.activeFile !== file) return;
         record.binding.chatId = activeChatId;

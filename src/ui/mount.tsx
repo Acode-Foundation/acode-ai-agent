@@ -7,11 +7,17 @@ import { App } from "./App";
 export function mountApp(
   container: HTMLElement,
   controller: AgentController,
+  isTabActive: () => boolean,
   onActiveChatChange?: (chatId: string) => void,
   inbox?: Mailbox<ComposerRequest>,
 ): void {
   render(
-    <App controller={controller} onActiveChatChange={onActiveChatChange} inbox={inbox} />,
+    <App
+      controller={controller}
+      isTabActive={isTabActive}
+      onActiveChatChange={onActiveChatChange}
+      inbox={inbox}
+    />,
     container,
   );
 }

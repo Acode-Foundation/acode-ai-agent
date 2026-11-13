@@ -77,110 +77,94 @@
   color: var(--fg);
   font-size: 13px;
 }
-.sponsor-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 11px;
-  min-height: 44px;
+.sponsor {
+  position: relative;
+  isolation: isolate;
 }
-.sponsor-label .icon-button {
+.sponsor[hidden] {
+  display: none;
+}
+/* Paint the full padded frame on its own layer in the Android WebView. */
+.sponsor::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  transform: translateZ(0);
+}
+.sponsor .sponsor-dismiss {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  z-index: 1;
   width: 44px;
   height: 44px;
+  border-radius: 50%;
+  color: var(--muted);
 }
-.sponsor-card,
+.sponsor .sponsor-dismiss:is(:hover, :focus-visible) {
+  color: var(--fg);
+  background: var(--bg);
+}
 .sponsor-consent {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
   background: var(--surface);
 }
-.sponsor-card {
-  padding: 0;
-}
-.sponsor-body {
-  padding: 12px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: inherit;
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-.sponsor-body:focus-visible,
-.sponsor-cta:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
-}
-.sponsor-copy {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  flex: 1;
-  min-width: 0;
-}
-.sponsor-copy img {
-  flex: none;
-  object-fit: contain;
-  border-radius: 8px;
-}
-.sponsor-copy b {
-  font-weight: 600;
-}
-.sponsor-copy p,
 .sponsor-consent p {
   margin: 4px 0 0;
   color: var(--muted);
 }
-.sponsor-copy p {
+.sponsor-card {
+  display: flow-root;
+  /* The outer frame includes both the SDK content and our dismiss control. */
+  box-shadow: none !important;
+}
+.sponsor-card > a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 12px;
+}
+.sponsor-card.elo-ad-card > a > :first-child {
+  gap: 8px !important;
+  min-height: 44px !important;
+  padding-inline-end: 32px;
+}
+.sponsor-card .elo-ad-chevron {
+  display: none;
+}
+.sponsor-card .elo-ad-description {
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+  overflow-wrap: anywhere;
+}
+.sponsor-card .elo-ad-image {
+  width: 32px !important;
+  height: 32px !important;
+}
+@supports (color: color-mix(in srgb, black, transparent)) {
+  .sponsor .sponsor-dismiss:is(:hover, :focus-visible) {
+    background: color-mix(in srgb, var(--fg) 7%, transparent);
+  }
+}
+.sponsor-card.elo-ad-strip > a {
+  gap: 6px !important;
+}
+.sponsor-card.elo-ad-strip .elo-ad-title,
+.sponsor-card.elo-ad-strip .elo-ad-description {
+  margin-inline-end: 30px;
+}
+.sponsor-card.elo-ad-strip .elo-ad-description {
   display: -webkit-box;
-  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
-  overflow: hidden;
+  -webkit-line-clamp: 2;
+  white-space: normal !important;
 }
-.sponsor-card.strip .sponsor-body {
-  box-sizing: border-box;
-  padding: 14px;
-}
-.sponsor-card.strip .sponsor-copy p,
-.sponsor-card.strip .sponsor-copy b {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sponsor-card.strip .sponsor-copy > div {
-  min-width: 0;
-}
-.sponsor-cta {
-  gap: 4px;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .sponsor-card[data-viewable][data-variant="icon_bounce"] .sponsor-cta svg {
-    animation: sponsor-arrow 5s infinite;
-  }
-  .sponsor-card[data-viewable][data-variant="icon_shimmer"] .sponsor-cta {
-    animation: sponsor-shimmer 5s infinite;
-  }
-  @keyframes sponsor-arrow {
-    5% {
-      transform: translateX(2px);
-    }
-    12% {
-      transform: translateX(0);
-    }
-  }
-  @keyframes sponsor-shimmer {
-    5% {
-      filter: brightness(1.15);
-    }
-    15% {
-      filter: brightness(1);
-    }
-  }
-}
-.sponsor-cta,
 .sponsor-allow {
   flex: none;
   display: inline-flex;
@@ -274,6 +258,8 @@
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  /* Keep the scrolling dock from painting a seam through the banner on Android. */
+  transform: translateZ(0);
 }
 .provider-setup > div {
   flex: 1;

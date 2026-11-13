@@ -1,6 +1,8 @@
 # 0.6.0
 
-- Added opt-in sponsored suggestions for free Acode users. Only a broad task category is shared from the chat. Turn suggestions off in the AI settings.
+- Added opt-in sponsored suggestions for free Acode users. The plugin shares up to three broad task topics after checking native ad consent. After two successful turns, the next eligible turn can show a compact suggestion while you wait or after the answer. Attempts are at least five minutes apart. Tap the card to open the link, or dismiss it with ×. Either action removes it for that turn. Turn suggestions off in AI settings. Hosts that report an obtained decision without the required consent signals skip ads.
+- When device consent is required or the device reports a definite denial, the plugin clears Elo’s stored identifiers and session. An unknown or unavailable consent result pauses ads and preserves the identifiers.
+- Sponsored links can send consent-checked click notices. Tap position and open-attempt telemetry are disabled.
 
 # 0.5.0
 

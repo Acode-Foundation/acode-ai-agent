@@ -7,11 +7,15 @@ import {
   sponsorConsent,
   sponsorPreferencesChanged,
 } from "../ads/preferences";
+import { useSponsorOptInAvailable } from "./useSponsorOptInAvailable";
 
 export function SponsorSettings() {
   const [consent, setConsent] = useState(sponsorConsent);
   useEffect(() => sponsorPreferencesChanged.subscribe(setConsent), []);
-  if (!sponsorsConfigured() || !isFreeAcode()) return null;
+  const free = isFreeAcode();
+  const available = useSponsorOptInAvailable(free && sponsorsConfigured() && consent !== "allowed");
+  // An opted-in user can always withdraw, including when the native bridge goes offline.
+  if (!free || (consent !== "allowed" && !available)) return null;
   return (
     <div class="sponsor-settings">
       <label class="toggle">

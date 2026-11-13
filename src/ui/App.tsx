@@ -62,19 +62,20 @@ import { parseSlashCommand } from "../core/slashCommands";
 import { showToast } from "../platform/toast";
 import { useProviderCredential } from "./useProviderCredential";
 import { CHATGPT_USAGE_URL, type ChatGPTRegistration } from "../providers/chatgptOAuth";
-import { AgentIcon } from "./AgentIcon";
+import { ProviderSetup } from "./ProviderSetup";
 import { useSponsor } from "./useSponsor";
 import { SponsoredCard } from "./SponsoredCard";
 import { SponsorSettings } from "./SponsorSettings";
 
 type Props = {
   controller: AgentController;
+  isTabActive(): boolean;
   onActiveChatChange?: (chatId: string) => void;
   /** Requests from the editor and terminal menus. */
   inbox?: Mailbox<ComposerRequest>;
 };
 
-export function App({ controller, onActiveChatChange, inbox }: Props) {
+export function App({ controller, isTabActive, onActiveChatChange, inbox }: Props) {
   const [state, setState] = useState<PublicAgentState>(controller.state);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [piSettingsOpen, setPiSettingsOpen] = useState(false);
@@ -113,7 +114,6 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     state.settings.customEndpoints,
   );
   const provider = controller.listProviders().find((item) => item.id === state.settings.providerId);
-  const providerName = provider?.name ?? state.settings.providerId;
   const running = state.status === "running";
   const waitingOnAsk = Boolean(state.questionnaire);
   const workingLabel = state.retry
@@ -158,7 +158,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     saved: ComposerDraft;
   }>();
   const sponsor = useSponsor(
-    shellRef,
+    scrollRef,
     state.activeChatId,
     running,
     turns.at(-1),
@@ -175,6 +175,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
       state.questionnaire ||
       editing,
     ),
+    isTabActive,
   );
   useEffect(() => setEditing(undefined), [state.activeChatId]);
 
@@ -690,20 +691,11 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
 
       <div class="agent-dock">
         <div class="agent-dock-panels">
-          {connected === false && (
-            <div class="provider-setup">
-              <AgentIcon size={22} />
-              <div>
-                <b>Connect to {providerName}</b>
-                <span>
-                  {provider?.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
-                </span>
-              </div>
-              <button type="button" onClick={() => setSettingsOpen(true)}>
-                Configure
-              </button>
-            </div>
-          )}
+          <ProviderSetup
+            provider={provider}
+            connected={connected}
+            onConfigure={() => setSettingsOpen(true)}
+          />
           {state.questionnaire && (
             <AskCard
               prompt={state.questionnaire}

@@ -1,12 +1,19 @@
-import type { AdTapRegion } from "@elo-ads/web-sdk/core";
-import { ArrowRight, ChevronRight, X } from "lucide-preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { mountEloAd } from "@elo-ads/web-sdk/core";
+import { X } from "lucide-preact";
+import { useLayoutEffect, useRef } from "preact/hooks";
+import { readSponsorConsent } from "../ads/consent";
 import { safeAdUrl } from "../ads/elo";
-import { canRequestSponsors, setSponsorConsent, SPONSOR_DISCLOSURE } from "../ads/preferences";
+import {
+  canRequestSponsors,
+  setSponsorConsent,
+  sponsorPreferencesChanged,
+  sponsorIdentityCleared,
+  SPONSOR_DISCLOSURE,
+} from "../ads/preferences";
 import type { SponsorPlacement, SponsorSession } from "../ads/session";
-import { observeSponsor } from "../ads/viewability";
 import { openCustomTab } from "../platform/authTab";
 import { showToast } from "../platform/toast";
+import { useSponsorOptInAvailable } from "./useSponsorOptInAvailable";
 
 export function SponsoredCard({
   placement,
@@ -16,22 +23,139 @@ export function SponsoredCard({
   session: SponsorSession;
 }) {
   const root = useRef<HTMLDivElement>(null);
-  const [imageFailed, setImageFailed] = useState(false);
-  const opening = useRef(false);
-  const lastClick = useRef(-Infinity);
   const sponsor = placement.sponsor;
   const ad = sponsor?.ad;
-  useEffect(() => {
-    if (!sponsor || !safeAdUrl(sponsor.ad.click_url) || !root.current) return;
-    return observeSponsor(root.current, sponsor, canRequestSponsors);
-  }, [sponsor]);
-  useEffect(() => setImageFailed(false), [ad]);
+  const canOfferOptIn = useSponsorOptInAvailable(!sponsor);
+  useLayoutEffect(() => {
+    const element = root.current;
+    if (!element || !sponsor || !safeAdUrl(sponsor.ad.click_url)) return;
+    const ad = sponsor.ad;
+    const creative =
+      ad.image_url && !safeAdUrl(ad.image_url) ? { ...ad, image_url: undefined } : ad;
+    const frame = element.parentElement!;
+    let checking = false;
+    let view: AbortController | undefined;
+    let focusFrame = 0;
+    let unmount: (() => void) | undefined;
+    const stop = () => {
+      cancelAnimationFrame(focusFrame);
+      checking = false;
+      view?.abort();
+      view = undefined;
+      frame.hidden = true;
+      try {
+        unmount?.();
+      } catch {
+        // A failed SDK cleanup must not interrupt the chat.
+      } finally {
+        unmount = undefined;
+        element.replaceChildren();
+      }
+    };
+    const refresh = async () => {
+      cancelAnimationFrame(focusFrame);
+      if (document.hidden || !canRequestSponsors()) {
+        stop();
+        return;
+      }
+      if (checking) return;
+      checking = true;
+      const current = (view ??= new AbortController());
+      let result;
+      try {
+        result = await readSponsorConsent(current.signal);
+      } catch {
+        if (view === current) stop();
+        return;
+      } finally {
+        // A paused view can settle after its replacement has started checking.
+        if (view === current) checking = false;
+      }
+      if (current.signal.aborted) return;
+      if (document.hidden || result.status === "unavailable") {
+        stop();
+        return;
+      }
+      if (
+        result.status !== "allowed" ||
+        JSON.stringify(result.signals) !== sponsor.consent ||
+        !canRequestSponsors() ||
+        !sponsor.sdk.attachView(creative, current.signal)
+      ) {
+        stop();
+        session.clear();
+        return;
+      }
+      if (unmount) return;
+      if (typeof IntersectionObserver !== "function") {
+        session.clear();
+        return;
+      }
+      try {
+        frame.hidden = false;
+        unmount = mountEloAd(element, sponsor.sdk, creative, {
+          sponsoredLabel: "Sponsored · Elo",
+          openUrl: async (value) => {
+            const url = safeAdUrl(value);
+            if (!url) return;
+            const allowed = await sponsor.sdk.canTrack(creative);
+            if (current.signal.aborted) return;
+            if (!allowed) {
+              // Elo already counted this as an open attempt. Reset the view before retrying.
+              stop();
+              void refresh();
+              return;
+            }
+            try {
+              await openCustomTab(url);
+            } catch {
+              showToast("Could not open this sponsored link.");
+              return;
+            }
+            // The native callback can arrive after a pause or even a chat switch.
+            if (session.placement === placement) session.clear();
+          },
+        });
+      } catch {
+        stop();
+        session.clear();
+      }
+    };
+    const onFocus = () => {
+      cancelAnimationFrame(focusFrame);
+      focusFrame = requestAnimationFrame(() => void refresh());
+    };
+    const unsubscribe = sponsorPreferencesChanged.subscribe((consent) => {
+      if (consent !== "allowed") stop();
+    });
+    const identityCleared = sponsorIdentityCleared.subscribe(() => {
+      stop();
+      session.clear();
+    });
+    document.addEventListener("visibilitychange", refresh);
+    document.addEventListener("pause", stop);
+    document.addEventListener("resume", refresh);
+    window.addEventListener("focus", onFocus);
+    frame.hidden = true;
+    void refresh();
+    return () => {
+      unsubscribe();
+      identityCleared();
+      document.removeEventListener("visibilitychange", refresh);
+      document.removeEventListener("pause", stop);
+      document.removeEventListener("resume", refresh);
+      window.removeEventListener("focus", onFocus);
+      stop();
+      frame.hidden = false;
+    };
+  }, [placement, sponsor, session]);
 
-  if (!ad || !sponsor)
+  if (!ad || !sponsor) {
+    if (!canOfferOptIn) return null;
     return (
       <aside class="sponsor-consent" aria-label="Sponsored suggestions">
         <b>Support free Acode</b>
-        <p>Allow occasional sponsored suggestions after an answer?</p>
+        <p>Allow occasional sponsored suggestions while the agent works or after an answer?</p>
         <p class="sponsor-disclosure">{SPONSOR_DISCLOSURE}</p>
         <div class="sponsor-choices">
           <button
@@ -68,123 +192,20 @@ export function SponsoredCard({
         </div>
       </aside>
     );
+  }
 
-  const url = safeAdUrl(ad.click_url);
-  if (!url) return null;
-  const image = !imageFailed && safeAdUrl(ad.image_url);
-  const cta = ad.presentation?.cta_enabled !== false && ad.cta_text?.trim();
-  const ctaOnly = Boolean(
-    cta &&
-    (ad.presentation?.tap_surface ?? (ad.presentation?.format === "strip" ? "cta" : "full")) ===
-      "cta",
-  );
-  const strip = ad.presentation?.format === "strip";
-  const padding = strip ? 14 : 12;
-  const inset = ctaOnly
-    ? 0
-    : Math.min(padding, Math.max(0, Math.floor(ad.presentation?.tap_inset ?? 0)));
-  const variant = ad.presentation?.cta_variant ?? "control";
-  const link = {
-    href: url,
-    target: "_blank",
-    rel: "noopener noreferrer",
-    referrerPolicy: "no-referrer" as const,
-  };
-  const reportTap = async (event: MouseEvent) => {
-    if (event.type === "auxclick" && event.button !== 1) return;
-    event.preventDefault();
-    if (document.hidden || !canRequestSponsors()) return;
-    const target = event.target as Element;
-    const bounds = root.current!.getBoundingClientRect();
-    const region = target.closest<HTMLElement>("[data-ad-region]")?.dataset.adRegion ?? "chrome";
-    const tap = {
-      region: region as AdTapRegion,
-      x:
-        event.detail && bounds.width
-          ? Math.min(1, Math.max(0, (event.clientX - bounds.x) / bounds.width))
-          : 0.5,
-      y:
-        event.detail && bounds.height
-          ? Math.min(1, Math.max(0, (event.clientY - bounds.y) / bounds.height))
-          : 0.5,
-      width: bounds.width,
-      height: bounds.height,
-    };
-    let opened = false;
-    if (target.closest("a") && !opening.current && Date.now() - lastClick.current >= 1000) {
-      opening.current = true;
-      lastClick.current = Date.now();
-      try {
-        await openCustomTab(url);
-        opened = true;
-      } catch {
-        showToast("Could not open this sponsored link.");
-      } finally {
-        opening.current = false;
-      }
-    }
-    if (canRequestSponsors()) void sponsor.sdk.trackTap(ad, { ...tap, opened }).catch(() => {});
-  };
-  const Cta = ctaOnly ? "a" : "span";
-  const content = (
-    <>
-      <div class="sponsor-copy">
-        {image && (
-          <img
-            src={image}
-            alt=""
-            width="36"
-            height="36"
-            loading="lazy"
-            decoding="async"
-            referrerPolicy="no-referrer"
-            onError={() => setImageFailed(true)}
-            data-ad-region="thumbnail"
-          />
-        )}
-        <div>
-          <b data-ad-region="headline">{ad.title}</b>
-          {ad.description && <p data-ad-region="description">{ad.description}</p>}
-        </div>
-      </div>
-      {cta ? (
-        <Cta {...(ctaOnly ? link : {})} class="sponsor-cta" data-ad-region="cta">
-          {cta}
-          {variant !== "control" && <ArrowRight size={14} />}
-        </Cta>
-      ) : (
-        <ChevronRight size={18} aria-hidden="true" data-ad-region="chevron" />
-      )}
-    </>
-  );
+  if (!safeAdUrl(ad.click_url)) return null;
   return (
     <aside class="sponsor" aria-label="Sponsored suggestion">
-      <div class="sponsor-label">
-        <span>Sponsored · Elo</span>
-        <button
-          type="button"
-          class="icon-button"
-          aria-label="Dismiss sponsored suggestion"
-          onClick={() => session.clear()}
-        >
-          <X size={14} />
-        </button>
-      </div>
-      <div
-        class={`sponsor-card${strip ? " strip" : ""}`}
-        ref={root}
-        data-variant={variant}
-        onClick={reportTap}
-        onAuxClick={reportTap}
+      <div class="sponsor-card" ref={root} />
+      <button
+        type="button"
+        class="icon-button sponsor-dismiss"
+        aria-label="Dismiss sponsored suggestion"
+        onClick={() => session.clear()}
       >
-        {ctaOnly ? (
-          <div class="sponsor-body">{content}</div>
-        ) : (
-          <a {...link} class="sponsor-body" style={{ margin: inset, padding: padding - inset }}>
-            {content}
-          </a>
-        )}
-      </div>
+        <X size={16} />
+      </button>
     </aside>
   );
 }

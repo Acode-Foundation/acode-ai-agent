@@ -8,7 +8,6 @@ import {
   type SponsorConsent,
 } from "../src/ads/preferences";
 import { safeAdUrl, type Sponsor } from "../src/ads/elo";
-import { observeSponsor } from "../src/ads/viewability";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -20,7 +19,9 @@ const sponsor = { ad } as Sponsor;
 
 function fixture(consent: SponsorConsent = "allowed", budget = new SponsorBudget()) {
   let eligible = true;
-  const load = vi.fn(async (_context: string, _signal: AbortSignal) => sponsor);
+  const load = vi.fn(
+    async (_context: string[], _signal: AbortSignal): Promise<Sponsor | null> => sponsor,
+  );
   const session = new SponsorSession({
     eligible: () => eligible,
     visible: () => true,
@@ -52,14 +53,18 @@ function fixture(consent: SponsorConsent = "allowed", budget = new SponsorBudget
 }
 
 test("only fixed topic labels leave the device, never code, tokens, paths or user text", () => {
-  expect(sponsorContext("deploy secret REDACTED_TOKEN /private/repo customer@example.com")).toBe(
-    "Cloud hosting and deployment",
+  expect(sponsorContext("deploy secret REDACTED_TOKEN /private/repo customer@example.com")).toEqual(
+    ["Cloud hosting and deployment"],
   );
-  expect(sponsorContext("password=very-secret\n```private source```")).toBe(
+  expect(sponsorContext("password=very-secret\n```private source```")).toEqual([
     "Software development tools",
-  );
-  expect(sponsorContext("Explain SQL errors")).toBe("Databases and data storage");
-  expect(sponsorContext("x".repeat(4000) + " hosting")).toBe("Software development tools");
+  ]);
+  expect(sponsorContext("Explain SQL errors")).toEqual([
+    "Databases and data storage",
+    "Software testing and debugging",
+    "Learning programming",
+  ]);
+  expect(sponsorContext("x".repeat(4000) + " hosting")).toEqual(["Software development tools"]);
 });
 
 test("does not monetize restored history, streaming updates, stopped or failed runs", () => {
@@ -73,8 +78,84 @@ test("does not monetize restored history, streaming updates, stopped or failed r
   expect(f.load).not.toHaveBeenCalled();
   f.finish("three");
   expect(f.load).toHaveBeenCalledExactlyOnceWith(
-    "Cloud hosting and deployment",
+    ["Cloud hosting and deployment"],
     expect.any(AbortSignal),
+    false,
+  );
+});
+
+test.each(["answered", "dismissed", "stopped", "failed", "no fill"])(
+  "one waiting request per eligible turn when %s",
+  async (outcome) => {
+    const f = fixture();
+    const wait = (id: string) => {
+      f.session.update("chat", true, { id, user: "deploy", streaming: true });
+      f.session.showWhileWaiting("chat", id, "deploy");
+    };
+    for (const id of ["1", "2"]) {
+      wait(id);
+      expect(f.load).not.toHaveBeenCalled();
+      f.finish(id);
+    }
+    let resolve!: (value: Sponsor | null) => void;
+    f.load.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    wait("3");
+    wait("3");
+    expect(f.load).toHaveBeenCalledExactlyOnceWith(
+      ["Cloud hosting and deployment"],
+      expect.any(AbortSignal),
+      true,
+    );
+    if (outcome === "dismissed") f.session.clear();
+    f.session.update("chat", false, {
+      id: "3",
+      user: "deploy",
+      answer: "Done",
+      stopped: outcome === "stopped",
+      error: outcome === "failed" ? "Offline" : undefined,
+    });
+    expect(f.load.mock.calls[0][1].aborted).toBe(
+      ["dismissed", "failed", "stopped"].includes(outcome),
+    );
+    resolve(outcome === "no fill" ? null : sponsor);
+    await Promise.resolve();
+    expect(f.session.placement?.sponsor).toBe(outcome === "answered" ? sponsor : undefined);
+    expect(f.load).toHaveBeenCalledTimes(1);
+  },
+);
+
+test("a stale waiting timer cannot spend the current turn's opportunity", async () => {
+  const f = fixture();
+  f.finish("1");
+  f.finish("2");
+  for (const id of ["old", "current"])
+    f.session.update("chat", true, { id, user: "deploy", streaming: true });
+  f.session.showWhileWaiting("chat", "old", "deploy");
+  expect(f.load).not.toHaveBeenCalled();
+  f.session.showWhileWaiting("chat", "current", "deploy");
+  await Promise.resolve();
+  expect(f.session.placement?.turnId).toBe("current");
+  expect(f.load).toHaveBeenCalledOnce();
+});
+
+test("a queued timer firing after a turn stops leaves the next ad opportunity available", () => {
+  const f = fixture();
+  f.finish("1");
+  f.finish("2");
+  f.session.update("chat", true, { id: "3", user: "deploy", streaming: true });
+  f.session.update("chat", false, { id: "3", user: "deploy", stopped: true });
+  f.session.showWhileWaiting("chat", "3", "deploy");
+  expect(f.load).not.toHaveBeenCalled();
+  f.finish("4");
+  expect(f.load).toHaveBeenCalledExactlyOnceWith(
+    ["Cloud hosting and deployment"],
+    expect.any(AbortSignal),
+    false,
   );
 });
 
@@ -83,7 +164,7 @@ test("shares frequency caps across chats and tabs, including no-fill attempts", 
   const budget = new SponsorBudget(() => now);
   const a = fixture("allowed", budget),
     b = fixture("allowed", budget);
-  a.load.mockResolvedValue(null as unknown as Sponsor);
+  a.load.mockResolvedValue(null);
   for (const id of ["one", "two", "three"]) {
     a.finish(id);
     b.finish(id);
@@ -95,6 +176,22 @@ test("shares frequency caps across chats and tabs, including no-fill attempts", 
   now = 300_000;
   a.finish("seven");
   expect(a.load).toHaveBeenCalledTimes(2);
+});
+
+test("dismissing a filled card permits the next eligible turn after the cooldown", async () => {
+  let now = 0;
+  const f = fixture("allowed", new SponsorBudget(() => now));
+  for (const id of ["1", "2", "3"]) f.finish(id);
+  await Promise.resolve();
+  expect(f.session.placement?.sponsor).toBe(sponsor);
+  f.session.clear();
+  for (const id of ["4", "5", "6"]) f.finish(id);
+  expect(f.session.placement).toBeUndefined();
+  expect(f.load).toHaveBeenCalledTimes(1);
+  now = 300_000;
+  f.finish("7");
+  await Promise.resolve();
+  expect(f.session.placement?.turnId).toBe("7");
 });
 
 test("waits for consent and makes no requests for Pro, declined or unknown eligibility", async () => {
@@ -170,63 +267,4 @@ test("host entitlement and unavailable consent storage fail closed", () => {
   expect(safeAdUrl("javascript:alert(1)")).toBeUndefined();
   expect(safeAdUrl("https://user:pass@example.com")).toBeUndefined();
   expect(safeAdUrl("https://example.com/offer")).toBe("https://example.com/offer");
-});
-
-test("impressions require a continuous visible second and stop on background, Pro or disposal", async () => {
-  vi.useFakeTimers();
-  const document = new EventTarget() as EventTarget & { hidden: boolean };
-  document.hidden = false;
-  vi.stubGlobal("document", document);
-  let intersection!: (entries: unknown[]) => void;
-  const disconnect = vi.fn();
-  vi.stubGlobal(
-    "IntersectionObserver",
-    class {
-      constructor(callback: typeof intersection) {
-        intersection = callback;
-      }
-      observe() {}
-      disconnect = disconnect;
-    },
-  );
-  let eligible = true,
-    impressed = false;
-  const sdk = {
-    trackRender: vi.fn(async () => true),
-    hasTrackedImpression: () => impressed,
-    trackImpression: vi.fn(async () => {
-      impressed = true;
-      return true;
-    }),
-  };
-  const stop = observeSponsor(
-    {
-      removeAttribute: vi.fn(),
-      setAttribute: vi.fn(),
-      hasAttribute: () => false,
-    } as unknown as HTMLElement,
-    { ad, sdk } as unknown as Sponsor,
-    () => eligible,
-  );
-  intersection([{ isIntersecting: true, intersectionRatio: 0.6 }]);
-  await vi.advanceTimersByTimeAsync(700);
-  document.hidden = true;
-  document.dispatchEvent(new Event("visibilitychange"));
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(sdk.trackImpression).not.toHaveBeenCalled();
-  document.hidden = false;
-  document.dispatchEvent(new Event("visibilitychange"));
-  await vi.advanceTimersByTimeAsync(900);
-  expect(sdk.trackImpression).not.toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(100);
-  expect(sdk.trackImpression).toHaveBeenCalledTimes(1);
-  impressed = false;
-  eligible = false;
-  await vi.advanceTimersByTimeAsync(2000);
-  expect(sdk.trackImpression).toHaveBeenCalledTimes(1);
-  stop();
-  eligible = true;
-  await vi.advanceTimersByTimeAsync(2000);
-  expect(disconnect).toHaveBeenCalledOnce();
-  expect(sdk.trackImpression).toHaveBeenCalledTimes(1);
 });

@@ -9,8 +9,8 @@ const TOPICS: Array<[RegExp, string]> = [
   [/\b(learn(?:ing)?|tutorial|explain|beginner)\b/i, "Learning programming"],
 ];
 
-export function sponsorContext(prompt: string): string {
+export function sponsorContext(prompt: string): string[] {
   const sample = prompt.slice(0, 4000);
-  const topic = TOPICS.find(([pattern]) => pattern.test(sample))?.[1];
-  return topic ?? "Software development tools";
+  const topics = TOPICS.filter(([pattern]) => pattern.test(sample)).slice(0, 3);
+  return topics.length ? topics.map(([, label]) => label) : ["Software development tools"];
 }

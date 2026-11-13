@@ -1,5 +1,5 @@
 import type { RefObject } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { loadSponsor, sponsorsConfigured } from "../ads/elo";
 import { isFreeAcode, sponsorConsent, sponsorPreferencesChanged } from "../ads/preferences";
 import { SponsorBudget, SponsorSession, type SponsorPlacement } from "../ads/session";
@@ -14,44 +14,82 @@ export function useSponsor(
   running: boolean,
   turn: ChatTurn | undefined,
   obscured: boolean,
+  isTabActive: () => boolean,
 ) {
   const [placement, setPlacement] = useState<SponsorPlacement>();
   const [hidden, setHidden] = useState(document.hidden);
+  const [consent, setConsent] = useState(sponsorConsent);
   const obscuredRef = useRef(obscured);
   obscuredRef.current = obscured;
-  const [session] = useState(
-    () =>
-      new SponsorSession({
-        budget,
-        consent: sponsorConsent,
-        eligible: () => sponsorsConfigured() && isFreeAcode(),
-        visible: () =>
-          !document.hidden &&
-          !obscuredRef.current &&
-          Boolean(root.current?.getClientRects().length),
-        load: loadSponsor,
-      }),
-  );
+  const [session] = useState(() => {
+    const visible = () =>
+      !document.hidden &&
+      isTabActive() &&
+      !obscuredRef.current &&
+      Boolean(root.current?.getClientRects().length);
+    return new SponsorSession({
+      budget,
+      consent: sponsorConsent,
+      eligible: () => sponsorsConfigured() && isFreeAcode(),
+      visible,
+      load: (topics, signal, waiting) => {
+        const conversation = root.current;
+        const turn = conversation?.querySelector<HTMLElement>(".turn:last-of-type");
+        if (!conversation || !turn) return Promise.resolve(null);
+        // The turn scrolls. Use the viewport height less the margin above the card.
+        const maxHeight = Math.floor(conversation.clientHeight - 14);
+        const maxWidth = Math.floor(turn.getBoundingClientRect().width);
+        if (maxHeight < 72 || maxWidth <= 0) return Promise.resolve(null);
+        return loadSponsor(
+          topics,
+          signal,
+          { maxHeight: waiting ? 72 : maxHeight, maxWidth },
+          visible,
+        );
+      },
+    });
+  });
   useEffect(() => {
     const unsubscribe = session.changes.subscribe(setPlacement);
-    const preferences = sponsorPreferencesChanged.subscribe(() => session.refresh());
     const refresh = () => {
-      setHidden(document.hidden);
+      setHidden(
+        document.hidden ||
+          !isTabActive() ||
+          !root.current?.getClientRects().length ||
+          !sponsorsConfigured() ||
+          !isFreeAcode(),
+      );
       session.refresh();
     };
-    document.addEventListener("visibilitychange", refresh);
-    document.addEventListener("resume", refresh);
-    window.addEventListener("focus", refresh);
+    const preferences = sponsorPreferencesChanged.subscribe((value) => {
+      setConsent(value);
+      refresh();
+    });
+    let frame = 0;
+    const afterLayout = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(refresh);
+    };
+    const onVisibility = () => (document.hidden ? refresh() : afterLayout());
+    const onSwitch = () => (isTabActive() ? afterLayout() : refresh());
+    refresh();
+    if (typeof editorManager !== "undefined") editorManager.on("switch-file", onSwitch);
+    document.addEventListener("visibilitychange", onVisibility);
+    document.addEventListener("resume", afterLayout);
+    window.addEventListener("focus", afterLayout);
     return () => {
       unsubscribe();
       preferences();
-      document.removeEventListener("visibilitychange", refresh);
-      document.removeEventListener("resume", refresh);
-      window.removeEventListener("focus", refresh);
+      cancelAnimationFrame(frame);
+      if (typeof editorManager !== "undefined") editorManager.off("switch-file", onSwitch);
+      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("resume", afterLayout);
+      window.removeEventListener("focus", afterLayout);
       session.dispose();
     };
-  }, [session]);
-  useEffect(() => {
+  }, [session, root, isTabActive]);
+  // Invalidate the old turn at commit, before a queued waiting timer can fire.
+  useLayoutEffect(() => {
     session.update(chatId, running, turn);
   }, [
     session,
@@ -63,7 +101,24 @@ export function useSponsor(
     turn?.stopped,
     turn?.streaming,
   ]);
+  const waiting =
+    consent === "allowed" &&
+    running &&
+    turn?.streaming &&
+    !turn.answer &&
+    !turn.error &&
+    !turn.stopped;
+  const waitingId = waiting ? turn.id : undefined;
+  const waitingPrompt = waiting ? turn.user : undefined;
   useEffect(() => {
+    if (!chatId || !waitingId || !waitingPrompt || obscured || hidden) return;
+    const timer = setTimeout(
+      () => session.showWhileWaiting(chatId, waitingId, waitingPrompt),
+      3000,
+    );
+    return () => clearTimeout(timer);
+  }, [session, chatId, waitingId, waitingPrompt, obscured, hidden]);
+  useLayoutEffect(() => {
     session.refresh();
   }, [session, obscured, hidden]);
   return {
