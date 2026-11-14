@@ -281,7 +281,7 @@ export function SidebarApp({
                   {chats.map((chat) => {
                     const available = workspaceIds.has(chat.workspaceId);
                     return (
-                      <div class="as-session" key={chat.id}>
+                      <div class={`as-session${chat.running ? " running" : ""}`} key={chat.id}>
                         <button
                           class="as-session-open"
                           aria-current={chat.id === state.activeChatId ? "page" : undefined}
@@ -294,7 +294,7 @@ export function SidebarApp({
                               : "Open this project in Acode to resume"
                           }
                         >
-                          {chat.running && <i class="as-status" aria-hidden="true" />}
+                          <i class="as-status" aria-hidden="true" />
                           <span>
                             <b>{chat.title}</b>
                             <small>
