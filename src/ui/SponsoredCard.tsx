@@ -23,6 +23,7 @@ export function SponsoredCard({
   budget: SponsorBudget;
 }) {
   const root = useRef<HTMLDivElement>(null);
+  const label = useRef<HTMLDivElement>(null);
   const sponsor = placement.sponsor;
   const ad = sponsor.ad;
   useLayoutEffect(() => {
@@ -32,7 +33,8 @@ export function SponsoredCard({
     // View signals are keyed by creative object; each mounted view owns its signal.
     const creative = { ...ad };
     if (creative.image_url && !safeAdUrl(creative.image_url)) delete creative.image_url;
-    const frame = element.parentElement!;
+    const frame = element.closest<HTMLElement>(".sponsor");
+    if (!frame) return;
     let checking = false;
     let view: AbortController | undefined;
     let focusFrame = 0;
@@ -55,6 +57,7 @@ export function SponsoredCard({
       } finally {
         unmount = undefined;
         element.replaceChildren();
+        label.current?.replaceChildren();
       }
     };
     const refresh = async () => {
@@ -132,8 +135,8 @@ export function SponsoredCard({
           const title = element.querySelector(".elo-ad-title");
           const disclosure = title?.querySelector(".elo-ad-sponsored");
           if (title && disclosure) {
-            // Keep the SDK disclosure and tracking selector, but place it below the copy.
-            title.parentElement?.append(disclosure);
+            // Keep Elo's disclosure visible outside the clickable card.
+            label.current?.replaceChildren(disclosure);
             title.textContent = creative.title;
           }
         }
@@ -174,20 +177,23 @@ export function SponsoredCard({
   if (!safeAdUrl(ad.click_url)) return null;
   return (
     <aside class="sponsor" aria-label="Sponsored suggestion">
-      {ad.presentation?.format === "strip" && (
-        <span class="sponsor-thumbnail" aria-hidden="true">
-          <Megaphone size={18} />
-        </span>
-      )}
-      <div class="sponsor-card" ref={root} />
-      <button
-        type="button"
-        class="icon-button sponsor-dismiss"
-        aria-label="Dismiss sponsored suggestion"
-        onClick={() => budget.dismiss(placement, true)}
-      >
-        <X size={16} />
-      </button>
+      <div class="sponsor-label" ref={label} />
+      <div class="sponsor-body">
+        {ad.presentation?.format === "strip" && (
+          <span class="sponsor-thumbnail" aria-hidden="true">
+            <Megaphone size={18} />
+          </span>
+        )}
+        <div class="sponsor-card" ref={root} />
+        <button
+          type="button"
+          class="icon-button sponsor-dismiss"
+          aria-label="Dismiss sponsored suggestion"
+          onClick={() => budget.dismiss(placement, true)}
+        >
+          <X size={14} />
+        </button>
+      </div>
     </aside>
   );
 }

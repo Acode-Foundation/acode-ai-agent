@@ -88,7 +88,7 @@
   color: var(--fg);
   pointer-events: none;
 }
-.sponsor-no-image > .sponsor-thumbnail {
+.sponsor-no-image .sponsor-thumbnail {
   display: grid;
   place-items: center;
 }
@@ -103,6 +103,8 @@
 }
 .sponsor {
   margin-top: 14px;
+}
+.sponsor-body {
   position: relative;
   isolation: isolate;
 }
@@ -125,7 +127,7 @@
   display: none;
 }
 /* Paint the full padded frame on its own layer in the Android WebView. */
-.sponsor::before {
+.sponsor-body::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -143,6 +145,8 @@
   z-index: 1;
   width: 44px;
   height: 44px;
+  place-items: start end;
+  padding: 6px;
   border-radius: 50%;
   color: var(--muted);
 }
@@ -215,34 +219,33 @@
 .sponsor-card.elo-ad-strip > a {
   /* Android text scaling enlarges copy independently of the SDK's fixed height. */
   height: auto !important;
-  min-height: calc(72px - 2 * var(--sponsor-inset, 0px));
+  min-height: max(0px, calc(44px - 2 * var(--sponsor-inset, 0px)));
   gap: 6px !important;
   padding: max(0px, calc(8px - var(--sponsor-inset, 0px)))
-    max(0px, calc(10px - var(--sponsor-inset, 0px))) max(0px, calc(4px - var(--sponsor-inset, 0px))) !important;
-}
-.sponsor-card.elo-ad-strip .elo-ad-title,
-.sponsor-card.elo-ad-strip .elo-ad-description {
-  margin-inline-end: 34px;
+    max(0px, calc(10px - var(--sponsor-inset, 0px))) !important;
 }
 .sponsor-card.elo-ad-strip .elo-ad-title {
+  margin-inline-end: 34px;
   line-height: 18px;
 }
-.sponsor-card.elo-ad-strip .elo-ad-sponsored {
+.sponsor-label:not(:empty) {
+  margin: 0 10px 3px;
+}
+.sponsor-label .elo-ad-sponsored {
   display: block;
-  margin-top: 6px;
-  /* Align with the 32px thumbnail across the link's 6px column gap. */
-  margin-inline-start: -38px;
-  font-size: 11px !important;
+  text-align: left;
+  font-size: 9px !important;
   line-height: 12px;
-  opacity: 0.8 !important;
-  /* Do not extend the SDK link into its non-clickable tap inset. */
-  pointer-events: none;
+  color: var(--muted) !important;
+  opacity: 1 !important;
 }
 .sponsor-card.elo-ad-strip .elo-ad-description {
-  margin-top: 1px !important;
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+  margin-top: 2px !important;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
+  -webkit-line-clamp: 2;
   white-space: normal !important;
 }
 .sponsor-choices {

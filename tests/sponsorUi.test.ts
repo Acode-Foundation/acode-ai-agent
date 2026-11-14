@@ -660,11 +660,11 @@ test("opens safe links through Acode and reports inert, middle, and repeat taps"
   expect(link.rel).toBe("noopener noreferrer");
   expect(getComputedStyle(link.querySelector(".elo-ad-chevron")!).display).toBe("none");
   const title = link.querySelector(".elo-ad-title");
-  const description = link.querySelector(".elo-ad-description");
-  const disclosure = link.querySelector(".elo-ad-sponsored");
+  const disclosure = root.querySelector(".sponsor-label .elo-ad-sponsored");
   expect(title?.textContent).toBe("Hosting");
   expect(disclosure?.textContent).toBe("Sponsored · Elo");
-  expect(description?.nextElementSibling).toBe(disclosure);
+  expect(link.contains(disclosure)).toBe(false);
+  expect(root.querySelectorAll(".elo-ad-sponsored")).toHaveLength(1);
   expect(root.querySelector(".elo-ad-cta")).toBeNull();
   expect(link.contains(root.querySelector(".sponsor-dismiss"))).toBe(false);
   const middle = new MouseEvent("auxclick", {
