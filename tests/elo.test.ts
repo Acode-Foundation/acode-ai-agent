@@ -195,7 +195,7 @@ test("a failed storage restore drops the temporary signal and restores the other
   expect(localStorage.getItem(gpp)).toBe("previous GPP");
 });
 
-test("a waiting attempt blocked by native consent does not retry after the answer", async () => {
+test("native consent denial uses one opportunity and backs off after the answer", async () => {
   const { loadSponsor } = await import("../src/ads/elo");
   const state = { consentStatus: "required", canRequestAds: false };
   const getState = vi.fn(async () => state);
@@ -218,7 +218,6 @@ test("a waiting attempt blocked by native consent does not retry after the answe
     finish(id);
   }
   start("3");
-  session.showWhileWaiting("chat", "3", "SQL");
   await expect(load.mock.results[0].value).resolves.toBeNull();
   finish("3");
   expect(getState).toHaveBeenCalledOnce();
@@ -231,7 +230,6 @@ test("a waiting attempt blocked by native consent does not retry after the answe
   expect(sdk.fetchAds).not.toHaveBeenCalled();
   now = 300_000;
   start("7");
-  finish("7");
   await vi.waitFor(() => expect(sdk.fetchAds).toHaveBeenCalledOnce());
 });
 
@@ -323,10 +321,7 @@ test.each(["covered", "inactive before switch notification"])(
         return (pending = loadSponsor(topics, request, dimensions, () => visible));
       },
     });
-    for (const id of ["1", "2", "3"]) {
-      session.update("chat", true);
-      session.update("chat", false, { id, user: "SQL", answer: "done" });
-    }
+    session.update("chat", true, { id: "1", user: "SQL", streaming: true });
     await vi.waitFor(() => expect(getState).toHaveBeenCalledTimes(2));
     visible = false;
     if (reason === "covered") {
@@ -337,7 +332,6 @@ test.each(["covered", "inactive before switch notification"])(
     finish(state);
     expect(await pending).toBeNull();
     expect(sdk.fetchAds).not.toHaveBeenCalled();
-    expect(session.placement).toBeUndefined();
   },
 );
 

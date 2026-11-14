@@ -70,6 +70,31 @@
 .agent-dock > .composer {
   flex: none;
 }
+.agent-dock > .sponsor {
+  flex: none;
+  margin: 0 10px;
+}
+
+.sponsor-thumbnail {
+  display: none;
+  position: absolute;
+  inset-inline-start: max(10px, var(--sponsor-inset, 0px));
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--line);
+  color: var(--fg);
+  pointer-events: none;
+}
+.sponsor-no-image > .sponsor-thumbnail {
+  display: grid;
+  place-items: center;
+}
+.sponsor-no-image .sponsor-card.elo-ad-strip > a {
+  padding-inline-start: max(38px, calc(48px - var(--sponsor-inset, 0px))) !important;
+}
 
 .sponsor,
 .sponsor-consent {
@@ -80,6 +105,21 @@
   margin-top: 14px;
   position: relative;
   isolation: isolate;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sponsor:not([hidden]) {
+    animation: sponsor-appear 150ms ease-out;
+  }
+  @keyframes sponsor-appear {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
 .sponsor[hidden] {
   display: none;
@@ -173,16 +213,36 @@
   }
 }
 .sponsor-card.elo-ad-strip > a {
+  /* Android text scaling enlarges copy independently of the SDK's fixed height. */
+  height: auto !important;
+  min-height: calc(72px - 2 * var(--sponsor-inset, 0px));
   gap: 6px !important;
+  padding: max(0px, calc(8px - var(--sponsor-inset, 0px)))
+    max(0px, calc(10px - var(--sponsor-inset, 0px))) max(0px, calc(4px - var(--sponsor-inset, 0px))) !important;
 }
 .sponsor-card.elo-ad-strip .elo-ad-title,
 .sponsor-card.elo-ad-strip .elo-ad-description {
-  margin-inline-end: 30px;
+  margin-inline-end: 34px;
+}
+.sponsor-card.elo-ad-strip .elo-ad-title {
+  line-height: 18px;
+}
+.sponsor-card.elo-ad-strip .elo-ad-sponsored {
+  display: block;
+  margin-top: 6px;
+  /* Align with the 32px thumbnail across the link's 6px column gap. */
+  margin-inline-start: -38px;
+  font-size: 11px !important;
+  line-height: 12px;
+  opacity: 0.8 !important;
+  /* Do not extend the SDK link into its non-clickable tap inset. */
+  pointer-events: none;
 }
 .sponsor-card.elo-ad-strip .elo-ad-description {
+  margin-top: 1px !important;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   white-space: normal !important;
 }
 .sponsor-choices {
@@ -219,6 +279,7 @@
 
 .agent-header,
 .conversation,
+.agent-dock > .sponsor,
 .sponsor-consent,
 .composer {
   /* These chat controls sit on Acode's secondary canvas. In Legacy, primary
@@ -230,6 +291,7 @@
 @supports (color: color-mix(in srgb, black, white)) {
   .agent-header,
   .conversation,
+  .agent-dock > .sponsor,
   .sponsor-consent,
   .composer {
     --muted: color-mix(in srgb, var(--fg) 80%, var(--bg));
@@ -337,7 +399,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 16px 14px 20px;
+  padding: 16px 14px 8px;
   overscroll-behavior: contain;
   overflow-anchor: none;
   -webkit-overflow-scrolling: touch;
@@ -367,7 +429,8 @@
   place-items: center;
   width: 36px;
   height: 36px;
-  margin: 0 auto;
+  /* Float over the transcript without reserving a row when hidden. */
+  margin: -36px auto 0;
   border: 1px solid var(--line);
   border-radius: 50%;
   background: var(--surface);
@@ -4857,6 +4920,10 @@ label.project-select:hover {
   }
   .composer {
     padding-inline: max(16px, calc((100% - 840px) / 2));
+  }
+  .agent-dock > .sponsor,
+  .sponsor-consent {
+    margin-inline: max(16px, calc((100% - 840px) / 2));
   }
   .approval,
   .task-tray,

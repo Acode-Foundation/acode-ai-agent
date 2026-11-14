@@ -1,13 +1,14 @@
 import {
   ChevronDown,
   ExternalLink,
-  Ellipsis,
   Folder,
   Sparkles,
   LoaderCircle,
   MessageSquarePlus,
+  PanelTopOpen,
   Plus,
   Search,
+  Trash2,
   X,
 } from "lucide-preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -92,20 +93,6 @@ export function SidebarApp({
       if (picked) setScope(picked);
     });
   };
-  const sessionActions = (chat: ChatSummary, available: boolean) =>
-    run(`actions:${chat.id}`, async () => {
-      const items = [{ value: "delete", text: "Delete session", icon: "delete" }];
-      if (available)
-        items.unshift({ value: "open", text: "Open in another tab", icon: "launchopen_in_new" });
-      const action = await pickAcodeSelect("Session actions", items);
-      if (action === "open") await onOpenSessionInNewTab(chat.id);
-      if (
-        action === "delete" &&
-        (await acode.confirm("Delete session?", "This conversation will be permanently deleted."))
-      ) {
-        await onDeleteSession(chat.id);
-      }
-    });
   const startInOpenProject = () => {
     if (!workspaces.length) {
       showToast("Open a project in Acode first.");
@@ -316,16 +303,38 @@ export function SidebarApp({
                             </small>
                           </span>
                         </button>
-                        <button
-                          class="as-icon-action"
-                          type="button"
-                          disabled={Boolean(pending)}
-                          aria-label={`More actions for ${chat.title}`}
-                          title="Session actions"
-                          onClick={() => void sessionActions(chat, available)}
-                        >
-                          <Ellipsis size={16} />
-                        </button>
+                        <div class="as-session-actions">
+                          <button
+                            type="button"
+                            disabled={!available || Boolean(pending)}
+                            onClick={() =>
+                              void run(`tab:${chat.id}`, () => onOpenSessionInNewTab(chat.id))
+                            }
+                            aria-label={`Open ${chat.title} in another tab`}
+                            title="Open in another tab"
+                          >
+                            <PanelTopOpen size={13} />
+                          </button>
+                          <button
+                            class="as-delete"
+                            disabled={Boolean(pending)}
+                            type="button"
+                            onClick={() =>
+                              void run(`delete:${chat.id}`, async () => {
+                                if (
+                                  await acode.confirm(
+                                    "Delete session?",
+                                    "This conversation will be permanently deleted.",
+                                  )
+                                )
+                                  await onDeleteSession(chat.id);
+                              })
+                            }
+                            aria-label={`Delete ${chat.title}`}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}

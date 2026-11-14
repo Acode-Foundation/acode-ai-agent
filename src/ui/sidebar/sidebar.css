@@ -221,7 +221,8 @@
 }
 .as-icon-action:disabled,
 .as-create-project:disabled,
-.as-session-open:disabled {
+.as-session-open:disabled,
+.as-session-actions button:disabled {
   cursor: default;
   opacity: 0.45;
 }
@@ -389,9 +390,8 @@
 }
 .as-session {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-radius: 7px;
 }
 .as-session-open {
   position: relative;
@@ -400,16 +400,12 @@
   min-width: 0;
   min-height: 46px;
   padding: 5px 4px 5px 9px;
-  border-radius: inherit;
   background: transparent;
   cursor: pointer;
   text-align: left;
 }
 .as-session-open > span {
   gap: 2px;
-}
-.as-session-open[aria-current="page"] {
-  background: var(--as-tint);
 }
 .as-status {
   position: absolute;
@@ -420,9 +416,27 @@
   background: var(--as-accent);
   animation: as-pulse 1.5s ease-in-out infinite;
 }
-.as-session .as-icon-action {
-  width: 32px;
-  height: 40px;
+.as-session-actions {
+  display: flex;
+  align-items: center;
+  padding-right: 2px;
+}
+.as-session-actions button {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  height: 44px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--as-muted);
+  cursor: pointer;
+}
+.as-session-actions button:hover {
+  color: var(--as-accent);
+}
+.as-session-actions .as-delete:hover {
+  color: var(--danger-color, #be4242);
 }
 .acode-agent-sidebar button:focus-visible {
   outline: 2px solid var(--as-accent);

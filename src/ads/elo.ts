@@ -76,7 +76,7 @@ sponsorPreferencesChanged.subscribe((consent) => {
 
 // UMP can change in a native dialog without a WebView focus or visibility event.
 class SponsorSDK extends EloSDK {
-  #views = new WeakMap<AdCreative, AbortSignal>();
+  #views = new WeakMap<AdCreative, { signal: AbortSignal; onViewed?: () => void }>();
 
   constructor(private readonly consentKey: string) {
     // The pinned SDK accepts baseUrl at runtime. Use the same origin for validation.
@@ -84,15 +84,15 @@ class SponsorSDK extends EloSDK {
     super(config);
   }
 
-  attachView(ad: AdCreative, signal: AbortSignal): boolean {
+  attachView(ad: AdCreative, signal: AbortSignal, onViewed?: () => void): boolean {
     if (session?.sdk !== this || signal.aborted) return false;
-    this.#views.set(ad, signal);
+    this.#views.set(ad, { signal, onViewed });
     return true;
   }
 
   async canTrack(ad: AdCreative): Promise<boolean> {
     try {
-      const signal = this.#views.get(ad);
+      const signal = this.#views.get(ad)?.signal;
       const eligible = () =>
         !signal?.aborted && !document.hidden && canRequestSponsors() && session?.sdk === this;
       if (!signal || !eligible()) return false;
@@ -108,7 +108,11 @@ class SponsorSDK extends EloSDK {
   }
 
   override async trackImpression(ad: AdCreative) {
-    return (await this.canTrack(ad)) && super.trackImpression(ad);
+    if (!(await this.canTrack(ad))) return false;
+    // The SDK calls this after a continuous second at least 50% visible.
+    // Start the local frequency cap even if the tracking request later fails.
+    this.#views.get(ad)?.onViewed?.();
+    return super.trackImpression(ad);
   }
 
   override async trackTap(_ad: AdCreative, _tap: AdTap) {

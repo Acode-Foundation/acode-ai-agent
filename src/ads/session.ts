@@ -11,160 +11,259 @@ type SponsorTurn = {
   stopped?: boolean;
   streaming?: boolean;
 };
-export type SponsorPlacement = { turnId: string; context: string[]; sponsor: Sponsor };
+export type SponsorPlacement = {
+  chatId: string;
+  turnId: string;
+  sponsor: Sponsor;
+};
 type Dependencies = {
   eligible(): boolean;
   visible(): boolean;
   consent(): SponsorConsent;
-  load(context: string[], signal: AbortSignal, waiting: boolean): Promise<Sponsor | null>;
+  load(context: string[], signal: AbortSignal): Promise<Sponsor | null>;
   budget: SponsorBudget;
 };
+type SponsorHistory = readonly string[] | (() => readonly string[]);
 
 export class SponsorBudget {
-  /** Shared across tabs once the opt-in card has entered the viewport. */
   optInChatId?: string;
+  readonly changes = new Signal<void>();
+  readonly released = new Signal<void>();
+  readonly forgotten = new Signal<string>();
+  #cards = new Map<string, { placement: SponsorPlacement; expiresAt: number }>();
   #seen = new Set<string>();
-  #turns = 0;
-  #lastAttempt = -Infinity;
+  #viewed = new WeakSet<SponsorPlacement>();
+  #nextAdAt = -Infinity;
+  #retryAfter = -Infinity;
+  #pending = "";
 
   constructor(private now = () => Date.now()) {}
 
-  claim(key: string, consent: SponsorConsent, waiting = false): boolean {
-    if (this.#seen.has(key)) return false;
-    const due =
-      consent === "allowed" && this.#turns >= 2 && this.now() - this.#lastAttempt >= 5 * 60_000;
-    // A wait that cannot show an ad must still count normally once it succeeds.
-    if (waiting && !due) return false;
+  card(chatId: string | undefined) {
+    const cached = chatId ? this.#cards.get(chatId) : undefined;
+    return cached && cached.expiresAt > this.now() ? cached.placement : undefined;
+  }
+
+  remaining(card: SponsorPlacement): number {
+    return Math.max(0, (this.#cards.get(card.chatId)?.expiresAt ?? 0) - this.now());
+  }
+
+  /** Accept only the response for the active claim(`${chatId}:${turnId}`); stale responses are ignored. */
+  add(card: SponsorPlacement) {
+    // A late browser callback can dismiss another card while this request is in flight.
+    // Deleting a chat also releases its request, so stale responses cannot restore it.
+    if (this.#pending !== `${card.chatId}:${card.turnId}` || this.now() < this.#nextAdAt) return;
+    this.#cards.set(card.chatId, {
+      placement: card,
+      expiresAt: this.now() + 300_000,
+    });
+    this.release(`${card.chatId}:${card.turnId}`);
+    this.changes.emit();
+  }
+
+  dismiss(card: SponsorPlacement, suppress = false) {
+    if (this.#cards.get(card.chatId)?.placement !== card) return;
+    if (suppress) {
+      this.#nextAdAt = this.now() + 300_000;
+      this.clearCards();
+      return;
+    }
+    this.#cards.delete(card.chatId);
+    this.changes.emit();
+  }
+
+  expire() {
+    let changed = false;
+    for (const [key, cached] of this.#cards) {
+      if (cached.expiresAt > this.now()) continue;
+      this.#cards.delete(key);
+      // A long wait may request a replacement after expiry and the view cooldown.
+      this.#seen.delete(`${key}:${cached.placement.turnId}`);
+      changed = true;
+    }
+    if (changed) this.changes.emit();
+  }
+
+  forgetChat(chatId: string) {
+    this.forgotten.emit(chatId);
+    if (this.#pending.startsWith(`${chatId}:`)) this.release(this.#pending);
+    const offered = this.optInChatId === chatId;
+    if (offered) this.optInChatId = undefined;
+    const removed = this.#cards.delete(chatId);
+    if (offered || removed) this.changes.emit();
+  }
+
+  clearCards() {
+    if (!this.#cards.size) return;
+    this.#cards.clear();
+    this.changes.emit();
+  }
+
+  consentChanged(value: SponsorConsent) {
+    if (value !== "allowed") this.clearCards();
+  }
+
+  skip(key: string) {
     this.#seen.add(key);
     if (this.#seen.size > 100) {
       const oldest = this.#seen.values().next();
       if (!oldest.done) this.#seen.delete(oldest.value);
     }
-    if (!due) {
-      this.#turns++;
-      return false;
-    }
-    this.#turns = 0;
-    this.#lastAttempt = this.now();
-    return true;
+  }
+
+  viewed(card: SponsorPlacement) {
+    if (this.card(card.chatId) !== card || this.#viewed.has(card)) return;
+    this.#viewed.add(card);
+    this.#nextAdAt = this.now() + 300_000;
+  }
+
+  release(key: string) {
+    if (this.#pending !== key) return;
+    this.#pending = "";
+    this.released.emit();
+  }
+
+  /** Reserve one request across tabs. Views and explicit dismissals share the five-minute cooldown. */
+  claim(key: string): number | undefined {
+    if (this.#seen.has(key) || this.#pending) return;
+    const delay = Math.max(this.#nextAdAt, this.#retryAfter) - this.now();
+    if (delay > 0) return delay;
+    // Throttle every request, including success before its first measured impression.
+    this.skip(key);
+    this.#pending = key;
+    this.#retryAfter = this.now() + 30_000;
+    return 0;
   }
 }
 
 export class SponsorSession {
-  readonly changes = new Signal<SponsorPlacement | undefined>();
-  placement?: SponsorPlacement;
   #chatId?: string;
   #running = false;
-  #runningTurn?: string;
-  #request?: AbortController;
-  #waitingTurn?: string;
+  #liveTurn?: string;
+  #turn?: SponsorTurn;
+  #previousPrompts: SponsorHistory = [];
+  #unsubscribe?: () => void;
+  #waitTimer?: ReturnType<typeof setTimeout>;
+  #request?: { turnId: string; controller: AbortController };
 
   constructor(private deps: Dependencies) {}
 
-  update(chatId: string | undefined, running: boolean, turn?: SponsorTurn): void {
-    this.#runningTurn =
-      running && turn?.streaming && !turn.answer && !turn.stopped && !turn.error
-        ? turn.id
-        : undefined;
-    if (this.#chatId !== chatId) {
-      this.clear();
+  update(
+    chatId: string | undefined,
+    running: boolean,
+    turn?: SponsorTurn,
+    previousPrompts: SponsorHistory = [],
+  ): void {
+    if (chatId !== this.#chatId) {
+      this.dispose();
       this.#chatId = chatId;
-      this.#running = running;
-      return;
     }
-    const finished = this.#running && !running;
+    if (!this.#unsubscribe) {
+      let queued = false;
+      const release = this.deps.budget.released.subscribe(() => {
+        if (queued || !this.#running || !this.#turn?.streaming || this.#turn.answer) return;
+        queued = true;
+        // Finish the releasing session's state transition before waking other waits.
+        queueMicrotask(() => {
+          queued = false;
+          if (this.#unsubscribe === unsubscribe) this.refresh();
+        });
+      });
+      const forget = this.deps.budget.forgotten.subscribe((id) => {
+        if (id === this.#chatId) this.dispose();
+      });
+      const unsubscribe = () => {
+        release();
+        forget();
+      };
+      this.#unsubscribe = unsubscribe;
+    }
+    // Restored history cannot initiate requests.
+    if (running && turn?.streaming) this.#liveTurn = turn.id;
+    this.#previousPrompts = previousPrompts;
     this.#running = running;
-    if (!this.deps.eligible() || this.deps.consent() === "declined") {
-      this.clear();
-      return;
-    }
-    if (this.#waitingTurn) {
-      if (
-        turn?.id === this.#waitingTurn &&
-        !turn.error &&
-        !turn.stopped &&
-        (running || turn.answer)
-      ) {
-        if (!running) this.#waitingTurn = undefined;
-        return;
-      }
-      this.clear();
-    }
-    if (running) {
-      this.clear();
-      return;
-    }
-    if (
-      !finished ||
-      !this.deps.visible() ||
-      !chatId ||
-      !turn?.answer ||
-      !turn.user ||
-      turn.error ||
-      turn.stopped ||
-      turn.streaming
-    )
-      return;
-    if (!this.deps.budget.claim(`${chatId}:${turn.id}`, this.deps.consent())) return;
-    void this.#load({ turnId: turn.id, context: sponsorContext(turn.user) });
-  }
-
-  showWhileWaiting(chatId: string, turnId: string, prompt: string): void {
-    if (
-      this.#runningTurn !== turnId ||
-      this.#chatId !== chatId ||
-      !this.deps.visible() ||
-      !this.deps.eligible() ||
-      this.deps.consent() !== "allowed"
-    )
-      return;
-    if (!this.deps.budget.claim(`${chatId}:${turnId}`, this.deps.consent(), true)) return;
-    void this.#load({ turnId, context: sponsorContext(prompt) }, true);
+    this.#turn = turn;
+    this.refresh();
   }
 
   refresh(): void {
-    if (!this.deps.eligible() || this.deps.consent() === "declined") this.clear();
-    else if (!this.deps.visible()) this.#request?.abort();
-  }
-
-  clear(): void {
-    this.#waitingTurn = undefined;
-    this.#request?.abort();
-    this.#request = undefined;
-    if (this.placement) this.#publish(undefined);
+    clearTimeout(this.#waitTimer);
+    this.deps.budget.expire();
+    if (!this.deps.eligible() || this.deps.consent() !== "allowed") {
+      this.#cancelRequest();
+      this.deps.budget.clearCards();
+      return;
+    }
+    const chatId = this.#chatId;
+    const turn = this.#turn;
+    const waiting =
+      this.#running && !!turn?.streaming && !turn.answer && !turn.stopped && !turn.error;
+    if (turn?.stopped || turn?.error || this.#request?.turnId !== turn?.id) this.#cancelRequest();
+    if (!this.deps.visible()) {
+      this.#cancelRequest();
+      return;
+    }
+    const cached = this.deps.budget.card(chatId);
+    if (cached) {
+      this.#waitTimer = setTimeout(() => this.refresh(), this.deps.budget.remaining(cached));
+      return;
+    }
+    // A loaded or pending strip may stay after the reply; only waits start new requests.
+    if (!waiting || !chatId || !turn?.user || turn.id !== this.#liveTurn || this.#request) return;
+    const delay = this.deps.budget.claim(`${chatId}:${turn.id}`);
+    if (delay === undefined) return;
+    if (delay > 0) {
+      clearTimeout(this.#waitTimer);
+      this.#waitTimer = setTimeout(() => this.refresh(), delay);
+      return;
+    }
+    const history =
+      typeof this.#previousPrompts === "function" ? this.#previousPrompts() : this.#previousPrompts;
+    void this.#load(chatId, turn.id, sponsorContext(turn.user, history));
   }
 
   dispose(): void {
-    this.#runningTurn = undefined;
-    this.clear();
-    this.changes.clear();
+    this.#unsubscribe?.();
+    this.#unsubscribe = undefined;
+    clearTimeout(this.#waitTimer);
+    this.#cancelRequest();
+    this.#liveTurn = undefined;
+    this.#turn = undefined;
+    this.#previousPrompts = [];
   }
 
-  async #load(placement: Omit<SponsorPlacement, "sponsor">, waiting = false): Promise<void> {
-    this.clear();
-    if (!this.deps.visible() || !this.deps.eligible() || this.deps.consent() !== "allowed") return;
-    if (waiting) this.#waitingTurn = placement.turnId;
-    const request = new AbortController();
-    this.#request = request;
+  #cancelRequest() {
+    if (!this.#request) return;
+    this.#request.controller.abort();
+    this.deps.budget.release(`${this.#chatId}:${this.#request.turnId}`);
+    this.#request = undefined;
+  }
+
+  async #load(chatId: string, turnId: string, topics: string[]) {
+    const controller = new AbortController();
+    this.#request = { turnId, controller };
     try {
-      const sponsor = await this.deps.load(placement.context, request.signal, waiting);
+      const sponsor = await this.deps.load(topics, controller.signal);
       if (
-        request.signal.aborted ||
-        !this.deps.visible() ||
-        !this.deps.eligible() ||
-        this.deps.consent() !== "allowed"
-      )
-        return;
-      if (sponsor) this.#publish({ ...placement, sponsor });
+        sponsor &&
+        !controller.signal.aborted &&
+        this.#turn?.id === turnId &&
+        !this.#turn.stopped &&
+        !this.#turn.error &&
+        this.deps.visible() &&
+        this.deps.eligible() &&
+        this.deps.consent() === "allowed"
+      ) {
+        this.deps.budget.add({ chatId, turnId, sponsor });
+      }
     } catch {
       // Advertising never changes the chat's status or reports an error to the user.
     } finally {
-      if (this.#request === request) this.#request = undefined;
+      this.deps.budget.release(`${chatId}:${turnId}`);
+      if (this.#request?.controller === controller) {
+        this.#request = undefined;
+        this.refresh();
+      }
     }
-  }
-
-  #publish(placement: SponsorPlacement | undefined): void {
-    this.placement = placement;
-    this.changes.emit(placement);
   }
 }

@@ -49,11 +49,10 @@ test("sidebar handles session actions and a canceled or repeated project prompt"
     });
   });
   const toast = vi.fn();
-  const select = vi.fn();
-  const confirm = vi.fn();
+  let answerDelete!: (confirmed: boolean) => void;
+  const confirm = vi.fn(() => new Promise<boolean>((resolve) => (answerDelete = resolve)));
   vi.stubGlobal("acode", {
     prompt,
-    select,
     confirm,
     require: (module: string) => (module === "actionStack" ? { has: () => promptOpen } : toast),
   });
@@ -118,17 +117,21 @@ test("sidebar handles session actions and a canceled or repeated project prompt"
   prompt.mockRejectedValueOnce(new Error("Prompt unavailable"));
   await click(project);
   await vi.waitFor(() => expect(toast).toHaveBeenCalledWith("Prompt unavailable"));
-  const menu = '[aria-label="More actions for Fix parser"]';
-  select.mockResolvedValueOnce(undefined).mockResolvedValueOnce("open").mockResolvedValue("delete");
-  await click(menu);
-  expect(actions.onOpenSessionInNewTab).not.toHaveBeenCalled();
-  await click(menu);
-  await vi.waitFor(() =>
-    expect(actions.onOpenSessionInNewTab).toHaveBeenCalledExactlyOnceWith("older"),
-  );
-  confirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-  await click(menu);
+  await click('[aria-label="Open Fix parser in another tab"]');
+  expect(actions.onOpenSessionInNewTab).toHaveBeenCalledExactlyOnceWith("older");
+  await click('[aria-label="Delete Fix parser"]');
+  await click('[aria-label="Delete Fix parser"]');
+  expect(confirm).toHaveBeenCalledOnce();
   expect(actions.onDeleteSession).not.toHaveBeenCalled();
-  await click(menu);
+  await act(async () => answerDelete(false));
+  expect(actions.onDeleteSession).not.toHaveBeenCalled();
+  await vi.waitFor(() =>
+    expect(
+      root.querySelector<HTMLButtonElement>('[aria-label="Delete Fix parser"]')!.disabled,
+    ).toBe(false),
+  );
+  await click('[aria-label="Delete Fix parser"]');
+  expect(confirm).toHaveBeenCalledTimes(2);
+  await act(async () => answerDelete(true));
   await vi.waitFor(() => expect(actions.onDeleteSession).toHaveBeenCalledExactlyOnceWith("older"));
 });

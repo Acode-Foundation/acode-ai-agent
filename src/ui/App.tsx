@@ -94,6 +94,7 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
   const [retrying, setRetrying] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [composing, setComposing] = useState(false);
   const composerRef = useRef<ComposerHandle>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   // File rows use Acode's own (or the icon theme's) file icons inside the tab's shadow root.
@@ -161,7 +162,7 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
     scrollRef,
     state.activeChatId,
     running,
-    turns.at(-1),
+    turns,
     Boolean(
       settingsOpen ||
       piSettingsOpen ||
@@ -177,6 +178,7 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
     ),
     isTabActive,
     controller.sponsorBudget,
+    composing,
   );
   useEffect(() => setEditing(undefined), [state.activeChatId]);
 
@@ -651,9 +653,6 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
                 {turn.streaming && (
                   <WorkingIndicator startedAt={turn.startedAt} label={workingLabel} />
                 )}
-                {sponsor.placement?.turnId === turn.id && (
-                  <SponsoredCard placement={sponsor.placement} session={sponsor.session} />
-                )}
               </section>
             ))}
             {state.compacting && <div class="compact-status">Compacting earlier turns…</div>}
@@ -720,6 +719,9 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
           )}
         </div>
 
+        {sponsor.placement && (
+          <SponsoredCard placement={sponsor.placement} budget={controller.sponsorBudget} />
+        )}
         {sponsor.showOptIn && <SponsorOptIn cardRef={sponsor.optInRef} />}
         <Composer
           ref={composerRef}
@@ -745,6 +747,7 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
           contextWindow={state.model?.contextWindow}
           queued={state.queued}
           onFocusComposer={captureThread}
+          onDraftChange={setComposing}
           onSubmit={send}
           onStop={() => void stop()}
           onToast={showToast}

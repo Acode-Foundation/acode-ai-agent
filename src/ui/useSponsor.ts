@@ -1,8 +1,15 @@
 import type { RefObject } from "preact";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "preact/hooks";
 import { loadSponsor, sponsorsConfigured } from "../ads/elo";
 import { isFreeAcode, sponsorConsent, sponsorPreferencesChanged } from "../ads/preferences";
-import { type SponsorBudget, SponsorSession, type SponsorPlacement } from "../ads/session";
+import { type SponsorBudget, SponsorSession } from "../ads/session";
 import { useSponsorOptInAvailable } from "./useSponsorOptInAvailable";
 import type { ChatTurn } from "./transcript";
 
@@ -25,58 +32,84 @@ export function useSponsor(
   root: RefObject<HTMLElement>,
   chatId: string | undefined,
   running: boolean,
-  turn: ChatTurn | undefined,
+  turns: readonly ChatTurn[],
   obscured: boolean,
   isTabActive: () => boolean,
   budget: SponsorBudget,
+  composing = false,
 ) {
+  const turn = turns.at(-1);
   const optInRef = useRef<HTMLElement>(null);
-  const [placement, setPlacement] = useState<SponsorPlacement>();
+  const [, redraw] = useReducer((revision: number) => revision + 1, 0);
   const [hidden, setHidden] = useState(true);
   const [consent, setConsent] = useState(sponsorConsent);
+  const card = budget.card(chatId);
+  const offeredChat = budget.optInChatId;
+  const budgetView = useRef({ chatId, card, offeredChat });
+  budgetView.current = { chatId, card, offeredChat };
+  const latestTurns = useRef(turns);
+  latestTurns.current = turns;
+  const host = useRef({ root, isTabActive });
+  host.current = { root, isTabActive };
 
+  const composingRef = useRef(composing);
+  composingRef.current = composing;
   const obscuredRef = useRef(obscured);
   obscuredRef.current = obscured;
   const [session] = useState(() => {
     const visible = () =>
       !document.hidden &&
-      isTabActive() &&
+      host.current.isTabActive() &&
       !obscuredRef.current &&
-      Boolean(root.current?.getClientRects().length);
+      !composingRef.current &&
+      Boolean(host.current.root.current?.getClientRects().length);
     return new SponsorSession({
       budget,
       consent: sponsorConsent,
       eligible: () => sponsorsConfigured() && isFreeAcode(),
       visible,
-      load: (topics, signal, waiting) => {
-        const conversation = root.current;
-        const turn = conversation?.querySelector<HTMLElement>(".turn:last-of-type");
-        if (!conversation || !turn) return Promise.resolve(null);
-        // The turn scrolls. Use the viewport height less the margin above the card.
-        const maxHeight = Math.floor(conversation.clientHeight - 14);
-        const maxWidth = Math.floor(turn.getBoundingClientRect().width);
+      load: (topics, signal) => {
+        const conversation = host.current.root.current;
+        const slot = conversation?.parentElement?.querySelector<HTMLElement>(".composer-dock");
+        if (!conversation || !slot) return Promise.resolve(null);
+        // Reserve the compact strip without consuming the whole conversation viewport.
+        const maxHeight = Math.floor(conversation.clientHeight);
+        const maxWidth = Math.floor(slot.getBoundingClientRect().width);
         if (maxHeight < 72 || maxWidth <= 0) return Promise.resolve(null);
-        return loadSponsor(
-          topics,
-          signal,
-          { maxHeight: waiting ? 72 : maxHeight, maxWidth },
-          visible,
-        );
+        return loadSponsor(topics, signal, { maxHeight: 72, maxWidth }, visible);
       },
     });
   });
-  useEffect(() => {
-    const unsubscribe = session.changes.subscribe(setPlacement);
-    const refresh = () => {
-      setHidden(
+  useLayoutEffect(
+    () =>
+      budget.changes.subscribe(() => {
+        if (document.hidden || !host.current.isTabActive()) return;
+        const previous = budgetView.current;
+        // Global clears and opt-in ownership still affect this chat; unrelated cards do not.
+        if (
+          budget.card(previous.chatId) !== previous.card ||
+          budget.optInChatId !== previous.offeredChat
+        )
+          redraw(undefined);
+      }),
+    [budget],
+  );
+  const refresh = useCallback(
+    (reconcile = false) => {
+      const hidden =
         document.hidden ||
-          !isTabActive() ||
-          !root.current?.getClientRects().length ||
-          !sponsorsConfigured() ||
-          !isFreeAcode(),
-      );
+        !host.current.isTabActive() ||
+        !host.current.root.current?.getClientRects().length ||
+        !sponsorsConfigured() ||
+        !isFreeAcode();
+      setHidden(hidden);
       session.refresh();
-    };
+      // Reconcile changes skipped while this tab was inactive, even if visibility stayed true.
+      if (reconcile && !hidden) redraw(undefined);
+    },
+    [session],
+  );
+  useEffect(() => {
     const preferences = sponsorPreferencesChanged.subscribe((value) => {
       setConsent(value);
       refresh();
@@ -84,17 +117,15 @@ export function useSponsor(
     let frame = 0;
     const afterLayout = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(refresh);
+      frame = requestAnimationFrame(() => refresh(true));
     };
     const onVisibility = () => (document.hidden ? refresh() : afterLayout());
-    const onSwitch = () => (isTabActive() ? afterLayout() : refresh());
-    refresh();
+    const onSwitch = () => (host.current.isTabActive() ? afterLayout() : refresh());
     if (typeof editorManager !== "undefined") editorManager.on("switch-file", onSwitch);
     document.addEventListener("visibilitychange", onVisibility);
     document.addEventListener("resume", afterLayout);
     window.addEventListener("focus", afterLayout);
     return () => {
-      unsubscribe();
       preferences();
       cancelAnimationFrame(frame);
       if (typeof editorManager !== "undefined") editorManager.off("switch-file", onSwitch);
@@ -103,33 +134,37 @@ export function useSponsor(
       window.removeEventListener("focus", afterLayout);
       session.dispose();
     };
-  }, [session, root, isTabActive]);
-  // Invalidate the old turn at commit, before a queued waiting timer can fire.
+  }, [session, refresh]);
+  // The turn and its dimensions are available as soon as the DOM commits.
   useLayoutEffect(() => {
-    session.update(chatId, running, turn);
+    session.update(chatId, running, turn, () =>
+      latestTurns.current.slice(-5, -1).map((item) => item.user ?? ""),
+    );
   }, [
     session,
     chatId,
     running,
     turn?.id,
+    turn?.user,
     Boolean(turn?.answer),
     Boolean(turn?.error),
     turn?.stopped,
     turn?.streaming,
   ]);
   const waiting = running && turn?.streaming && !turn.answer && !turn.error && !turn.stopped;
-  const offeredChat = budget.optInChatId;
-  const showOptIn = useSponsorOptInAvailable(
-    Boolean(
-      chatId &&
-      (offeredChat ? offeredChat === chatId : waiting && turn.user) &&
-      consent === "ask" &&
-      !obscured &&
-      !hidden &&
-      !document.hidden &&
-      isTabActive(),
-    ),
+  const cached = consent === "allowed" ? card : undefined;
+  const offerCandidate = Boolean(
+    chatId && (offeredChat ? offeredChat === chatId : waiting && turn.user) && consent === "ask",
   );
+  const visible =
+    Boolean(cached || offerCandidate) &&
+    !obscured &&
+    !hidden &&
+    !document.hidden &&
+    isTabActive() &&
+    isFreeAcode() &&
+    sponsorsConfigured();
+  const showOptIn = useSponsorOptInAvailable(offerCandidate && visible);
   useLayoutEffect(() => {
     if (offeredChat || !chatId || !showOptIn) return;
     const card = optInRef.current;
@@ -174,23 +209,12 @@ export function useSponsor(
       observer.disconnect();
     };
   }, [offeredChat, chatId, showOptIn, isTabActive, budget, root]);
-  const waitingId = consent === "allowed" && waiting ? turn.id : undefined;
-  const waitingPrompt = waiting ? turn.user : undefined;
-  useEffect(() => {
-    if (!chatId || !waitingId || !waitingPrompt || obscured || hidden) return;
-    const timer = setTimeout(
-      () => session.showWhileWaiting(chatId, waitingId, waitingPrompt),
-      3000,
-    );
-    return () => clearTimeout(timer);
-  }, [session, chatId, waitingId, waitingPrompt, obscured, hidden]);
   useLayoutEffect(() => {
-    session.refresh();
-  }, [session, obscured, hidden]);
+    refresh();
+  }, [refresh, root, isTabActive, obscured, composing]);
   return {
     showOptIn,
     optInRef,
-    placement: placement && !obscured && !hidden && isFreeAcode() ? placement : undefined,
-    session,
+    placement: visible && !composing && !turn?.stopped && !turn?.error ? cached : undefined,
   };
 }

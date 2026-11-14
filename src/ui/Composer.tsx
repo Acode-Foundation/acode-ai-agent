@@ -89,6 +89,7 @@ type Props = {
   contextWindow?: number;
   queued: QueuedPrompt[];
   onFocusComposer: () => void;
+  onDraftChange?: (hasDraft: boolean) => void;
   onSubmit: (draft: ComposerDraft, mode: "steer" | "followUp") => Promise<void>;
   /** Set while the draft is an earlier prompt being edited; sending replaces that prompt. */
   editing?: { onCancel: () => void };
@@ -125,6 +126,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
     0,
     props.autocompleteMaxVisible,
   );
+
+  useLayoutEffect(() => {
+    props.onDraftChange?.(!empty);
+  }, [empty, props.onDraftChange]);
 
   const sync = useCallback(() => {
     const root = editor.current;

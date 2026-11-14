@@ -9,8 +9,15 @@ const TOPICS: Array<[RegExp, string]> = [
   [/\b(learn(?:ing)?|tutorial|explain|beginner)\b/i, "Learning programming"],
 ];
 
-export function sponsorContext(prompt: string): string[] {
-  const sample = prompt.slice(0, 4000);
-  const topics = TOPICS.filter(([pattern]) => pattern.test(sample)).slice(0, 3);
-  return topics.length ? topics.map(([, label]) => label) : ["Software development tools"];
+export function sponsorContext(prompt: string, previousPrompts: readonly string[] = []): string[] {
+  const topics = new Set<string>();
+  // Favor the current task, then the four most recent prompts in this chat.
+  for (const text of [prompt, ...previousPrompts.slice(-4).reverse()]) {
+    const sample = text.slice(0, 4000);
+    for (const [pattern, label] of TOPICS) {
+      if (pattern.test(sample)) topics.add(label);
+      if (topics.size === 3) return [...topics];
+    }
+  }
+  return topics.size ? [...topics] : ["Software development tools"];
 }

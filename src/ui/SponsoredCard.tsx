@@ -1,5 +1,5 @@
 import { mountEloAd } from "@elo-ads/web-sdk/core";
-import { Heart, X } from "lucide-preact";
+import { Heart, Megaphone, X } from "lucide-preact";
 import type { RefObject } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { readSponsorConsent } from "../ads/consent";
@@ -11,16 +11,16 @@ import {
   sponsorIdentityCleared,
   SPONSOR_DISCLOSURE,
 } from "../ads/preferences";
-import type { SponsorPlacement, SponsorSession } from "../ads/session";
+import type { SponsorPlacement, SponsorBudget } from "../ads/session";
 import { openCustomTab } from "../platform/authTab";
 import { showToast } from "../platform/toast";
 
 export function SponsoredCard({
   placement,
-  session,
+  budget,
 }: {
   placement: SponsorPlacement;
-  session: SponsorSession;
+  budget: SponsorBudget;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const sponsor = placement.sponsor;
@@ -29,19 +29,25 @@ export function SponsoredCard({
     const element = root.current;
     if (!element || !safeAdUrl(sponsor.ad.click_url)) return;
     const ad = sponsor.ad;
-    const creative =
-      ad.image_url && !safeAdUrl(ad.image_url) ? { ...ad, image_url: undefined } : ad;
+    // View signals are keyed by creative object; each mounted view owns its signal.
+    const creative = { ...ad };
+    if (creative.image_url && !safeAdUrl(creative.image_url)) delete creative.image_url;
     const frame = element.parentElement!;
     let checking = false;
     let view: AbortController | undefined;
     let focusFrame = 0;
     let unmount: (() => void) | undefined;
+    let image: HTMLImageElement | null = null;
+    const syncThumbnail = () =>
+      frame.classList.toggle("sponsor-no-image", !element.querySelector(".elo-ad-image"));
     const stop = () => {
       cancelAnimationFrame(focusFrame);
       checking = false;
       view?.abort();
       view = undefined;
       frame.hidden = true;
+      image?.removeEventListener("error", syncThumbnail);
+      image = null;
       try {
         unmount?.();
       } catch {
@@ -79,15 +85,15 @@ export function SponsoredCard({
         result.status !== "allowed" ||
         JSON.stringify(result.signals) !== sponsor.consent ||
         !canRequestSponsors() ||
-        !sponsor.sdk.attachView(creative, current.signal)
+        !sponsor.sdk.attachView(creative, current.signal, () => budget.viewed(placement))
       ) {
         stop();
-        session.clear();
+        budget.dismiss(placement);
         return;
       }
       if (unmount) return;
       if (typeof IntersectionObserver !== "function") {
-        session.clear();
+        budget.dismiss(placement);
         return;
       }
       try {
@@ -112,12 +118,28 @@ export function SponsoredCard({
               return;
             }
             // The native callback can arrive after a pause or even a chat switch.
-            if (session.placement === placement) session.clear();
+            budget.dismiss(placement, true);
           },
         });
+        image = element.querySelector<HTMLImageElement>(".elo-ad-image");
+        // Elo removes a failed image before this listener runs.
+        image?.addEventListener("error", syncThumbnail);
+        syncThumbnail();
+        if (creative.presentation?.format === "strip") {
+          // Read the SDK's clamped inset rather than duplicating its normalization.
+          const inset = parseFloat(element.querySelector("a")?.style.margin ?? "") || 0;
+          frame.style.setProperty("--sponsor-inset", `${inset}px`);
+          const title = element.querySelector(".elo-ad-title");
+          const disclosure = title?.querySelector(".elo-ad-sponsored");
+          if (title && disclosure) {
+            // Keep the SDK disclosure and tracking selector, but place it below the copy.
+            title.parentElement?.append(disclosure);
+            title.textContent = creative.title;
+          }
+        }
       } catch {
         stop();
-        session.clear();
+        budget.dismiss(placement);
       }
     };
     const onFocus = () => {
@@ -129,7 +151,7 @@ export function SponsoredCard({
     });
     const identityCleared = sponsorIdentityCleared.subscribe(() => {
       stop();
-      session.clear();
+      budget.dismiss(placement);
     });
     document.addEventListener("visibilitychange", refresh);
     document.addEventListener("pause", stop);
@@ -147,17 +169,22 @@ export function SponsoredCard({
       stop();
       frame.hidden = false;
     };
-  }, [placement, sponsor, session]);
+  }, [placement, sponsor, budget]);
 
   if (!safeAdUrl(ad.click_url)) return null;
   return (
     <aside class="sponsor" aria-label="Sponsored suggestion">
+      {ad.presentation?.format === "strip" && (
+        <span class="sponsor-thumbnail" aria-hidden="true">
+          <Megaphone size={18} />
+        </span>
+      )}
       <div class="sponsor-card" ref={root} />
       <button
         type="button"
         class="icon-button sponsor-dismiss"
         aria-label="Dismiss sponsored suggestion"
-        onClick={() => session.clear()}
+        onClick={() => budget.dismiss(placement, true)}
       >
         <X size={16} />
       </button>
