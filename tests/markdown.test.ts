@@ -48,9 +48,17 @@ test("renders GFM task lists", () => {
 
 test("renders GFM tables", () => {
   const html = renderMarkdown("| File | Status |\n| --- | --- |\n| a.ts | done |");
-  expect(html).toMatch(/<table>/);
+  expect(html).toMatch(/<div class="md-table"><table>/);
+  expect(html).toMatch(/<\/table><\/div>/);
   expect(html).toMatch(/<th>File<\/th>/);
   expect(html).toMatch(/<td>a.ts<\/td>/);
+});
+
+test("marks long table cells as wrappable", () => {
+  const long = "a sentence long enough that it should wrap instead of stretching the table";
+  const html = renderMarkdown(`| Name | Note |\n| --- | --- |\n| a.ts | ${long} |`);
+  expect(html).toMatch(/<td>a.ts<\/td>/);
+  expect(html).toContain(`<td class="md-cell-wrap">${long}</td>`);
 });
 
 test("does not turn javascript urls into links", () => {

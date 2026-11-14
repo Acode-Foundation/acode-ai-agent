@@ -1574,21 +1574,45 @@
 .md-ref--file {
   --md-ref-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z'/%3E%3Cpath d='M14 2v4a2 2 0 0 0 2 2h4'/%3E%3C/svg%3E");
 }
-.md table {
-  display: block;
-  width: max-content;
+.md-table {
+  --md-table-fade-l: 0px;
+  --md-table-fade-r: 0px;
+  --md-table-mask: linear-gradient(
+    to right,
+    rgb(0 0 0 / 0.08),
+    #000 var(--md-table-fade-l),
+    #000 calc(100% - var(--md-table-fade-r)),
+    rgb(0 0 0 / 0.08)
+  );
   max-width: 100%;
   margin: 10px 0;
-  border-collapse: collapse;
   overflow-x: auto;
-  font-size: 12.5px;
+  overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
+  -webkit-mask-image: var(--md-table-mask);
+  mask-image: var(--md-table-mask);
+}
+.md-table[data-more-left] {
+  --md-table-fade-l: 32px;
+}
+.md-table[data-more-right] {
+  --md-table-fade-r: 32px;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 12.5px;
 }
 .md th,
 .md td {
   border: 1px solid var(--line);
   padding: 6px 10px;
   text-align: left;
+  white-space: nowrap;
+}
+.md th.md-cell-wrap,
+.md td.md-cell-wrap {
+  min-width: 16em;
+  white-space: normal;
 }
 .md th {
   background: color-mix(in srgb, var(--fg) 5%, var(--surface));

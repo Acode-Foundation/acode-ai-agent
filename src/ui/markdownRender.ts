@@ -14,6 +14,8 @@ const ALERT_LABELS: Record<string, string> = {
 
 const FENCE_TITLE_ATTR = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
 const FENCE_FILENAME = /^[\w@][\w@./-]*\.[A-Za-z0-9]+$/;
+/** Cells longer than this wrap; shorter ones stay on one line and the table scrolls. */
+const TABLE_CELL_WRAP_AT = 48;
 
 marked.use({
   gfm: true,
@@ -70,6 +72,23 @@ marked.use({
         return `<a href="${escapeHtml(href)}"${titleAttr}>${label}</a>`;
       }
       return label;
+    },
+    table(token: Tokens.Table): string {
+      const row = (cells: Tokens.TableCell[]) =>
+        `<tr>\n${cells.map((cell) => this.tablecell(cell)).join("")}</tr>\n`;
+      const body = token.rows.map(row).join("");
+      return [
+        `<div class="md-table"><table>\n`,
+        `<thead>\n${row(token.header)}</thead>\n`,
+        body ? `<tbody>${body}</tbody>` : "",
+        `</table></div>\n`,
+      ].join("");
+    },
+    tablecell(token: Tokens.TableCell): string | false {
+      if (token.text.length <= TABLE_CELL_WRAP_AT) return false;
+      const tag = token.header ? "th" : "td";
+      const align = token.align ? ` align="${token.align}"` : "";
+      return `<${tag} class="md-cell-wrap"${align}>${this.parser.parseInline(token.tokens)}</${tag}>\n`;
     },
     image({ href, text, title }: Tokens.Image): string {
       if (!/^https?:\/\//i.test(href)) return escapeHtml(text || "");
