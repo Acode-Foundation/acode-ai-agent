@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { SponsorBudget, SponsorSession } from "../src/ads/session";
+import { SponsorBudget, SponsorSession } from "../src/suggestions/session";
 
 const sdk = vi.hoisted(() => ({ init: vi.fn(), fetchAds: vi.fn(), created: vi.fn() }));
 vi.mock("@elo-ads/web-sdk/core", () => ({
@@ -46,7 +46,7 @@ test.each(["pro", "declined", "hidden", "ios-unconfigured", "android-28"])(
     if (condition === "declined") vi.stubGlobal("localStorage", { getItem: () => "declined" });
     if (condition === "hidden") vi.stubGlobal("document", { hidden: true });
     if (condition === "ios-unconfigured") vi.stubGlobal("cordova", { platformId: "ios" });
-    const { loadSponsor } = await import("../src/ads/elo");
+    const { loadSponsor } = await import("../src/suggestions/elo");
     expect(
       await loadSponsor(["Web development"], new AbortController().signal, dimensions),
     ).toBeNull();
@@ -61,8 +61,9 @@ test.each(["privacy", "getState"])("a throwing %s getter disables sponsorship", 
     },
   });
   vi.stubGlobal("admob", key === "privacy" ? broken : { privacy: broken });
-  const { sponsorsConfigured } = await import("../src/ads/elo");
-  const { hasSponsorConsentBridge, readSponsorConsent } = await import("../src/ads/consent");
+  const { sponsorsConfigured } = await import("../src/suggestions/elo");
+  const { hasSponsorConsentBridge, readSponsorConsent } =
+    await import("../src/suggestions/consent");
   expect(sponsorsConfigured()).toBe(false);
   expect(hasSponsorConsentBridge()).toBe(false);
   expect((await readSponsorConsent(new AbortController().signal)).status).toBe("unavailable");
@@ -73,7 +74,7 @@ test.each(["missing", "rejecting", "empty topics"])(
   async (condition) => {
     const getState = vi.fn().mockRejectedValue(new Error("Bridge unavailable"));
     vi.stubGlobal("admob", condition === "missing" ? undefined : { privacy: { getState } });
-    const { loadSponsor, sponsorsConfigured } = await import("../src/ads/elo");
+    const { loadSponsor, sponsorsConfigured } = await import("../src/suggestions/elo");
     if (condition === "missing") expect(sponsorsConfigured()).toBe(false);
     expect(
       await loadSponsor(
@@ -88,7 +89,7 @@ test.each(["missing", "rejecting", "empty topics"])(
 );
 
 test("passes only the category and uses public SDK identifiers", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   await loadSponsor(["Web development"], new AbortController().signal, dimensions);
   expect(sdk.created).toHaveBeenCalledExactlyOnceWith({
     publisherId: "test-publisher",
@@ -104,7 +105,7 @@ test("passes only the category and uses public SDK identifiers", async () => {
 });
 
 test("a ready SDK uses one fresh native read per fetch and honors a later denial", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   const state = { canRequestAds: true, consentStatus: "notRequired" };
   const getState = vi.fn(async () => state);
   vi.stubGlobal("admob", { privacy: { getState } });
@@ -120,7 +121,7 @@ test("a ready SDK uses one fresh native read per fetch and honors a later denial
 });
 
 test("honors SDK consent refusal and consent withdrawal during initialization", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   sdk.init.mockResolvedValueOnce({ status: "gdpr_consent_missing" });
   expect(
     await loadSponsor(["Web development"], new AbortController().signal, dimensions),
@@ -138,7 +139,7 @@ test("honors SDK consent refusal and consent withdrawal during initialization", 
 });
 
 test("rechecks native consent after SDK initialization while the app stays visible", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   const native = {
     canRequestAds: true,
     consentStatus: "obtained",
@@ -162,7 +163,7 @@ test.each([
   ["1", "", "unavailable"],
   ["2", "consent", "unavailable"],
 ])("validates native GDPR applicability %j and TC string %j", async (applies, tc, expected) => {
-  const { readSponsorConsent } = await import("../src/ads/consent");
+  const { readSponsorConsent } = await import("../src/suggestions/consent");
   vi.stubGlobal("admob", {
     privacy: {
       getState: async () => ({
@@ -178,7 +179,7 @@ test.each([
 });
 
 test("a failed storage restore drops the temporary signal and restores the other keys", async () => {
-  const { withSponsorConsent } = await import("../src/ads/consent");
+  const { withSponsorConsent } = await import("../src/suggestions/consent");
   const tc = "IABTCF_TCString";
   const gpp = "IABGPP_HDR_GppString";
   localStorage.setItem(tc, "previous TC");
@@ -196,7 +197,7 @@ test("a failed storage restore drops the temporary signal and restores the other
 });
 
 test("native consent denial uses one opportunity and backs off after the answer", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   const state = { consentStatus: "required", canRequestAds: false };
   const getState = vi.fn(async () => state);
   vi.stubGlobal("admob", { privacy: { getState } });
@@ -234,7 +235,7 @@ test("native consent denial uses one opportunity and backs off after the answer"
 });
 
 test("restores a cleared native override when another key releases storage quota", async () => {
-  const { withSponsorConsent } = await import("../src/ads/consent");
+  const { withSponsorConsent } = await import("../src/suggestions/consent");
   const tc = "IABTCF_TCString";
   const gpp = "IABGPP_HDR_GppString";
   localStorage.setItem(tc, "original");
@@ -253,7 +254,7 @@ test("restores a cleared native override when another key releases storage quota
 test("aborted and timed-out native consent reads never initialize Elo", async () => {
   const getState = vi.fn(() => new Promise(() => {}));
   vi.stubGlobal("admob", { privacy: { getState } });
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   vi.useFakeTimers();
   const controller = new AbortController();
   const load = () => loadSponsor(["Web development"], controller.signal, dimensions);
@@ -269,7 +270,7 @@ test("aborted and timed-out native consent reads never initialize Elo", async ()
 test("creates a version 4 UUID with secure random bytes on older WebViews", async () => {
   const getRandomValues = crypto.getRandomValues.bind(crypto);
   vi.stubGlobal("crypto", { getRandomValues });
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   await loadSponsor(["Web development"], new AbortController().signal, dimensions);
   expect(crypto.randomUUID()).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -284,7 +285,7 @@ test("backgrounding during initialization cancels the opportunity", async () => 
     doc.hidden = true;
     return { status: "ready" };
   });
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   const result = loadSponsor(["Web development"], new AbortController().signal, dimensions);
   expect(await result).toBeNull();
   doc.hidden = false;
@@ -295,7 +296,7 @@ test("backgrounding during initialization cancels the opportunity", async () => 
 test.each(["covered", "inactive before switch notification"])(
   "a pending consent read cannot send an ad request when %s",
   async (reason) => {
-    const { loadSponsor } = await import("../src/ads/elo");
+    const { loadSponsor } = await import("../src/suggestions/elo");
     let visible = true;
     let finish!: (state: { consentStatus: string; canRequestAds: boolean }) => void;
     const state = { consentStatus: "notRequired", canRequestAds: true };
@@ -336,7 +337,7 @@ test.each(["covered", "inactive before switch notification"])(
 );
 
 test("an aborted opportunity never initializes or requests an ad", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   const controller = new AbortController();
   controller.abort();
   expect(await loadSponsor(["Web development"], controller.signal, dimensions)).toBeNull();
@@ -344,7 +345,7 @@ test("an aborted opportunity never initializes or requests an ad", async () => {
 });
 
 test("network failures and unsafe creatives leave the slot empty", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   sdk.fetchAds.mockRejectedValueOnce(new Error("Offline"));
   expect(
     await loadSponsor(["Web development"], new AbortController().signal, dimensions),
@@ -356,7 +357,7 @@ test("network failures and unsafe creatives leave the slot empty", async () => {
 });
 
 test("accepts Elo tracking paths and HTTPS partner notices and rejects foreign render endpoints", async () => {
-  const { loadSponsor } = await import("../src/ads/elo");
+  const { loadSponsor } = await import("../src/suggestions/elo");
   const load = () => loadSponsor(["Web development"], new AbortController().signal, dimensions);
   const ad = {
     title: "Hosting",

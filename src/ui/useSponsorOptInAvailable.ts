@@ -1,5 +1,5 @@
 import { useEffect, useState } from "preact/hooks";
-import { readSponsorConsent } from "../ads/consent";
+import { readSponsorConsent } from "../suggestions/consent";
 
 /** Offer opt-in only when the device can supply consent. Never starts Elo. */
 export function useSponsorOptInAvailable(check: boolean) {

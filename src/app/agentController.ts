@@ -1,8 +1,8 @@
 import type { AuthEvent, AuthPrompt, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import type { ToolExposure } from "../tools/toolSearch";
-import { sponsorIdentityCleared, sponsorPreferencesChanged } from "../ads/preferences";
-import { SponsorBudget } from "../ads/session";
+import { sponsorIdentityCleared, sponsorPreferencesChanged } from "../suggestions/preferences";
+import { SponsorBudget } from "../suggestions/session";
 import { Signal } from "../core/events";
 import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";

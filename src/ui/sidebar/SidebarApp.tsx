@@ -2,12 +2,12 @@ import {
   ChevronDown,
   ExternalLink,
   Folder,
-  Sparkles,
   LoaderCircle,
   MessageSquarePlus,
   PanelTopOpen,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-preact";
@@ -94,12 +94,13 @@ export function SidebarApp({
     });
   };
   const startInOpenProject = () => {
-    if (!workspaces.length) {
+    const firstWorkspace = workspaces[0];
+    if (!firstWorkspace) {
       showToast("Open a project in Acode first.");
       return;
     }
     if (workspaces.length === 1) {
-      void run(`new:${workspaces[0]!.id}`, () => onNewSession(workspaces[0]!.id));
+      void run(`new:${firstWorkspace.id}`, () => onNewSession(firstWorkspace.id));
       return;
     }
     void pickAcodeSelect(
@@ -119,7 +120,7 @@ export function SidebarApp({
     <div class="acode-agent-sidebar">
       <header class="as-head">
         <div class="as-mark">
-          <AgentIcon size={20} />
+          <AgentIcon size={18} />
         </div>
         <div>
           <b>AI Agent</b>

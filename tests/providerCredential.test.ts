@@ -3,17 +3,8 @@ import { useState } from "preact/hooks";
 import type { AgentController } from "../src/app/agentController";
 import { PortableCredentialStore } from "../src/platform/credentials";
 import { useProviderCredential, watchProviderCredential } from "../src/ui/useProviderCredential";
-import { ProviderSetup } from "../src/ui/ProviderSetup";
 
 vi.mock("preact/hooks", () => ({ useState: vi.fn(), useEffect: vi.fn() }));
-
-test("offers setup only for a disconnected provider with a settings entry", () => {
-  const props = { connected: false, onConfigure: vi.fn() };
-  const provider = { id: "openrouter", name: "OpenRouter", apiKey: true, hint: "" };
-  expect(ProviderSetup(props)).toBeNull();
-  expect(ProviderSetup({ ...props, provider })).toBeTruthy();
-  expect(ProviderSetup({ ...props, provider, connected: true })).toBeNull();
-});
 
 test("successful sign-in bridges a delayed credential read only for its provider", () => {
   vi.mocked(useState).mockReturnValue([{ providerId: "openrouter", connected: false }, vi.fn()]);

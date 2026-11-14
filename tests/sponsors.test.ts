@@ -1,13 +1,13 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { sponsorContext } from "../src/ads/context";
-import { SponsorBudget, SponsorSession } from "../src/ads/session";
+import { sponsorContext } from "../src/suggestions/context";
+import { SponsorBudget, SponsorSession } from "../src/suggestions/session";
 import {
   isFreeAcode,
   setSponsorConsent,
   sponsorConsent,
   type SponsorConsent,
-} from "../src/ads/preferences";
-import { safeAdUrl, type Sponsor } from "../src/ads/elo";
+} from "../src/suggestions/preferences";
+import { safeAdUrl, type Sponsor } from "../src/suggestions/elo";
 
 afterEach(() => {
   vi.useRealTimers();

@@ -2,16 +2,16 @@ import { mountEloAd } from "@elo-ads/web-sdk/core";
 import { Heart, Megaphone, X } from "lucide-preact";
 import type { RefObject } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
-import { readSponsorConsent } from "../ads/consent";
-import { safeAdUrl } from "../ads/elo";
+import { readSponsorConsent } from "../suggestions/consent";
+import { safeAdUrl } from "../suggestions/elo";
 import {
   canRequestSponsors,
   setSponsorConsent,
   sponsorPreferencesChanged,
   sponsorIdentityCleared,
   SPONSOR_DISCLOSURE,
-} from "../ads/preferences";
-import type { SponsorPlacement, SponsorBudget } from "../ads/session";
+} from "../suggestions/preferences";
+import type { SponsorPlacement, SponsorBudget } from "../suggestions/session";
 import { openCustomTab } from "../platform/authTab";
 import { showToast } from "../platform/toast";
 

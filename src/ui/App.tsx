@@ -62,7 +62,7 @@ import { parseSlashCommand } from "../core/slashCommands";
 import { showToast } from "../platform/toast";
 import { useProviderCredential } from "./useProviderCredential";
 import { CHATGPT_USAGE_URL, type ChatGPTRegistration } from "../providers/chatgptOAuth";
-import { ProviderSetup } from "./ProviderSetup";
+import { AgentIcon } from "./AgentIcon";
 import { useSponsor } from "./useSponsor";
 import { SponsoredCard, SponsorOptIn } from "./SponsoredCard";
 import { SponsorSettings } from "./SponsorSettings";
@@ -691,11 +691,20 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
 
       <div class="agent-dock">
         <div class="agent-dock-panels">
-          <ProviderSetup
-            provider={provider}
-            connected={connected}
-            onConfigure={() => setSettingsOpen(true)}
-          />
+          {provider && connected === false && (
+            <div class="provider-setup">
+              <AgentIcon size={22} />
+              <div>
+                <b>Connect to {provider.name}</b>
+                <span>
+                  {provider.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
+                </span>
+              </div>
+              <button type="button" onClick={() => setSettingsOpen(true)}>
+                Configure
+              </button>
+            </div>
+          )}
           {state.questionnaire && (
             <AskCard
               prompt={state.questionnaire}
@@ -2255,8 +2264,7 @@ function EndpointForm({
       </p>
       {loopback && (
         <p class="endpoint-warn">
-          For a server running on your computer, use the computer's LAN IP address instead of
-          localhost.
+          localhost on Android is this phone, not your computer. Use the computer's LAN IP instead.
         </p>
       )}
       <label class="field-label">

@@ -7,9 +7,9 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import { loadSponsor, sponsorsConfigured } from "../ads/elo";
-import { isFreeAcode, sponsorConsent, sponsorPreferencesChanged } from "../ads/preferences";
-import { type SponsorBudget, SponsorSession } from "../ads/session";
+import { loadSponsor, sponsorsConfigured } from "../suggestions/elo";
+import { isFreeAcode, sponsorConsent, sponsorPreferencesChanged } from "../suggestions/preferences";
+import { type SponsorBudget, SponsorSession } from "../suggestions/session";
 import { useSponsorOptInAvailable } from "./useSponsorOptInAvailable";
 import type { ChatTurn } from "./transcript";
 

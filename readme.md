@@ -2,12 +2,12 @@
 
 A coding agent for [Acode](https://acode.app). It opens as an editor tab, reads and edits your project, searches the web, and runs shell commands on Terminal-backed folders. You connect your own model provider.
 
-The agent core comes from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-durable` and `@earendil-works/pi-ai` 1.5.2): providers, durable sessions, compaction, queues, retries, and the `read`, `write`, `edit` and `bash` tools. This plugin adds the Acode side: the editor UI, the workspace sandbox, approvals, and everything needed to run in Acode’s WebView without Node.
+The agent core comes from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-durable` and `@earendil-works/pi-ai` 1.5.2): providers, durable sessions, compaction, queues, retries, and the `read`, `write`, `edit` and `bash` tools. This plugin adds the Acode side: the editor UI, the workspace sandbox, approvals, and everything needed to run in an Android WebView without Node.
 
 If you use Pi on a desktop, most of it carries over:
 
 - Providers, models, thinking levels, API-key and device-code login
-- Durable runs. Each model turn and tool call is saved before it is shown, so an interrupted run can resume.
+- Durable runs. Each model turn and tool call is saved before it is shown, so a run that Android interrupts can resume.
 - Branches, compaction, steer and follow-up queues, fork, clone, `/tree`
 - Skills and prompt templates (`.pi/skills`, `.agents/skills`, `/skill:name`, `load_skill`)
 - Project instructions from `AGENTS.md` or `CLAUDE.md`
@@ -90,7 +90,7 @@ Sessions are stored per project. The sidebar lists and searches them and can ope
 - **"Open a folder first"**: open a project folder in Acode's sidebar.
 - **Empty or failed response**: try another model or a lower thinking level.
 - **No `bash` tool**: commands only run on Acode Terminal folders. Elsewhere the agent can edit files but not run them.
-- **"Run interrupted"**: The app stopped mid-run. **Resume** continues from the last saved step; **Discard** drops it.
+- **"Run interrupted"**: Android stopped the app mid-run. **Resume** continues from the last saved step; **Discard** drops it.
 
 ## Providers
 
@@ -110,7 +110,7 @@ Add credentials under **Provider access**. Keys and tokens are kept in Acode's p
 | Kimi Code      | Kimi Code             |
 
 - **OpenRouter** opens a custom tab and connects when you approve. No code to paste.
-- **ChatGPT** uses OpenAI's official Sign in with ChatGPT integration. Tap **Continue with ChatGPT**, approve plan usage, then tap **Return to Acode** if needed. One ChatGPT account is saved at a time. **Disconnect** signs out; **Remove account** then forgets the saved account so you can connect another. Reconnecting uses the saved registration directly. Use **Manage usage** to review access and limits in ChatGPT. Requests use the public Responses API and your ChatGPT plan allowance.
+- **ChatGPT** uses OpenAI's official Sign in with ChatGPT integration. Tap **Continue with ChatGPT**, approve plan usage, then tap **Return to Acode** if needed. On Android, use Chrome for browser sign-in. One ChatGPT account is saved at a time. **Disconnect** signs out; **Remove account** then forgets the saved account so you can connect another. Reconnecting uses the saved registration directly. Use **Manage usage** to review access and limits in ChatGPT. Requests use the public Responses API and your ChatGPT plan allowance.
 - **Codex, xAI and Kimi Code** use device codes: tap **Copy code & sign in**, paste the code on the provider's page and approve. For Codex, first enable device-code authorization in ChatGPT under Settings → Security.
 - **GitHub Copilot** uses github.com by default. **Other sign-in options** accepts an Enterprise domain.
 
@@ -279,7 +279,7 @@ Folder walks on remote storage are sequential and capped (200 files by default, 
 - Credentials use Acode's plugin secret storage. On hosts without it, they stay in memory only.
 - Chats live in the WebView's IndexedDB, one Pi session per chat. Deleting a chat deletes its data. Keys and tokens are redacted before anything is saved.
 - `fetch_content` refuses localhost, private networks and URLs with embedded credentials.
-- If the operating system interrupts a run, the chat offers to resume from the last saved step.
+- A run keeps going when the app is in the background. If Android kills the app, the chat offers to resume from the last saved step.
 
 ### Sponsored suggestions
 

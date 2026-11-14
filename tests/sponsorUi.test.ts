@@ -3,15 +3,15 @@ import { createRef, h, render } from "preact";
 import { useRef } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
-import { loadSponsor, type Sponsor } from "../src/ads/elo";
-import * as nativeConsent from "../src/ads/consent";
+import { loadSponsor, type Sponsor } from "../src/suggestions/elo";
+import * as nativeConsent from "../src/suggestions/consent";
 import { readFileSync } from "node:fs";
 import {
   setSponsorConsent,
   sponsorConsent,
   sponsorPreferencesChanged,
-} from "../src/ads/preferences";
-import { SponsorBudget } from "../src/ads/session";
+} from "../src/suggestions/preferences";
+import { SponsorBudget } from "../src/suggestions/session";
 import { openCustomTab } from "../src/platform/authTab";
 import { SponsoredCard, SponsorOptIn } from "../src/ui/SponsoredCard";
 import { SponsorSettings } from "../src/ui/SponsorSettings";
@@ -19,8 +19,8 @@ import { useSponsor } from "../src/ui/useSponsor";
 import type { ChatTurn } from "../src/ui/transcript";
 
 vi.mock("../src/platform/authTab", () => ({ openCustomTab: vi.fn(async () => {}) }));
-vi.mock("../src/ads/elo", async (load) => ({
-  ...(await load<typeof import("../src/ads/elo")>()),
+vi.mock("../src/suggestions/elo", async (load) => ({
+  ...(await load<typeof import("../src/suggestions/elo")>()),
   loadSponsor: vi.fn(),
 }));
 
@@ -802,7 +802,7 @@ test("declining suggestions persists the preference and removes advertising iden
 });
 
 test("unknown or unavailable native consent preserves identities until consent is required", async () => {
-  const { readSponsorConsent } = await import("../src/ads/consent");
+  const { readSponsorConsent } = await import("../src/suggestions/consent");
   const getState = vi
     .fn()
     .mockResolvedValueOnce({ consentStatus: "unknown", canRequestAds: false })
@@ -821,7 +821,8 @@ test("unknown or unavailable native consent preserves identities until consent i
 });
 
 test("the pinned SDK creates no identifier or network request until required CMP signals exist", async () => {
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   const network = vi.fn(async (url: string, options: RequestInit) => {
     if (options.method === "HEAD") return new Response(null, { status: 204 });
     expect(url).toBe("https://api.elo.ad/v1/ad/request");
@@ -873,7 +874,8 @@ test("the pinned SDK creates no identifier or network request until required CMP
 });
 
 test("taps open the link and send click notices without scheduling analytics after opt-out", async () => {
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   setSponsorConsent("allowed");
   const network = vi.fn(async (url: string) => {
     if (url.endsWith("/events")) throw Error("offline");
@@ -921,7 +923,8 @@ test("taps open the link and send click notices without scheduling analytics aft
 
 test("the real SDK view starts the cooldown after dwell, even if impression delivery fails", async () => {
   setSponsorConsent("allowed");
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) =>
@@ -975,7 +978,8 @@ test("the real SDK view starts the cooldown after dwell, even if impression deli
 });
 
 test("a native consent change without a lifecycle event suppresses impression and click notices", async () => {
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   setSponsorConsent("allowed");
   const native = { canRequestAds: true, consentStatus: "notRequired" };
   const getState = vi.fn(async () => native);
@@ -1041,7 +1045,8 @@ test("a native consent change without a lifecycle event suppresses impression an
 
 test("the mounted SDK view recovers from an unavailable bridge and cancels a pending click on dismissal", async () => {
   setSponsorConsent("allowed");
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   const state = { canRequestAds: true, consentStatus: "notRequired" };
   const getState = vi.fn(async () => state);
   vi.stubGlobal("admob", { privacy: { getState } });
@@ -1116,7 +1121,8 @@ test("the mounted SDK view recovers from an unavailable bridge and cancels a pen
 
 test("a failed consent check on opening allows the user to retry and removes a replaced session", async () => {
   setSponsorConsent("allowed");
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   const consent = {
     canRequestAds: true,
     consentStatus: "obtained",
@@ -1180,8 +1186,9 @@ test("a failed consent check on opening allows the user to retry and removes a r
 });
 
 test("a legacy native CMP cannot authorize an obtained decision with a stale WebView string", async () => {
-  const { readSponsorConsent } = await import("../src/ads/consent");
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
+  const { readSponsorConsent } = await import("../src/suggestions/consent");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   localStorage.setItem("IABTCF_gdprApplies", "1");
   localStorage.setItem("IABTCF_TCString", "old-consent");
   localStorage.setItem("IABGPP_HDR_GppString", "old-gpp");
@@ -1214,8 +1221,9 @@ test("a legacy native CMP cannot authorize an obtained decision with a stale Web
 test("the pinned SDK times out a hung fetch and releases the shared request slot", async () => {
   vi.useFakeTimers();
   setSponsorConsent("allowed");
-  const integration = await vi.importActual<typeof import("../src/ads/elo")>("../src/ads/elo");
-  const { SponsorSession } = await import("../src/ads/session");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
+  const { SponsorSession } = await import("../src/suggestions/session");
   let requestSignal: AbortSignal | undefined;
   vi.stubGlobal(
     "fetch",

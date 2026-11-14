@@ -1,12 +1,12 @@
 import { useEffect, useState } from "preact/hooks";
-import { sponsorsConfigured } from "../ads/elo";
+import { sponsorsConfigured } from "../suggestions/elo";
 import {
   SPONSOR_DISCLOSURE,
   isFreeAcode,
   setSponsorConsent,
   sponsorConsent,
   sponsorPreferencesChanged,
-} from "../ads/preferences";
+} from "../suggestions/preferences";
 import { useSponsorOptInAvailable } from "./useSponsorOptInAvailable";
 
 export function SponsorSettings() {
