@@ -27,6 +27,16 @@ test("stops by the user are not failures, and resets are not retried", () => {
   expect(failureNotice(failure("nothing_to_answer"), undefined)?.retryable).toBe(false);
 });
 
+test.each([
+  { message: "api.github.com (HTTP 403): No access to GitHub Copilot found.", signIn: true },
+  { message: "api.github.com access denied (HTTP 403)", signIn: true },
+  { message: "Provider access denied", signIn: true },
+  { message: "api.github.com (HTTP 403): API rate limit exceeded", signIn: false },
+  { message: "OAuth refresh failed (HTTP 429): Slow down", signIn: false },
+])("offers Sign in only for access errors: $message", ({ message, signIn }) => {
+  expect(failureNotice(failure("model_error"), message)).toMatchObject({ signIn, retryable: true });
+});
+
 test("Pi's detail explains the failure, with a plain fallback", () => {
   expect(failureNotice(failure("turn_limit", "40 turns"), "40 turns")).toMatchObject({
     title: "Tool round limit reached",

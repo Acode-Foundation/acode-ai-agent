@@ -42,7 +42,8 @@ const RETRYABLE = new Set([
   "faulted",
 ]);
 const SIGN_IN_ERROR =
-  /oauth|refresh token|sign[ -]?in|log[ -]?in|unauthori[sz]ed|\b401\b|invalid (api )?key|authentication failed/i;
+  /oauth|refresh token|sign[ -]?in|log[ -]?in|unauthori[sz]ed|\b40[13]\b|access denied|invalid (api )?key|authentication failed/i;
+const RATE_LIMIT_ERROR = /\b429\b|rate[ -]?limit|too many requests/i;
 
 export function failureNotice(
   failure: LiveState["runFailure"],
@@ -58,6 +59,9 @@ export function failureNotice(
     title: TITLES[failure.reason] ?? "Request failed",
     message,
     retryable: RETRYABLE.has(failure.reason),
-    signIn: failure.reason === "model_error" && SIGN_IN_ERROR.test(message),
+    signIn:
+      failure.reason === "model_error" &&
+      SIGN_IN_ERROR.test(message) &&
+      !RATE_LIMIT_ERROR.test(message),
   };
 }
