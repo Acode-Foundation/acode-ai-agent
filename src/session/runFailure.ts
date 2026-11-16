@@ -41,8 +41,9 @@ const RETRYABLE = new Set([
   "turn_limit",
   "faulted",
 ]);
+// A 403 alone can mean a plan, region, or policy restriction; require auth context.
 const SIGN_IN_ERROR =
-  /oauth|refresh token|sign[ -]?in|log[ -]?in|unauthori[sz]ed|\b40[13]\b|access denied|invalid (api )?key|authentication failed/i;
+  /oauth|refresh token|sign[ -]?in|log[ -]?in|unauthori[sz]ed|\b401\b|invalid (api )?key|authentication failed/i;
 const RATE_LIMIT_ERROR = /\b429\b|rate[ -]?limit|too many requests/i;
 
 export function failureNotice(
