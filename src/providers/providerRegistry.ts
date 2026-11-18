@@ -232,7 +232,7 @@ export function providerDescriptors(
       id: endpoint.id,
       name: endpoint.name,
       hint: endpoint.baseUrl,
-      keyPlaceholder: "sk-… or leave blank for local",
+      keyPlaceholder: "Optional if authentication is not required",
       apiKey: true,
     })),
   ];

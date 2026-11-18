@@ -84,26 +84,6 @@ export function isLoopbackUrl(baseUrl: string): boolean {
   }
 }
 
-export function isLocalUrl(baseUrl: string): boolean {
-  try {
-    const url = new URL(baseUrl);
-    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
-    if (host.endsWith(".local")) return true;
-    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-    const match = /^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
-    if (match) {
-      const second = Number(match[1]);
-      return second >= 16 && second <= 31;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 export function normalizeOpenAIBaseUrl(value: string): string | undefined {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > 500) return undefined;
@@ -285,7 +265,7 @@ export async function probeOpenAIModels(
   if (!url) throw new Error("Enter a valid OpenAI-compatible base URL first.");
   const headers: Record<string, string> = { Accept: "application/json" };
   const key = apiKey?.trim();
-  if (key && key !== "none") headers.Authorization = `Bearer ${key}`;
+  if (key) headers.Authorization = `Bearer ${key}`;
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), FETCH_TIMEOUT_MS);
   const abort = () => timeout.abort();
@@ -352,14 +332,13 @@ function customEndpointAuth(endpoint: CustomEndpoint): ApiKeyAuth {
       const key = await interaction.prompt({
         type: "secret",
         message: `Enter ${name}`,
-        placeholder: isLocalUrl(endpoint.baseUrl) ? "optional for local servers" : "sk-…",
       });
       return { type: "api_key", key };
     },
     resolve: async ({ credential }) => {
       if (credential?.key) return { auth: { apiKey: credential.key }, source: "stored credential" };
-      if (isLocalUrl(endpoint.baseUrl)) return { auth: { apiKey: "none" }, source: "keyless" };
-      return undefined;
+      // The SDK requires a nonempty key, but keyless endpoints must receive no bearer header.
+      return { auth: { apiKey: "none", headers: { Authorization: null } }, source: "keyless" };
     },
   };
 }

@@ -6,6 +6,7 @@ import { PathSandbox } from "../workspace/pathSandbox";
 import { copyText, playCopiedFeedback, swapCopyGlyphs } from "./CopyButton";
 import { renderMarkdown } from "./markdownRender";
 import { mountMermaidBlocks } from "./mermaidBlocks";
+import { mountTableScroll } from "./tableScroll";
 
 export function Markdown({ text, workspace }: { text: string; workspace?: WorkspaceInfo }) {
   const root = useRef<HTMLDivElement>(null);
@@ -20,9 +21,11 @@ export function Markdown({ text, workspace }: { text: string; workspace?: Worksp
     let cancelled = false;
     void highlightCodeBlocks(host, { cancelled: () => cancelled });
     const unmountDiagrams = mountMermaidBlocks(host);
+    const unmountTables = mountTableScroll(host);
     return () => {
       cancelled = true;
       unmountDiagrams();
+      unmountTables();
     };
   }, [html]);
   return (

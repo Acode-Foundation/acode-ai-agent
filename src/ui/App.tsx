@@ -26,12 +26,7 @@ import type {
   PublicAgentState,
   WorkspaceInfo,
 } from "../core/types";
-import {
-  isLoopbackUrl,
-  isLocalUrl,
-  probeOpenAIModels,
-  type CustomEndpoint,
-} from "../providers/customEndpoints";
+import { isLoopbackUrl, type CustomEndpoint } from "../providers/customEndpoints";
 import { providerDescriptors } from "../providers/providerRegistry";
 import { thinkingLevelsFor } from "../providers/thinkingLevels";
 import { backActionId, useBackAction } from "./actionStack";
@@ -691,20 +686,24 @@ export function App({ controller, isTabActive, onActiveChatChange, inbox }: Prop
 
       <div class="agent-dock">
         <div class="agent-dock-panels">
-          {provider && connected === false && (
-            <div class="provider-setup">
-              <AgentIcon size={22} />
-              <div>
-                <b>Connect to {provider.name}</b>
-                <span>
-                  {provider.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
-                </span>
+          {provider &&
+            connected === false &&
+            !state.settings.customEndpoints.some(
+              (endpoint) => endpoint.id === state.settings.providerId,
+            ) && (
+              <div class="provider-setup">
+                <AgentIcon size={22} />
+                <div>
+                  <b>Connect to {provider.name}</b>
+                  <span>
+                    {provider.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
+                  </span>
+                </div>
+                <button type="button" onClick={() => setSettingsOpen(true)}>
+                  Configure
+                </button>
               </div>
-              <button type="button" onClick={() => setSettingsOpen(true)}>
-                Configure
-              </button>
-            </div>
-          )}
+            )}
           {state.questionnaire && (
             <AskCard
               prompt={state.questionnaire}
@@ -1128,7 +1127,13 @@ function SettingsSheet({
     try {
       if (kind === "remove") await controller.forgetChatGPTAccount();
       else await controller.removeCredential(providerId);
-      onToast(kind === "remove" ? "ChatGPT account removed" : `${provider.name} disconnected`);
+      onToast(
+        kind === "remove"
+          ? "ChatGPT account removed"
+          : selectedEndpoint
+            ? "API key removed"
+            : `${provider.name} disconnected`,
+      );
     } catch (error) {
       onToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1197,7 +1202,7 @@ function SettingsSheet({
               >
                 <ChevronLeft size={20} strokeWidth={2} />
               </button>
-              <h2>{endpointView.endpoint ? "Edit endpoint" : "Local endpoint"}</h2>
+              <h2>{endpointView.endpoint ? "Edit endpoint" : "Custom endpoint"}</h2>
             </header>
             <EndpointForm
               controller={controller}
@@ -1206,7 +1211,6 @@ function SettingsSheet({
               onSaved={(saved) => {
                 setProviderId(saved.id);
                 setEndpointView(null);
-                onToast(`${saved.name} saved`);
               }}
               onRemoved={() => {
                 setEndpointView(null);
@@ -1240,10 +1244,14 @@ function SettingsSheet({
               {!signingIn && (
                 <p class={connected ? "ok" : ""} role="status">
                   {connected === undefined
-                    ? "Checking connection…"
-                    : connected
-                      ? `${provider.name} is connected`
-                      : `Connect to ${provider.name}`}
+                    ? "Checking credentials…"
+                    : selectedEndpoint
+                      ? connected
+                        ? "API key saved"
+                        : "No API key configured"
+                      : connected
+                        ? `${provider.name} is connected`
+                        : `Connect to ${provider.name}`}
                 </p>
               )}
               {providerId === "chatgpt" && !signingIn && (chatgptAccount || connected) && (
@@ -1259,7 +1267,7 @@ function SettingsSheet({
                 </div>
               )}
               {provider.apiKey &&
-                connected === false &&
+                (connected === false || Boolean(selectedEndpoint)) &&
                 !signingIn &&
                 (!provider.subscriptionLabel || showKey) && (
                   <>
@@ -1413,7 +1421,13 @@ function SettingsSheet({
                       aria-live="polite"
                       onClick={() => void changeCredential("disconnect")}
                     >
-                      {disconnecting ? "Disconnecting…" : "Disconnect"}
+                      {selectedEndpoint
+                        ? disconnecting
+                          ? "Removing…"
+                          : "Remove API key"
+                        : disconnecting
+                          ? "Disconnecting…"
+                          : "Disconnect"}
                     </button>
                   )}
                   {providerId === "chatgpt" && (
@@ -1931,7 +1945,7 @@ function ConfigSheet({
                   <button type="button" class="sheet-back" onClick={back} aria-label="Back">
                     <ChevronLeft size={20} strokeWidth={2} />
                   </button>
-                  <h2>{editing && editing !== "new" ? "Edit endpoint" : "Local endpoint"}</h2>
+                  <h2>{editing && editing !== "new" ? "Edit endpoint" : "Custom endpoint"}</h2>
                 </header>
                 <div class="picker-body">
                   <EndpointForm
@@ -2172,7 +2186,6 @@ function EndpointForm({
       ? `http://${baseUrl.trim()}`
       : "";
   const loopback = Boolean(urlForHints) && isLoopbackUrl(urlForHints);
-  const local = Boolean(urlForHints) && isLocalUrl(urlForHints);
   const save = () => {
     setBusy("save");
     setError("");
@@ -2190,7 +2203,14 @@ function EndpointForm({
         },
         apiKey,
       )
-      .then(onSaved)
+      .then(({ endpoint: saved, removedApiKey }) => {
+        onSaved(saved);
+        showToast(
+          removedApiKey
+            ? `${saved.name} saved. Previous API key removed because the base URL changed.`
+            : `${saved.name} saved`,
+        );
+      })
       .catch((caught) => {
         setError(caught instanceof Error ? caught.message : String(caught));
       })
@@ -2199,7 +2219,8 @@ function EndpointForm({
   const probe = () => {
     setBusy("probe");
     setError("");
-    void probeOpenAIModels(baseUrl, apiKey)
+    void controller
+      .probeCustomEndpointModels(baseUrl, apiKey, endpoint?.id)
       .then((ids) => {
         setModels((current) =>
           [
@@ -2259,7 +2280,7 @@ function EndpointForm({
         />
       </label>
       <p class="custom-model-hint">
-        Point at the OpenAI-compatible `/v1` URL on your computer. Replace `192.168.1.10` with that
+        Enter your provider's OpenAI-compatible base URL. For a server on your computer, use that
         machine's LAN IP.
       </p>
       {loopback && (
@@ -2268,18 +2289,24 @@ function EndpointForm({
         </p>
       )}
       <label class="field-label">
-        API key {local ? "(optional)" : ""}
+        API key (optional)
         <input
           type="password"
           value={apiKey}
           placeholder={
-            endpoint ? "Replacement key" : local ? "Leave blank for local servers" : "sk-…"
+            endpoint ? "Leave blank to keep the saved key" : "Leave blank if not required"
           }
           autoCapitalize="none"
           autoCorrect="off"
           onInput={(event) => setApiKey(event.currentTarget.value)}
         />
       </label>
+      {endpoint && (
+        <p class="custom-model-hint">
+          Changing the base URL clears the saved key unless you enter a replacement. Remove a saved
+          key in Provider access to use this endpoint without authentication.
+        </p>
+      )}
       <label class="field-label">
         Model ids
         <textarea
@@ -2376,7 +2403,7 @@ function ModelPicker({
       </div>
       <p class="custom-model-hint">
         {endpoint
-          ? `Local OpenAI-compatible at ${endpoint.baseUrl}. Paste a model id or load GET /models.`
+          ? `OpenAI-compatible endpoint at ${endpoint.baseUrl}. Paste a model id or load GET /models.`
           : "Choose a model, or enter its ID above."}
       </p>
       {endpoint && (
