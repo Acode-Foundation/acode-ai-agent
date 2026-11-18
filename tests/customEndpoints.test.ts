@@ -7,7 +7,6 @@ import {
   createOpenAICompatibleProvider,
   customEndpointModel,
   finalizeCustomEndpoint,
-  isLocalUrl,
   isLoopbackUrl,
   isReservedProviderId,
   LOCAL_ENDPOINT_PRESETS,
@@ -43,14 +42,9 @@ test("normalizes OpenAI-compatible base URLs and rejects unsafe ones", () => {
   expect(modelsUrl("http://192.168.1.10:11434/v1")).toBe("http://192.168.1.10:11434/v1/models");
 });
 
-test("treats loopback and LAN hosts as local", () => {
+test("distinguishes phone loopback from LAN hosts", () => {
   expect(isLoopbackUrl("http://127.0.0.1:11434/v1")).toBe(true);
   expect(isLoopbackUrl("http://192.168.1.10:11434/v1")).toBe(false);
-  expect(isLocalUrl("http://localhost:11434/v1")).toBe(true);
-  expect(isLocalUrl("http://10.0.0.8:1234/v1")).toBe(true);
-  expect(isLocalUrl("http://172.16.4.2/v1")).toBe(true);
-  expect(isLocalUrl("http://macbook.local:1234/v1")).toBe(true);
-  expect(isLocalUrl("https://openrouter.ai/api/v1")).toBe(false);
 });
 
 test("allocates ids without colliding with built-ins", () => {
@@ -141,7 +135,6 @@ test("local presets use LAN IPs and llama.cpp / vLLM ports", () => {
   expect(LOCAL_ENDPOINT_PRESETS[0]?.baseUrl).toBe("http://192.168.1.10:8080/v1");
   expect(LOCAL_ENDPOINT_PRESETS[1]?.baseUrl).toBe("http://192.168.1.10:8000/v1");
   for (const preset of LOCAL_ENDPOINT_PRESETS) {
-    expect(isLocalUrl(preset.baseUrl)).toBe(true);
     expect(isLoopbackUrl(preset.baseUrl)).toBe(false);
   }
 });

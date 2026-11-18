@@ -41,8 +41,10 @@ const RETRYABLE = new Set([
   "turn_limit",
   "faulted",
 ]);
+// A 403 alone can mean a plan, region, or policy restriction; require auth context.
 const SIGN_IN_ERROR =
   /oauth|refresh token|sign[ -]?in|log[ -]?in|unauthori[sz]ed|\b401\b|invalid (api )?key|authentication failed/i;
+const RATE_LIMIT_ERROR = /\b429\b|rate[ -]?limit|too many requests/i;
 
 export function failureNotice(
   failure: LiveState["runFailure"],
@@ -58,6 +60,9 @@ export function failureNotice(
     title: TITLES[failure.reason] ?? "Request failed",
     message,
     retryable: RETRYABLE.has(failure.reason),
-    signIn: failure.reason === "model_error" && SIGN_IN_ERROR.test(message),
+    signIn:
+      failure.reason === "model_error" &&
+      SIGN_IN_ERROR.test(message) &&
+      !RATE_LIMIT_ERROR.test(message),
   };
 }

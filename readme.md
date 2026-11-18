@@ -114,10 +114,10 @@ Add credentials under **Provider access**. Keys and tokens are kept in Acode's p
 
 Anthropic is API-key only. Anthropic doesn't allow third-party apps to use Claude subscription sign-in, so Claude Pro / Max login was removed. If you used it before, add a Console API key.
 
-**Custom models and local servers**
+**Custom models and endpoints**
 
 - In the model picker, paste any model id the provider accepts (e.g. `anthropic/claude-sonnet-4.6` on OpenRouter) to use a model missing from the catalog.
-- **Provider access → Local endpoint** adds an OpenAI-compatible server such as llama.cpp, vLLM, LM Studio or Ollama. Set the base URL (e.g. `http://192.168.1.10:8080/v1`), list model ids or fetch them from `/models`, and mark whether they accept images or reasoning. Up to 20 endpoints.
+- **Provider access → Add custom endpoint…** adds a local or hosted OpenAI-compatible server, including llama.cpp, vLLM, LM Studio or Ollama. Set the base URL (e.g. `http://192.168.1.10:8080/v1`), provide an API key only if required, and list model ids or fetch them from `/models`. Up to 20 endpoints. Provider access also lets you replace or remove a saved key.
 - `/scoped-models` chooses which models this agent offers.
 
 ## Tools

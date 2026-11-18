@@ -765,12 +765,28 @@ async function requestJson(
   init: RequestInit,
 ): Promise<{ ok: boolean; status: number; body: Json; url: string }> {
   const response = await nativeFetch(url, init);
-  const body = (await response.json().catch(() => ({}))) as Json;
+  const raw: unknown = await response.json().catch(() => undefined);
+  const body = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Json) : {};
   return { ok: response.ok, status: response.status, body, url };
 }
 
 function requestError(url: string, status: number, body: Json): string {
-  return `${new URL(url).hostname} authentication failed (HTTP ${status})${optionalString(body, "error_description") ? `: ${optionalString(body, "error_description")}` : ""}`;
+  const copilotError =
+    body.error_details && typeof body.error_details === "object"
+      ? (body.error_details as Json)
+      : undefined;
+  const nestedError =
+    body.error && typeof body.error === "object" ? (body.error as Json) : undefined;
+  const detail =
+    optionalString(body, "error_description") ??
+    (copilotError && optionalString(copilotError, "message")) ??
+    optionalString(body, "message") ??
+    (nestedError && optionalString(nestedError, "message")) ??
+    optionalString(body, "error");
+  const reason =
+    status === 401 ? "authentication failed" : status === 403 ? "access denied" : "request failed";
+  const summary = detail?.replace(/\s+/g, " ").trim().slice(0, 160);
+  return `${new URL(url).hostname} (HTTP ${status}): ${summary || reason}`;
 }
 
 function requiredString(body: Json, field: string): string {

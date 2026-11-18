@@ -1,3 +1,10 @@
+# Unreleased
+
+- Fixed: custom endpoints can run without an API key, with key entry and removal available in Provider access.
+- Fixed: editing an endpoint reuses its saved key for model discovery only when the base URL is unchanged.
+- Fixed: reusing a saved key for model discovery no longer overwrites later key changes; changing the endpoint URL reports when its old key is removed.
+- Fixed: Copilot and other sign-in errors show the provider's explanation, with Sign in available for access failures during a run.
+
 # 0.5.0
 
 - Added: Retry and Sign in on failed runs.

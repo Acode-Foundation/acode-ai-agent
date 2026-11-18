@@ -34,7 +34,7 @@ import { AgentSession, type RevertResult } from "../session/agentSession";
 import { pickGlobalSkillsFolder } from "../session/workspaceResources";
 import {
   finalizeCustomEndpoint,
-  isLocalUrl,
+  normalizeOpenAIBaseUrl,
   probeOpenAIModels,
   upsertCustomEndpoint,
   type CustomEndpoint,
@@ -554,11 +554,15 @@ export class AgentController {
     return this.providers.descriptors();
   }
 
-  async saveCustomEndpoint(draft: CustomEndpointDraft, apiKey?: string): Promise<CustomEndpoint> {
+  async saveCustomEndpoint(
+    draft: CustomEndpointDraft,
+    apiKey?: string,
+  ): Promise<{ endpoint: CustomEndpoint; removedApiKey: boolean }> {
     const existing = this.settings.value.customEndpoints;
     const endpoint = finalizeCustomEndpoint(draft, existing);
     let models = endpoint.models;
-    const key = apiKey?.trim();
+    const replacementKey = apiKey?.trim();
+    const key = await this.#customEndpointApiKey(endpoint.baseUrl, replacementKey, draft.id);
     if (endpoint.fetchModels) {
       try {
         const discovered = await probeOpenAIModels(endpoint.baseUrl, key);
@@ -572,13 +576,45 @@ export class AgentController {
     const saved = { ...endpoint, models };
     const customModels = { ...this.settings.value.customModels };
     delete customModels[saved.id];
+    let removedApiKey = false;
+    if (draft.id && existing.find((item) => item.id === draft.id)?.baseUrl !== saved.baseUrl) {
+      // Clear the old credential before publishing a URL that must never receive it.
+      await this.credentials.delete(saved.id, undefined, async (credential) => {
+        removedApiKey = Boolean(
+          credential?.type === "api_key" && credential.key && !replacementKey,
+        );
+      });
+    }
     this.settings.update({
       customEndpoints: upsertCustomEndpoint(existing, saved),
       customModels,
     });
-    if (key) await this.credentials.setApiKey(saved.id, key);
+    // A reused probe key may have been removed or replaced while /models was pending.
+    if (replacementKey) await this.credentials.setApiKey(saved.id, replacementKey);
     await this.selectProvider(saved.id);
-    return saved;
+    return { endpoint: saved, removedApiKey };
+  }
+
+  async probeCustomEndpointModels(
+    baseUrl: string,
+    apiKey?: string,
+    endpointId?: string,
+  ): Promise<string[]> {
+    const key = await this.#customEndpointApiKey(baseUrl, apiKey, endpointId);
+    return probeOpenAIModels(baseUrl, key);
+  }
+
+  async #customEndpointApiKey(
+    baseUrl: string,
+    apiKey?: string,
+    endpointId?: string,
+  ): Promise<string | undefined> {
+    if (apiKey?.trim()) return apiKey.trim();
+    const endpoint = this.settings.value.customEndpoints.find((item) => item.id === endpointId);
+    // A saved key belongs to this exact endpoint, never a new destination typed into the form.
+    if (!endpoint || endpoint.baseUrl !== normalizeOpenAIBaseUrl(baseUrl)) return undefined;
+    const credential = await this.credentials.read(endpoint.id);
+    return credential?.type === "api_key" ? credential.key : undefined;
   }
 
   async removeCustomEndpoint(id: string): Promise<void> {
@@ -608,9 +644,11 @@ export class AgentController {
   ): Promise<string[]> {
     const endpoint = this.providers.customEndpoint(providerId);
     if (!endpoint) throw new Error("That provider is not a custom OpenAI-compatible endpoint.");
-    const credential = await this.credentials.read(providerId);
-    const key = credential?.type === "api_key" ? credential.key : undefined;
-    const discovered = await probeOpenAIModels(endpoint.baseUrl, key);
+    const discovered = await this.probeCustomEndpointModels(
+      endpoint.baseUrl,
+      undefined,
+      providerId,
+    );
     const models = [...new Set([...endpoint.models, ...discovered])].slice(0, 50);
     this.settings.update({
       customEndpoints: upsertCustomEndpoint(this.settings.value.customEndpoints, {
@@ -857,12 +895,10 @@ export class AgentController {
   }
 
   async hasCredential(providerId: ProviderId): Promise<boolean> {
-    if (await this.credentials.read(providerId)) return true;
-    const endpoint = this.providers.customEndpoint(providerId);
+    const credential = await this.credentials.read(providerId);
+    // Presence only: the provider validates the key, OAuth grant, or environment when used.
     return Boolean(
-      endpoint &&
-      isLocalUrl(endpoint.baseUrl) &&
-      (await this.providers.models.checkAuth(providerId)),
+      credential?.type === "oauth" || credential?.key || Object.keys(credential?.env ?? {}).length,
     );
   }
 

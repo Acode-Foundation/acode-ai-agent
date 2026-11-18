@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import { PortableCredentialStore } from "../src/platform/credentials";
 import { ProviderRegistry } from "../src/providers/providerRegistry";
+import { finalizeCustomEndpoint } from "../src/providers/customEndpoints";
 
 let registry: ProviderRegistry;
 let hostFetch: ReturnType<typeof vi.fn>;
@@ -65,6 +66,37 @@ test("preserves an explicit fetch for non-Google providers", async () => {
   expect(response.stopReason).toBe("stop");
   expect(requestFetch).toHaveBeenCalledOnce();
   expect(httpStream).not.toHaveBeenCalled();
+});
+
+test.each([
+  { key: undefined, authorization: undefined },
+  { key: "none", authorization: "Bearer none" },
+  { key: "fixture-key", authorization: "Bearer fixture-key" },
+])("remote custom endpoint streams with optional key $key", async ({ key, authorization }) => {
+  const endpoint = finalizeCustomEndpoint(
+    { name: "Worker", baseUrl: "https://worker.example.com/v1", models: "custom-model" },
+    [],
+  );
+  const credentials = new PortableCredentialStore(null);
+  if (key) await credentials.setApiKey(endpoint.id, key);
+  const custom = new ProviderRegistry(
+    credentials,
+    () => ({}),
+    undefined,
+    () => [endpoint],
+  );
+  expect(await custom.models.checkAuth(endpoint.id)).toBeTruthy();
+  httpStream.mockImplementation(chatResponse);
+  const response = await custom.models.completeSimple(
+    custom.resolveModel(endpoint.id, "custom-model"),
+    { messages: [{ role: "user", content: "Hello", timestamp: Date.now() }] },
+    { maxRetries: 0 },
+  );
+  expect(response.stopReason).toBe("stop");
+  expect(httpStream).toHaveBeenCalledOnce();
+  const [url, options] = httpStream.mock.calls[0]!;
+  expect(url).toBe("https://worker.example.com/v1/chat/completions");
+  expect(options.headers.authorization).toBe(authorization);
 });
 
 test("image generation routes the SDK request through native HTTP", async () => {
