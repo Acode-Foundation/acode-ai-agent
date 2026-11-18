@@ -1,3 +1,4 @@
+import Cookies from "js-cookie";
 import { Signal } from "../core/events";
 
 export type SponsorConsent = "ask" | "allowed" | "declined";
@@ -9,7 +10,7 @@ export const sponsorIdentityCleared = new Signal<void>();
 let storageBlocked = false;
 
 export const SPONSOR_DISCLOSURE =
-  "Elo receives broad task topics, device and network information, and reads advertising consent signals. It stores an anonymous identifier in local storage and a cookie. Ad partners can receive network information. Your messages, code, files, and account details stay out of ad requests. Sponsored links open an external site. If this version of Acode cannot supply the required device consent signals, suggestions stay off.";
+  "Elo receives broad task topics, device and network information, and reads advertising consent signals. It stores an anonymous identifier in local storage and a cookie. Elo also receives ad interaction data, including where you tap inside the card, its size, and whether the tap attempts to open a link. Ad partners can receive network information and display or click notices. Your messages, code, files, and account details stay out of ad requests. Sponsored links open an external site. If this version of Acode cannot supply the required device consent signals, suggestions stay off.";
 
 export function canRequestSponsors(): boolean {
   return isFreeAcode() && sponsorConsent() === "allowed";
@@ -48,7 +49,8 @@ export function clearSponsorIdentity(): void {
   }
   for (const name of ["_elo_state", "_growl_state"]) {
     try {
-      document.cookie = `${name}=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+      // Match Elo's current-directory cookie scope and clear it before SDK reinitialization.
+      Cookies.remove(name, { path: "", sameSite: "Lax", secure: location.protocol === "https:" });
     } catch {
       // The host may block cookies.
     }

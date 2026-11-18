@@ -44,6 +44,7 @@ jobs:
           for file in LICENSE NOTICE; do
             unzip -p plugin.zip "licenses/elo/$file" | cmp - "node_modules/@elo-ads/web-sdk/$file"
           done
+          unzip -p plugin.zip "licenses/js-cookie/LICENSE" | cmp - "node_modules/js-cookie/LICENSE"
           if unzip -Z1 plugin.zip | grep -Eq '(^|/)\.env($|\.)'; then exit 1; fi
 
   test:

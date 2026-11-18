@@ -38,12 +38,16 @@ export function SponsoredCard({
     let checking = false;
     let view: AbortController | undefined;
     let focusFrame = 0;
+    let opening = false;
+    let openHint = 0;
     let unmount: (() => void) | undefined;
     let image: HTMLImageElement | null = null;
     const syncThumbnail = () =>
       frame.classList.toggle("sponsor-no-image", !element.querySelector(".elo-ad-image"));
     const stop = () => {
       cancelAnimationFrame(focusFrame);
+      clearTimeout(openHint);
+      opening = false;
       checking = false;
       view?.abort();
       view = undefined;
@@ -105,23 +109,46 @@ export function SponsoredCard({
           sponsoredLabel: "Sponsored · Elo",
           openUrl: async (value) => {
             const url = safeAdUrl(value);
-            if (!url) return;
-            const allowed = await sponsor.sdk.canTrack(creative);
-            if (current.signal.aborted) return;
-            if (!allowed) {
-              // Elo already counted this as an open attempt. Reset the view before retrying.
-              stop();
-              void refresh();
-              return;
-            }
+            if (!url || opening || current.signal.aborted) return;
+            opening = true;
+            let deadline = 0;
+            const hint = (openHint = window.setTimeout(() => {
+              if (!current.signal.aborted) showToast("Opening sponsored link…");
+            }, 250));
             try {
-              await openCustomTab(url);
-            } catch {
-              showToast("Could not open this sponsored link.");
-              return;
+              // Bound navigation latency without reusing stale consent. On timeout,
+              // stopping the view also cancels pending tracking and SDK tap retries.
+              const allowed = await Promise.race([
+                sponsor.sdk.canTrack(creative).catch(() => false),
+                new Promise<false>((resolve) => {
+                  deadline = window.setTimeout(() => resolve(false), 1000);
+                }),
+              ]);
+              clearTimeout(hint);
+              clearTimeout(deadline);
+              if (current.signal.aborted) return;
+              if (!allowed) {
+                showToast("Could not verify ad consent. Please try again.");
+                stop();
+                void refresh();
+                return;
+              }
+              try {
+                await openCustomTab(url);
+              } catch {
+                if (!current.signal.aborted) showToast("Could not open this sponsored link.");
+                return;
+              }
+              // The native callback can arrive after a pause or even a chat switch.
+              budget.dismiss(placement, true);
+            } finally {
+              clearTimeout(deadline);
+              clearTimeout(hint);
+              // A previous attempt must not clear a replacement view's feedback.
+              if (view === current) {
+                opening = false;
+              }
             }
-            // The native callback can arrive after a pause or even a chat switch.
-            budget.dismiss(placement, true);
           },
         });
         image = element.querySelector<HTMLImageElement>(".elo-ad-image");
@@ -153,6 +180,8 @@ export function SponsoredCard({
       if (consent !== "allowed") stop();
     });
     const identityCleared = sponsorIdentityCleared.subscribe(() => {
+      if (opening && !document.hidden)
+        showToast("This sponsored link is unavailable with your current privacy settings.");
       stop();
       budget.dismiss(placement);
     });
@@ -232,8 +261,8 @@ export function SponsorOptIn({ cardRef }: { cardRef?: RefObject<HTMLElement> }) 
         </button>
       </header>
       <p>
-        Elo uses broad coding topics, device info, and an anonymous ID stored in a cookie and local
-        storage to show sponsored suggestions.
+        Elo uses broad coding topics, device info, and an anonymous ID in a cookie and local storage
+        to show suggestions. It also measures taps on sponsored cards.
       </p>
       <div class="approval-actions sponsor-choices">
         <button type="button" onClick={() => setSponsorConsent("declined")}>

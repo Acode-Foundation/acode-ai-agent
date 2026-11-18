@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { createRef, h, render } from "preact";
+import Cookies from "js-cookie";
 import { useRef } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, expect, onTestFinished, test, vi } from "vitest";
@@ -10,14 +11,18 @@ import {
   setSponsorConsent,
   sponsorConsent,
   sponsorPreferencesChanged,
+  clearSponsorIdentity,
+  sponsorIdentityCleared,
 } from "../src/suggestions/preferences";
 import { SponsorBudget } from "../src/suggestions/session";
 import { openCustomTab } from "../src/platform/authTab";
+import { showToast } from "../src/platform/toast";
 import { SponsoredCard, SponsorOptIn } from "../src/ui/SponsoredCard";
 import { SponsorSettings } from "../src/ui/SponsorSettings";
 import { useSponsor } from "../src/ui/useSponsor";
 import type { ChatTurn } from "../src/ui/transcript";
 
+vi.mock("../src/platform/toast", () => ({ showToast: vi.fn() }));
 vi.mock("../src/platform/authTab", () => ({ openCustomTab: vi.fn(async () => {}) }));
 vi.mock("../src/suggestions/elo", async (load) => ({
   ...(await load<typeof import("../src/suggestions/elo")>()),
@@ -676,15 +681,19 @@ test("opens safe links through Acode and reports inert, middle, and repeat taps"
   link.dispatchEvent(middle);
   await Promise.resolve();
   expect(middle.defaultPrevented).toBe(true);
-  expect(openCustomTab).toHaveBeenCalledExactlyOnceWith("https://example.org/");
+  await vi.waitFor(() =>
+    expect(openCustomTab).toHaveBeenCalledExactlyOnceWith("https://example.org/"),
+  );
   expect(sdk.trackTap).toHaveBeenLastCalledWith(
     ad,
     expect.objectContaining({ opened: true, region: "chrome" }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   link.dispatchEvent(new MouseEvent("click", { detail: 1, bubbles: true, cancelable: true }));
   expect(sdk.trackTap).toHaveBeenLastCalledWith(
     ad,
     expect.objectContaining({ opened: false, region: "chrome" }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   const full = {
     ...ad,
@@ -703,7 +712,11 @@ test("opens safe links through Acode and reports inert, middle, and repeat taps"
   root
     .querySelector<HTMLElement>(".sponsor-card")!
     .dispatchEvent(new MouseEvent("click", { detail: 1, bubbles: true, cancelable: true }));
-  expect(sdk.trackTap).toHaveBeenLastCalledWith(full, expect.objectContaining({ opened: false }));
+  expect(sdk.trackTap).toHaveBeenLastCalledWith(
+    full,
+    expect.objectContaining({ opened: false }),
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
   await draw({ ...sponsor, ad: { ...ad, click_url: "javascript:void(0)" } } as unknown as Sponsor);
   expect(root.querySelector("a")).toBeNull();
 });
@@ -789,7 +802,7 @@ test("a failed SDK mount removes the ad without throwing into the chat", async (
 test("declining suggestions persists the preference and removes advertising identifiers", async () => {
   act(() => render(h(SponsorOptIn, {}), root));
   localStorage.setItem("elo_visitor_id", "test-id");
-  document.cookie = "_elo_state=test-id";
+  Cookies.set("_elo_state", "test-id", { path: "" });
   await vi.waitFor(() => expect(root.querySelector(".sponsor-allow")).toBeTruthy());
   act(() =>
     Array.from(root.querySelectorAll("button"))
@@ -812,7 +825,7 @@ test("unknown or unavailable native consent preserves identities until consent i
   vi.stubGlobal("admob", { privacy: { getState } });
   const signal = new AbortController().signal;
   localStorage.setItem("elo_visitor_id", "fixture");
-  document.cookie = "_elo_state=fixture";
+  Cookies.set("_elo_state", "fixture", { path: "" });
   for (const expected of ["unavailable", "unavailable", "denied"]) {
     expect((await readSponsorConsent(signal)).status).toBe(expected);
     expect(localStorage.getItem("elo_visitor_id")).toBe(expected === "denied" ? null : "fixture");
@@ -873,7 +886,7 @@ test("the pinned SDK creates no identifier or network request until required CMP
   expect(localStorage.getItem("elo_visitor_id")).toBeNull();
 });
 
-test("taps open the link and send click notices without scheduling analytics after opt-out", async () => {
+test("taps send one event and click notice, then stop retries after opt-out", async () => {
   const integration =
     await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
   setSponsorConsent("allowed");
@@ -915,10 +928,11 @@ test("taps open the link and send click notices without scheduling analytics aft
     await vi.advanceTimersByTimeAsync(0);
   });
   expect(openCustomTab).toHaveBeenCalledOnce();
-  expect(network.mock.calls.map(([url]) => url)).toContain("https://example.org/click");
+  expect(network.mock.calls.filter(([url]) => url === "https://example.org/click")).toHaveLength(1);
+  expect(network.mock.calls.filter(([url]) => url.endsWith("/events"))).toHaveLength(1);
   act(() => setSponsorConsent("declined"));
   await vi.advanceTimersByTimeAsync(3000);
-  expect(network.mock.calls.filter(([url]) => url.endsWith("/events"))).toHaveLength(0);
+  expect(network.mock.calls.filter(([url]) => url.endsWith("/events"))).toHaveLength(1);
 });
 
 test("the real SDK view starts the cooldown after dwell, even if impression delivery fails", async () => {
@@ -1163,6 +1177,9 @@ test("a failed consent check on opening allows the user to retry and removes a r
   getState.mockRejectedValueOnce(new Error("Temporarily unavailable"));
   await act(async () => firstLink.click());
   expect(openCustomTab).not.toHaveBeenCalled();
+  await vi.waitFor(() =>
+    expect(showToast).toHaveBeenCalledWith("Could not verify ad consent. Please try again."),
+  );
   await vi.waitFor(() => {
     expect(root.querySelector("a")).toBeTruthy();
     expect(root.querySelector("a")).not.toBe(firstLink);
@@ -1431,4 +1448,222 @@ test("active budget updates ignore unrelated cards but retain global clears and 
   rendered.mockClear();
   await act(async () => localBudget.forgetChat("other"));
   expect(rendered).toHaveBeenCalled();
+});
+
+test.each(["visible", "delivered", "withdrawn", "paused", "unmounted", "denied"] as const)(
+  "SDK tap retries respect the view lifecycle: %s",
+  async (state) => {
+    const integration =
+      await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
+    setSponsorConsent("allowed");
+    const native = { canRequestAds: true, consentStatus: "notRequired" };
+    vi.stubGlobal("admob", { privacy: { getState: async () => native } });
+    const events = vi.fn(async () => {
+      if (state === "delivered") return new Response(null, { status: 204 });
+      throw new TypeError("Offline");
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/events")) return events();
+        if (url.endsWith("/request"))
+          return Response.json({
+            request_id: "tap-abort",
+            ad: {
+              ...ad,
+              ad_id: "tap-ad",
+              opportunity_id: "tap-opportunity",
+              render_url: "/render",
+              impression_url: "/impression",
+            },
+          });
+        return new Response(null, { status: 204 });
+      }),
+    );
+    const result = await integration.loadSponsor(["Hosting"], new AbortController().signal, {
+      maxHeight: 72,
+      maxWidth: 320,
+    });
+    expect(result).toBeTruthy();
+    if (!result) throw Error("Expected an eligible sponsor");
+    const taps = vi.spyOn(result.sdk, "trackTap");
+    await act(async () =>
+      render(
+        h(SponsoredCard, {
+          placement: { turnId: "1", chatId: "chat", sponsor: result },
+          budget,
+        }),
+        root,
+      ),
+    );
+    await vi.waitFor(() => expect(root.querySelector(".sponsor-card a")).toBeTruthy());
+    vi.useFakeTimers();
+    if (state === "denied") native.canRequestAds = false;
+    // Tap inert padding so opening the browser does not dismiss the card first.
+    root.querySelector(".sponsor-card")?.dispatchEvent(
+      new MouseEvent("click", {
+        detail: 1,
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(taps).toHaveBeenCalledOnce();
+    const signal = taps.mock.calls[0]?.[2]?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(events).toHaveBeenCalledTimes(state === "denied" ? 0 : 1);
+    if (state === "withdrawn") act(() => setSponsorConsent("declined"));
+    if (state === "paused") document.dispatchEvent(new Event("pause"));
+    if (state === "unmounted") act(() => render(null, root));
+    if (state !== "visible" && state !== "delivered") expect(signal?.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(2000);
+    // A visible ad retries twice; a removed or denied view sends nothing further.
+    expect(events).toHaveBeenCalledTimes(state === "visible" ? 3 : state === "denied" ? 0 : 1);
+    expect(await taps.mock.results[0]?.value).toBe(state === "delivered");
+    if (state === "delivered") {
+      const call = taps.mock.calls[0];
+      if (!call) throw Error("Expected the SDK tap call");
+      const aborted = new AbortController();
+      aborted.abort();
+      await expect(result.sdk.trackTap(call[0], call[1], { signal: aborted.signal })).resolves.toBe(
+        false,
+      );
+      expect(events).toHaveBeenCalledOnce();
+    }
+    if (signal?.aborted) {
+      const call = taps.mock.calls[0];
+      if (!call) throw Error("Expected the SDK tap call");
+      await expect(result.sdk.trackTap(...call)).resolves.toBe(false);
+      expect(events).toHaveBeenCalledTimes(state === "denied" ? 0 : 1);
+    }
+  },
+);
+
+test.each(["slow", "timeout", "dismissed", "browser-failure"] as const)(
+  "sponsored navigation handles %s without stale or duplicate opens",
+  async (scenario) => {
+    const integration =
+      await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
+    setSponsorConsent("allowed");
+    const consent = { canRequestAds: true, consentStatus: "notRequired" };
+    const getState = vi.fn(async () => consent);
+    vi.stubGlobal("admob", { privacy: { getState } });
+    const network = vi.fn(async (url: string) =>
+      url.endsWith("/request")
+        ? Response.json({
+            request_id: "slow-open",
+            ad: {
+              ...ad,
+              opportunity_id: "slow-open",
+              render_url: "/r",
+              impression_url: "/i",
+              trackers: [{ event: "click", url: "https://example.org/notice" }],
+            },
+          })
+        : new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", network);
+    const sponsor = await integration.loadSponsor(["Hosting"], new AbortController().signal, {
+      maxHeight: 72,
+      maxWidth: 320,
+    });
+    if (!sponsor) throw Error("Expected a sponsor");
+    vi.spyOn(budget, "dismiss").mockImplementation(() => render(null, root));
+    await act(async () =>
+      render(
+        h(SponsoredCard, {
+          placement: { chatId: "chat", turnId: "1", sponsor },
+          budget,
+        }),
+        root,
+      ),
+    );
+    await vi.waitFor(() => expect(root.querySelector("a")).toBeTruthy());
+    vi.useFakeTimers();
+    network.mockClear();
+    getState.mockClear();
+    let resolveConsent: (value: typeof consent) => void = () => {};
+    getState.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveConsent = resolve;
+        }),
+    );
+    const tap = () =>
+      root.querySelector("a")?.dispatchEvent(
+        new MouseEvent("click", {
+          detail: 1,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    tap();
+    await vi.advanceTimersByTimeAsync(250);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith("Opening sponsored link…");
+    expect(openCustomTab).not.toHaveBeenCalled();
+    tap(); // Elo's repeat guard shares the first pending read and cannot open twice.
+    expect(getState).toHaveBeenCalledOnce();
+    if (scenario === "timeout") {
+      await vi.advanceTimersByTimeAsync(750);
+      expect(showToast).toHaveBeenCalledWith("Could not verify ad consent. Please try again.");
+    } else if (scenario === "dismissed") {
+      act(() => root.querySelector<HTMLButtonElement>(".sponsor-dismiss")?.click());
+    } else if (scenario === "browser-failure") {
+      vi.mocked(openCustomTab).mockRejectedValueOnce(Error("No browser"));
+    }
+    await act(async () => {
+      resolveConsent(consent);
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    if (scenario === "timeout" || scenario === "dismissed") {
+      expect(openCustomTab).not.toHaveBeenCalled();
+      expect(
+        network.mock.calls.some(([url]) => url.endsWith("/events") || url.endsWith("/notice")),
+      ).toBe(false);
+      if (scenario === "timeout") {
+        // A refreshed view can be retried immediately, even within the old guard interval.
+        tap();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(openCustomTab).toHaveBeenCalledOnce();
+      }
+    } else {
+      expect(openCustomTab).toHaveBeenCalledExactlyOnceWith("https://example.org/");
+      if (scenario === "browser-failure")
+        expect(showToast).toHaveBeenCalledWith("Could not open this sponsored link.");
+    }
+  },
+);
+
+test("clears current-directory SDK cookies synchronously without touching other cookies", () => {
+  const originalUrl = location.href;
+  history.replaceState(null, "", "/app/index.html");
+  try {
+    for (const name of ["_elo_state", "_growl_state"])
+      Cookies.set(name, "identity", {
+        path: "",
+        sameSite: "Lax",
+        secure: location.protocol === "https:",
+      });
+    Cookies.set("unrelated", "keep", { path: "" });
+    expect(Cookies.get("_elo_state")).toBe("identity");
+    expect(Cookies.get("_growl_state")).toBe("identity");
+    const invalidated = vi.fn(() => {
+      expect(Cookies.get("_elo_state")).toBeUndefined();
+      expect(Cookies.get("_growl_state")).toBeUndefined();
+    });
+    const unsubscribe = sponsorIdentityCleared.subscribe(invalidated);
+    try {
+      clearSponsorIdentity();
+    } finally {
+      unsubscribe();
+    }
+    expect(invalidated).toHaveBeenCalledOnce();
+    expect(Cookies.get("unrelated")).toBe("keep");
+  } finally {
+    for (const name of ["_elo_state", "_growl_state", "unrelated"])
+      Cookies.remove(name, { path: "" });
+    history.replaceState(null, "", originalUrl);
+  }
 });

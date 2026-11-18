@@ -34,6 +34,11 @@ for (const file of ["LICENSE", "NOTICE"]) {
   );
 }
 
+zip.file(
+  "licenses/js-cookie/LICENSE",
+  fs.readFileSync(path.join(__dirname, "node_modules/js-cookie/LICENSE")),
+);
+
 if (readmeDotMd) {
   zip.file(json.readme || path.basename(readmeDotMd), fs.readFileSync(readmeDotMd));
 }

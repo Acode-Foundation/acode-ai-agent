@@ -115,10 +115,9 @@ class SponsorSDK extends EloSDK {
     return super.trackImpression(ad);
   }
 
-  override async trackTap(_ad: AdCreative, _tap: AdTap) {
-    // Elo 0.8.0 retries tap telemetry without a cancellation signal. Link opens
-    // and the SDK's separate, consent-checked click notices still work.
-    return false;
+  override async trackTap(ad: AdCreative, tap: AdTap, options?: Parameters<EloSDK["trackTap"]>[2]) {
+    // Preserve mountEloAd's signal so removing the view stops pending tap retries.
+    return (await this.canTrack(ad)) ? super.trackTap(ad, tap, options) : false;
   }
 
   override async trackClick(ad: AdCreative) {

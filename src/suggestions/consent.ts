@@ -1,6 +1,6 @@
 import { clearSponsorIdentity } from "./preferences";
 
-// These are the WebView keys read by Elo 0.8.0 during init().
+// These are the WebView keys read by Elo 0.8.1 during init().
 const keys = [
   "IABTCF_gdprApplies",
   "IABTCF_TCString",
