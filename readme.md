@@ -287,68 +287,11 @@ Configured builds can show an occasional **Sponsored · Elo** card to users with
 
 When an eligible ad request is about to start, the current prompt and up to four recent user prompts from the same chat are classified locally, with the newest task taking priority. The ad request contains up to three predefined task topics (for example, “Web development”), never the chat transcript, source code, attachments, tool output, or account details. Elo also receives device/network information and an anonymous advertising identifier. Ads stay outside model context and saved chats. A missing ad or failed network request leaves chat working normally.
 
-The plugin requests a single compact 72px strip, 8px above the message input, and renders the format returned by Elo. It has a thumbnail (or a megaphone icon when missing), title, up to two description lines and a separate dismiss control. The rendered card fits its content, with smaller description text and a small Sponsored · Elo label just above it on the left. There is no separate ad below replies. An eligible wait starts the request. The same card stays visible while the answer streams and after the reply finishes, until dismissed, opened or expired. A request already in flight may finish after a fast answer and show that same card. Having text or attachments in the composer hides it to leave more room for writing. Clearing or sending the draft lets the cached card return.
+Suggestions appear as a compact card above the message input after you opt in, stay through the reply, and hide while you compose. You can dismiss them or turn them off in AI settings. If Acode cannot supply the required advertising consent signals, suggestions stay off. Turning suggestions off clears advertising identities and cached cards.
 
-Each chat caches its ad in memory for five minutes from receipt. Later waits reuse that ad. New ads use one shared five-minute view-based cooldown across chats and tabs, with no turn-count requirement. The SDK considers an ad viewed after at least half is visible for one continuous second. Explicit dismissal or a successful link open clears cached ads and suppresses new ads for five minutes, including a quick dismissal before viewability is measured. Consent withdrawal clears the cache. Other failed consent checks may discard a card without starting a new cooldown.
+## Contributing
 
-Only an eligible wait can initiate a new request. A long wait can replace an expired card once the cooldown permits it. After a reply finishes, expiry removes the existing card without requesting a replacement. All request attempts share a minimum 30-second interval, including successful requests before an impression is measured. Viewed or explicitly dismissed ads use the longer five-minute cooldown. A different waiting turn resumes automatically after the shared request slot and cooldown become available; the failed turn is not retried. Stopped or failed runs, typing, a chat switch, an obscured conversation or backgrounding cancel pending requests. Restored history alone never initiates requests. Ads are not saved in the transcript.
-
-Free users with device consent see a short opt-in during their first visible wait, with privacy details in an Acode dialog. The opt-in sits above the input and, once at least half visible, stays in that chat until answered. Deleting that chat frees the unanswered offer for another eligible wait. Allowing suggestions makes the current wait eligible immediately. Frequency state lasts for the plugin session. The pinned Elo SDK aborts ad fetches after three seconds, and native consent reads also have a three-second timeout. When upgrading the SDK, run `npm test` and verify the sponsor layout on a device: disclosure placement and failed-image fallback depend on its DOM structure.
-
-## Extension API
-
-Other Acode plugins can extend the agent once it has loaded:
-
-```js
-const runtime = acode.require("acode.ai.agent.runtime");
-
-runtime.registerTool(myPiAgentTool);
-runtime.registerTool(myRarelyUsedTool, { exposure: "deferred" });
-runtime.registerProvider(myPiProvider);
-runtime.registerContext("my-plugin:context", async () => "Extra project context");
-runtime.registerFeature({
-  id: "my-plugin:feature",
-  label: "Feature",
-  description: "Declared capability",
-  available: ({ workspace }) => Boolean(workspace),
-});
-runtime.open();
-runtime.selectProvider("openrouter");
-```
-
-- `registerTool` takes a Pi durable tool (`defineTool` from `@earendil-works/pi-durable`, with `execute(args, api, context)`). It applies to running chats immediately. With `{ exposure: "deferred" }` the tool is loaded through `tool_search` instead of sent with every request; use it for large or rarely needed tools.
-- `registerProvider` takes a Pi provider. Open sessions pick it up.
-- `registerContext` adds a section to the system prompt, rebuilt before each request and re-sent only when it changes.
-- `registerFeature` only records metadata for now and isn't shown in the UI.
-
-Each `register*` call returns a function that unregisters it. Tools have to come from another Acode plugin; the agent never evaluates project JavaScript.
-
-## Development
-
-```sh
-npm install
-npm run typecheck
-npm test
-npm run build
-```
-
-`npm run build` typechecks, bundles for Chrome 90 WebView, rejects Node imports, enforces a 2.7 MB limit on `dist/main.js`, and writes `plugin.zip`.
-
-`npm run dev` serves on port 3000 and rebuilds on change for plugin reload.
-
-The code must stay WebView-compatible: no Node built-ins, child processes, IPC or process `cwd`.
-
-For Elo, copy `.env.example` to the ignored `.env.local` and supply the publisher and Android ad-unit IDs, or set them in the build environment. The iOS ad unit is separate; leave it empty until its App Store property is ready. These are public SDK identifiers. Never ship Elo's server API key. Builds without IDs make no ad requests. The plugin uses Elo’s React-free core. The pinned SDK runs in Acode’s WebView with access to its bridge, DOM and storage. Before updating the SDK, verify that it still reads TCF/GPP synchronously inside `init()`, since the plugin restores shared WebView storage immediately afterward. Review its networking, identifier storage and tracking as well.
-
-For store releases, configure the same public IDs as GitHub Actions variables in the `acode-store` environment. The publish build requires the Android pair. The iOS ID stays optional while the listing is pending.
-
-Elo counts a render when the view mounts and an impression after at least half the view is visible for one continuous second. Tap telemetry uses SDK 0.8.1 with a fresh native consent check and the abort signal supplied by `mountEloAd`. Removing the view, including on consent withdrawal, aborts that signal and stops unsent tap retries; already-aborted taps are dropped. Requests already sent are not cancelled. Opening a link still uses the SDK’s consent-checked click notices. Link opening waits at most one second for a fresh consent check, with progress feedback after 250 ms. If consent cannot be verified, the view stops, pending tracking is cancelled, and the user sees a retry message. The SDK’s `opened` tap field describes an open attempt, not confirmation that the native browser opened successfully.
-
-Before releasing, obtain Elo property approval, enable the placement in the dashboard, authorize the seller in the store-listed developer domain's `app-ads.txt`, and update the app's advertising/privacy disclosures. Confirm Elo's support for WebView app inventory and up to three predefined task topics. Before Elo initialization the plugin checks the host’s AdMob privacy state. A host can include an `iabSignals` snapshot in its `privacyGetState` result to supply TCF/GPP values during SDK initialization. The plugin rechecks native consent after initialization and before sending an ad request, before mounting a card, on resume, and before reporting an impression or following a sponsored link. Overlapping checks for the same card share one pending native read. The next interaction after it settles starts a new read. A definite native denial clears the Elo session and its stored identifiers. If the native check is unavailable, the plugin hides the card until consent can be verified. The current host returns only UMP status. An obtained decision needs a native signal snapshot with explicit GDPR applicability and, when applicable, a TC string, and unknown or unavailable native state skips the request. Validate the CMP flow, child-directed settings, and store disclosures with the privacy owner before enabling live inventory.
-
-Verify on a physical device with an Elo-approved test placement: the health and ad requests from Acode’s origin, the render and impression URLs resolving to the SDK origin (`https://api.elo.ad`), image loading, identifier persistence and removal, render, impression and click-notice delivery, and opening and returning from the native browser. Record the WebView version and use test inventory for tracking checks.
-
-Focused checks: `npx vitest run tests/sponsors.test.ts tests/elo.test.ts tests/sponsorUi.test.ts`. Live ad fill, device behavior, and publisher onboarding remain separate release checks.
+See [contributing.md](https://github.com/Acode-Foundation/acode-ai-agent/blob/main/contributing.md) for development setup, the extension API, advertising configuration, and release checks.
 
 ## License
 
