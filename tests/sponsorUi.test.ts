@@ -31,6 +31,12 @@ vi.mock("../src/suggestions/elo", async (load) => ({
 
 let root: HTMLElement;
 let budget: SponsorBudget;
+// Native preference-file behavior is covered in androidConsent.test.ts.
+vi.mock("../src/suggestions/androidConsent", async (load) => ({
+  ...(await load<typeof import("../src/suggestions/androidConsent")>()),
+  readAndroidConsentSignals: async () => undefined,
+}));
+
 const ad = {
   title: "Hosting",
   description: "Deploy and monitor a web application from your phone.",

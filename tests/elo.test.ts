@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SponsorBudget, SponsorSession } from "../src/suggestions/session";
 
+// Native preference-file behavior is covered in androidConsent.test.ts.
+vi.mock("../src/suggestions/androidConsent", async (load) => ({
+  ...(await load<typeof import("../src/suggestions/androidConsent")>()),
+  readAndroidConsentSignals: async () => undefined,
+}));
+
 const sdk = vi.hoisted(() => ({ init: vi.fn(), fetchAds: vi.fn(), created: vi.fn() }));
 vi.mock("@elo-ads/web-sdk/core", () => ({
   EloSDK: class {

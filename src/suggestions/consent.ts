@@ -1,19 +1,11 @@
 import { clearSponsorIdentity } from "./preferences";
-
-// These are the WebView keys read by Elo 0.8.1 during init().
-const keys = [
-  "IABTCF_gdprApplies",
-  "IABTCF_TCString",
-  "IABTCF_AddtlConsent",
-  "IABGPP_HDR_GppString",
-  "IABGPP_GppSID",
-] as const;
+import { iabKeys as keys, readAndroidConsentSignals, type IabSignals } from "./androidConsent";
 
 type NativePrivacyState = {
   consentStatus: string;
   canRequestAds: boolean;
   // Optional full snapshot from the host. Missing entries in a snapshot are cleared.
-  iabSignals?: Partial<Record<(typeof keys)[number], string | number | null>>;
+  iabSignals?: IabSignals;
 };
 
 export type ConsentSignals = (string | null)[];
@@ -51,35 +43,84 @@ export function readSponsorConsent(signal: AbortSignal): Promise<ConsentResult> 
 async function readNativeConsent(signal: AbortSignal): Promise<ConsentResult> {
   const read = nativeConsentReader();
   if (signal.aborted || !read) return { status: "unavailable" };
+  const request = new AbortController();
   let cancel!: () => void;
   const cancelled = new Promise<null>((resolve) => {
-    cancel = () => resolve(null);
+    cancel = () => {
+      request.abort();
+      resolve(null);
+    };
   });
   const timer = setTimeout(cancel, 3000);
   signal.addEventListener("abort", cancel, { once: true });
   try {
-    const state = await Promise.race([read(), cancelled]);
+    const state = await Promise.race([readConsentState(read, request.signal), cancelled]);
     if (signal.aborted || !state) return { status: "unavailable" };
-    const status = state.consentStatus?.trim().toLowerCase();
-    if (!["required", "obtained", "notrequired", "not_required"].includes(status))
-      return { status: "unavailable" };
+    const status = normalizedStatus(state);
+    if (!["required", "obtained", "notrequired"].includes(status)) return { status: "unavailable" };
     if (status === "required" || state.canRequestAds === false) {
       clearSponsorIdentity();
       return { status: "denied" };
     }
     if (state.canRequestAds !== true) return { status: "unavailable" };
     const signals = keys.map((key) => String(state.iabSignals?.[key] ?? "").trim() || null);
-    const [applies, tcString] = signals;
+    // Tuple order follows iabKeys, also used when installing the SDK's storage snapshot.
+    const [applies, tcString, , gpp, sections] = signals;
     if ((applies !== null || status === "obtained") && applies !== "0" && applies !== "1")
       return { status: "unavailable" };
     if (applies === "1" && !tcString) return { status: "unavailable" };
+    if (
+      Boolean(gpp) !== Boolean(sections) ||
+      (sections && !/^(?:-1|[1-9]\d*(?:_[1-9]\d*)*)$/.test(sections))
+    )
+      return { status: "unavailable" };
     return { status: "allowed", signals };
   } catch {
     return { status: "unavailable" };
   } finally {
+    request.abort();
     clearTimeout(timer);
     signal.removeEventListener("abort", cancel);
   }
+}
+
+function normalizedStatus(state: NativePrivacyState): string {
+  return state.consentStatus?.trim().toLowerCase().replace("not_required", "notrequired");
+}
+
+async function readConsentState(read: () => Promise<NativePrivacyState>, signal: AbortSignal) {
+  const initial = await read();
+  if (
+    signal.aborted ||
+    initial.iabSignals ||
+    initial.canRequestAds !== true ||
+    normalizedStatus(initial) === "required"
+  )
+    return initial;
+  const iabSignals = await readAndroidConsentSignals(signal);
+  if (!iabSignals || signal.aborted) return initial;
+  const latest = await read();
+  if (
+    latest.iabSignals ||
+    latest.canRequestAds === false ||
+    normalizedStatus(latest) === "required"
+  )
+    return latest;
+  if (
+    normalizedStatus(latest) !== normalizedStatus(initial) ||
+    latest.canRequestAds !== initial.canRequestAds
+  )
+    return null;
+  const applies = String(iabSignals.IABTCF_gdprApplies);
+  if (!["0", "1"].includes(applies)) return null;
+  if (applies === "1") {
+    const purposes = iabSignals.IABTCF_PurposeConsents;
+    // This gates Elo's device storage only. Full purpose/vendor enforcement remains
+    // downstream; production release requires confirming that behavior with Elo.
+    if (typeof purposes !== "string" || !/^[01]+$/.test(purposes)) return null;
+    if (purposes[0] !== "1") return { ...latest, canRequestAds: false };
+  }
+  return { ...latest, iabSignals };
 }
 
 // Elo 0.8 reads localStorage synchronously at the start of init(). Other plugins
