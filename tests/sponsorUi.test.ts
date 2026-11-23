@@ -522,6 +522,132 @@ test("the thumbnail fallback follows missing and failed SDK images", async () =>
   expect(root.querySelector(".sponsor-no-image")).toBeTruthy();
 });
 
+async function mountImageCard() {
+  setSponsorConsent("allowed");
+  await act(async () =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: {
+          chatId: "chat",
+          turnId: "image-retry",
+          sponsor: { ...sponsor, ad: { ...sponsor.ad, image_url: "https://example.org/logo.png" } },
+        },
+      }),
+      root,
+    ),
+  );
+  await vi.waitFor(() => expect(root.querySelector(".elo-ad-image")).toBeTruthy());
+  const image = root.querySelector<HTMLImageElement>(".elo-ad-image");
+  if (!image) throw new Error("Expected the SDK thumbnail");
+  return image;
+}
+
+test("a failed thumbnail retries once and recovers without remounting the ad", async () => {
+  const image = await mountImageCard();
+  const parent = image.parentElement;
+  const next = image.nextSibling;
+  const consent = vi.spyOn(sdk, "canTrack");
+  const link = root.querySelector(".sponsor a");
+  const renders = sdk.trackRender.mock.calls.length;
+  const source = vi.spyOn(image, "src", "set");
+  vi.useFakeTimers();
+  image.dispatchEvent(new Event("error"));
+  expect(root.querySelector(".sponsor-no-image")).toBeTruthy();
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(source).toHaveBeenCalledExactlyOnceWith("https://example.org/logo.png");
+  expect(root.querySelector(".sponsor-no-image")).toBeTruthy();
+  image.dispatchEvent(new Event("load"));
+  expect(root.querySelector(".elo-ad-image")).toBe(image);
+  expect(image.parentElement).toBe(parent);
+  expect(image.nextSibling).toBe(next);
+  expect(root.querySelector(".sponsor-no-image")).toBeNull();
+  expect(root.querySelector(".sponsor a")).toBe(link);
+  expect(sdk.trackRender).toHaveBeenCalledTimes(renders);
+  image.dispatchEvent(new Event("error"));
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(source).toHaveBeenCalledTimes(1);
+  expect(consent).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ image_url: image.src }),
+  );
+  expect(root.querySelector(".sponsor-no-image")).toBeTruthy();
+});
+
+test("thumbnail recovery tolerates a removed insertion sibling", async () => {
+  const image = await mountImageCard();
+  const parent = image.parentElement;
+  const next = image.nextSibling;
+  if (!parent || !next) throw new Error("Expected the SDK image and content siblings");
+  vi.useFakeTimers();
+  image.dispatchEvent(new Event("error"));
+  parent.removeChild(next);
+  await vi.advanceTimersByTimeAsync(1000);
+  image.dispatchEvent(new Event("load"));
+  expect(parent.lastChild).toBe(image);
+  expect(root.querySelector(".sponsor-no-image")).toBeNull();
+});
+
+test("a replacement view can retry without reviving the previous thumbnail", async () => {
+  const previous = await mountImageCard();
+  const previousSource = vi.spyOn(previous, "src", "set");
+  vi.useFakeTimers();
+  previous.dispatchEvent(new Event("error"));
+  await act(() => render(null, root));
+  const image = await mountImageCard();
+  const source = vi.spyOn(image, "src", "set");
+  image.dispatchEvent(new Event("error"));
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(previousSource).not.toHaveBeenCalled();
+  expect(source).toHaveBeenCalledTimes(1);
+  previous.dispatchEvent(new Event("load"));
+  expect(previous.isConnected).toBe(false);
+  image.dispatchEvent(new Event("load"));
+  expect(root.querySelector(".elo-ad-image")).toBe(image);
+  image.dispatchEvent(new Event("error"));
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(source).toHaveBeenCalledTimes(1);
+});
+
+test.each(["pause", "withdraw", "unmount"])(
+  "%s cancels a pending thumbnail retry",
+  async (change) => {
+    const image = await mountImageCard();
+    const source = vi.spyOn(image, "src", "set");
+    vi.useFakeTimers();
+    image.dispatchEvent(new Event("error"));
+    await act(() => {
+      if (change === "pause") document.dispatchEvent(new Event("pause"));
+      else if (change === "withdraw") setSponsorConsent("declined");
+      else render(null, root);
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(source).not.toHaveBeenCalled();
+    image.dispatchEvent(new Event("load"));
+    expect(root.querySelector(".elo-ad-image")).toBeNull();
+  },
+);
+
+test.each(["denied", "rejected", "stale"])("thumbnail retry handles %s consent", async (result) => {
+  const image = await mountImageCard();
+  const source = vi.spyOn(image, "src", "set");
+  let resolve: (allowed: boolean) => void = () => {};
+  vi.spyOn(sdk, "canTrack").mockImplementation(() =>
+    result === "rejected"
+      ? Promise.reject(new Error("bridge unavailable"))
+      : new Promise<boolean>((done) => {
+          resolve = done;
+        }),
+  );
+  vi.useFakeTimers();
+  image.dispatchEvent(new Event("error"));
+  await vi.advanceTimersByTimeAsync(1000);
+  if (result === "stale") document.dispatchEvent(new Event("pause"));
+  resolve(result === "stale");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(source).not.toHaveBeenCalled();
+  expect(root.querySelector(".elo-ad-image")).toBeNull();
+});
+
 test("the visible opt-in stays above the composer through later replies in its chat", async () => {
   let intersect!: (ratio: number) => void;
   vi.stubGlobal(

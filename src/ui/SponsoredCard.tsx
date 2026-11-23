@@ -41,7 +41,7 @@ export function SponsoredCard({
     let opening = false;
     let openHint = 0;
     let unmount: (() => void) | undefined;
-    let image: HTMLImageElement | null = null;
+    let stopImage: (() => void) | undefined;
     const syncThumbnail = () =>
       frame.classList.toggle("sponsor-no-image", !element.querySelector(".elo-ad-image"));
     const stop = () => {
@@ -52,8 +52,8 @@ export function SponsoredCard({
       view?.abort();
       view = undefined;
       frame.hidden = true;
-      image?.removeEventListener("error", syncThumbnail);
-      image = null;
+      stopImage?.();
+      stopImage = undefined;
       try {
         unmount?.();
       } catch {
@@ -72,8 +72,9 @@ export function SponsoredCard({
       }
       if (checking) return;
       checking = true;
-      const current = (view ??= new AbortController());
-      let result;
+      view ??= new AbortController();
+      const current = view;
+      let result: Awaited<ReturnType<typeof readSponsorConsent>>;
       try {
         result = await readSponsorConsent(current.signal);
       } catch {
@@ -112,9 +113,10 @@ export function SponsoredCard({
             if (!url || opening || current.signal.aborted) return;
             opening = true;
             let deadline = 0;
-            const hint = (openHint = window.setTimeout(() => {
+            const hint = window.setTimeout(() => {
               if (!current.signal.aborted) showToast("Opening sponsored link…");
-            }, 250));
+            }, 250);
+            openHint = hint;
             try {
               // Bound navigation latency without reusing stale consent. On timeout,
               // stopping the view also cancels pending tracking and SDK tap retries.
@@ -151,9 +153,45 @@ export function SponsoredCard({
             }
           },
         });
-        image = element.querySelector<HTMLImageElement>(".elo-ad-image");
-        // Elo removes a failed image before this listener runs.
-        image?.addEventListener("error", syncThumbnail);
+        const image = element.querySelector<HTMLImageElement>(".elo-ad-image");
+        const parent = image?.parentElement;
+        if (image && parent) {
+          const next = image.nextSibling;
+          const source = image.src;
+          let retry = 0;
+          let retried = false;
+          const active = () => !current.signal.aborted && !document.hidden && canRequestSponsors();
+          const loaded = () => {
+            if (!active()) return;
+            // Elo removes failed images. Restore this same node only once it loads,
+            // without remounting the ad or duplicating render/impression tracking.
+            if (!parent.contains(image))
+              parent.insertBefore(image, next?.parentNode === parent ? next : null);
+            syncThumbnail();
+          };
+          const failed = () => {
+            syncThumbnail();
+            if (retried || !active()) return;
+            retried = true;
+            retry = window.setTimeout(() => {
+              void sponsor.sdk
+                .canTrack(creative)
+                .then((allowed) => {
+                  if (allowed && active()) image.src = source;
+                })
+                .catch(() => {});
+            }, 1000);
+          };
+          image.addEventListener("load", loaded);
+          image.addEventListener("error", failed);
+          stopImage = () => {
+            clearTimeout(retry);
+            image.removeEventListener("load", loaded);
+            image.removeEventListener("error", failed);
+            // Cancel a detached retry where possible when the view loses consent.
+            if (!parent.contains(image)) image.removeAttribute("src");
+          };
+        }
         syncThumbnail();
         if (creative.presentation?.format === "strip") {
           // Read the SDK's clamped inset rather than duplicating its normalization.
