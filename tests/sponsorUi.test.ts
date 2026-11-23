@@ -1575,7 +1575,7 @@ test("active budget updates ignore unrelated cards but retain global clears and 
   expect(root.textContent).toBe("empty");
 
   // Releasing another chat's opt-in ownership affects availability globally.
-  localBudget.optInChatId = "other";
+  await act(async () => localBudget.offerOptIn("other"));
   await act(async () => render(h(ActiveChat, {}), root));
   rendered.mockClear();
   await act(async () => localBudget.forgetChat("other"));

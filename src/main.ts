@@ -173,6 +173,9 @@ class AcodeAiAgentPlugin {
     file.onclose = () => {
       unmountApp(root);
       this.#tabs.delete(tabId);
+      const chatId = record.binding.chatId;
+      if (chatId && ![...this.#tabs.values()].some((tab) => tab.binding.chatId === chatId))
+        controller.sponsorBudget.releaseOptIn(chatId);
     };
     mountApp(
       root,

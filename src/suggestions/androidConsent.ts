@@ -7,10 +7,12 @@ export const iabKeys = [
   "IABGPP_GppSID",
 ] as const;
 
+const purposeKeys = ["IABTCF_PurposeConsents", "IABTCF_PurposeLegitimateInterests"] as const;
 export type IabSignals = Partial<
-  Record<(typeof iabKeys)[number] | "IABTCF_PurposeConsents", string | number | null>
+  Record<(typeof iabKeys)[number], string | number | null> &
+    Record<(typeof purposeKeys)[number], string | null>
 >;
-const allowed = new Set<string>([...iabKeys, "IABTCF_PurposeConsents"]);
+const allowed = new Set<string>([...iabKeys, ...purposeKeys]);
 
 // Read through the host's file API. Never write to UMP's preferences or retain
 // unrelated app preferences. A missing/unstable file is not a consent decision.

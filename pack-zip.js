@@ -42,7 +42,6 @@ zip.file(
 if (readmeDotMd) {
   zip.file(json.readme || path.basename(readmeDotMd), fs.readFileSync(readmeDotMd));
 }
-zip.file("contributing.md", fs.readFileSync(path.join(__dirname, "contributing.md")));
 
 if (changelogDotMd) {
   zip.file(json.changelogs || path.basename(changelogDotMd), fs.readFileSync(changelogDotMd));

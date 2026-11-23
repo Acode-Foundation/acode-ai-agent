@@ -43,7 +43,7 @@ test("only deleting the chat with the unanswered sponsor offer releases it", asy
   await store.save({ ...meta, id: "other" });
   const controller = new AgentController(null);
   cleanups.push(() => controller.dispose());
-  controller.sponsorBudget.optInChatId = "offered";
+  controller.sponsorBudget.offerOptIn("offered");
   await controller.deleteChat("other");
   expect(controller.sponsorBudget.optInChatId).toBe("offered");
   await controller.deleteChat("offered");

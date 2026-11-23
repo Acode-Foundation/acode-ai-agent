@@ -26,7 +26,7 @@ type Dependencies = {
 type SponsorHistory = readonly string[] | (() => readonly string[]);
 
 export class SponsorBudget {
-  optInChatId?: string;
+  #optInChatId?: string;
   readonly changes = new Signal<void>();
   readonly released = new Signal<void>();
   readonly forgotten = new Signal<string>();
@@ -84,11 +84,30 @@ export class SponsorBudget {
     if (changed) this.changes.emit();
   }
 
+  /** The chat that owns the unanswered opt-in prompt. Set only through offerOptIn(). */
+  get optInChatId(): string | undefined {
+    return this.#optInChatId;
+  }
+
+  /** Give the opt-in prompt to the first chat that shows it, and let other tabs redraw. */
+  offerOptIn(chatId: string) {
+    if (!chatId || this.#optInChatId !== undefined) return;
+    this.#optInChatId = chatId;
+    this.changes.emit();
+  }
+
+  /** Release only the prompt, preserving cached ads and the shared request budget. */
+  releaseOptIn(chatId: string) {
+    if (this.#optInChatId !== chatId) return;
+    this.#optInChatId = undefined;
+    this.changes.emit();
+  }
+
   forgetChat(chatId: string) {
     this.forgotten.emit(chatId);
     if (this.#pending.startsWith(`${chatId}:`)) this.release(this.#pending);
-    const offered = this.optInChatId === chatId;
-    if (offered) this.optInChatId = undefined;
+    const offered = this.#optInChatId === chatId;
+    if (offered) this.#optInChatId = undefined;
     const removed = this.#cards.delete(chatId);
     if (offered || removed) this.changes.emit();
   }

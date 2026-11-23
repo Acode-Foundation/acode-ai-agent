@@ -1,9 +1,6 @@
 # 0.6.0
 
-- Fixed: Android sponsored suggestions can read Acode's saved advertising consent when the host does not expose IAB signals. Missing required signals, an unreadable consent file, or denied consent to store advertising identifiers keep suggestions off.
-- Added opt-in sponsored suggestions for free Acode users, with a compact consent prompt and privacy details in an Acode dialog. One compact card above the input stays through the reply and hides while composing. Each chat caches its ad for five minutes, with one shared five-minute view-based cooldown across chats and no turn-count requirement. Dismissal or opening a link clears cached ads and suppresses new ads for five minutes. Fast replies keep the same pending ad request, and idle chats never request replacements. All ad request attempts are at least 30 seconds apart, including successful requests before an impression is measured. Recent chat prompts are classified locally into broad topics, and native consent is checked before requesting or tracking ads.
-- When device consent is required or the device reports a definite denial, the plugin clears Elo’s stored identifiers and session. An unknown or unavailable consent result pauses ads and preserves the identifiers.
-- Sponsored links send consent-checked click notices and tap telemetry through Elo SDK 0.8.1. Removing a card or withdrawing consent stops pending tap retries; requests already sent cannot be cancelled.
+- Added: opt-in sponsored suggestions for free Acode users, powered by Elo. Ads appear only with device consent, and ad requests carry only broad topics classified on the device, never your messages, code or files.
 - Fixed: custom endpoints can run without an API key, with key entry and removal available in Provider access.
 - Fixed: editing an endpoint reuses its saved key for model discovery only when the base URL is unchanged.
 - Fixed: reusing a saved key for model discovery no longer overwrites later key changes; changing the endpoint URL reports when its old key is removed.

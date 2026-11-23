@@ -1,21 +1,37 @@
 // Run only against a disposable emulator with a debuggable free Acode build.
 // Forward its webview_devtools_remote_<pid> socket to CDP_PORT (default 9555).
+// The UMP form labels/classes are private DOM, verified with UMP 4.0.0 / WebView 124.
+// Re-run before releases and after Acode, UMP, or WebView upgrades; see contributing.md.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { build } from "esbuild";
+import { CdpUnavailableError, waitForAcode } from "./startup.mjs";
 
 const endpoint = `http://127.0.0.1:${process.env.CDP_PORT || 9555}`;
-const pages = () => fetch(`${endpoint}/json/list`).then((response) => response.json());
-const main = (await pages()).find((page) => page.url === "https://localhost/index.html");
-assert(main, "Open Acode and forward its WebView debugging socket first");
-const run = (expression) => evaluate(main, expression);
-const environment = await run(
-  "({debug:BuildInfo.debug,emulator:device.isVirtual,version:BuildInfo.version,code:BuildInfo.versionCode,webview:navigator.userAgent})",
-);
+const screenshots = process.env.E2E_SCREENSHOTS;
+const pages = async (timeout = 10_000) => {
+  try {
+    const response = await fetch(`${endpoint}/json/list`, { signal: AbortSignal.timeout(timeout) });
+    if (!response.ok) throw new Error(`CDP target list returned HTTP ${response.status}`);
+    return await response.json();
+  } catch (cause) {
+    throw new CdpUnavailableError(`Cannot read CDP targets at ${endpoint}: ${cause.message}`, {
+      cause,
+    });
+  }
+};
+console.log("Waiting for Acode startup; finish any permission or update prompts first.");
+// The splash disappears before the host gathers consent. window.ad is assigned only
+// after its AdMob initialization finishes, so startup consent collection finishes first.
+const { main, environment } = await waitForAcode(pages, evaluate);
 assert(
   environment.debug && environment.emulator,
   "This test resets consent: use a disposable debug emulator",
 );
 console.log("Environment:", environment);
+const run = (expression) => evaluate(main, expression);
 
 const bundle = await build({
   stdin: {
@@ -59,20 +75,46 @@ try {
   console.log("PASS: unknown consent blocks Elo initialization and network requests");
 
   await startForm("gatherConsent({debugGeography:'eea'})");
-  await clickConsent("Consent");
+  await clickConsent("Consent", true, "consent-form");
   await completed();
   const accepted = await probe();
   assert.equal(accepted.status, "allowed");
   assert(accepted.tcLength > 0 && accepted.gdpr === "1");
-  const shape = await run(
-    "(async()=>{const s=await consentE2E.readAndroidConsentSignals();return {keys:Object.keys(s),purposeLength:s.IABTCF_PurposeConsents?.length,purposeBitsValid:/^[01]+$/.test(s.IABTCF_PurposeConsents??'')}})()",
-  );
+  const shape = await run(`(async()=>{
+    const s = await consentE2E.readAndroidConsentSignals();
+    const purposes = s.IABTCF_PurposeConsents ?? "";
+    const interests = s.IABTCF_PurposeLegitimateInterests;
+    return {
+      keys: Object.keys(s),
+      purposeLength: purposes.length,
+      purposeBitsValid: /^[01]+$/.test(purposes),
+      purposeBits: purposes,
+      liPresent: interests != null,
+      liLength: interests?.length,
+      liBits: interests ?? "",
+      liBitsValid: /^[01]+$/.test(interests ?? ""),
+    };
+  })()`);
+  console.log("UMP EEA file shape:", shape);
   assert.equal(
     shape.purposeBitsValid,
     true,
     "UMP preference shape changed: expected a nonempty binary purpose string",
   );
-  console.log("UMP EEA file shape:", shape);
+  assert.equal(shape.liPresent, true, "UMP did not persist the legitimate-interest key");
+  assert.equal(
+    shape.liBitsValid,
+    true,
+    "UMP preference shape changed: expected a nonempty LI bit string",
+  );
+  // Match the local gate: Purpose 1 needs consent; Purposes 2/7 also accept LI.
+  assert.equal(shape.purposeBits[0], "1", "Purpose 1 consent missing after Consent");
+  for (const purpose of [2, 7]) {
+    assert(
+      shape.purposeBits[purpose - 1] === "1" || shape.liBits[purpose - 1] === "1",
+      `Purpose ${purpose} consent or legitimate interest missing after Consent`,
+    );
+  }
   assert.equal(await loadAd(), true);
   const request = await run(`(async () => {
     const native = await consentE2E.readAndroidConsentSignals();
@@ -84,6 +126,41 @@ try {
   assert.equal(request.restored, true);
   assert.equal(request.identifier, true);
   console.log("PASS: real UMP -> file API -> plugin -> pinned Elo SDK request", accepted);
+
+  for (const [interests, expected] of [
+    [[2, 7], "allowed"],
+    [[7], "denied"],
+    [[2], "denied"],
+    [[], "denied"],
+  ]) {
+    await startForm("showOptions()");
+    await clickConsent("Manage options");
+    await choosePurposes([1], interests);
+    const preview =
+      interests.length === 2 ? "li-only" : interests[0] === 7 ? "purpose-2-refused" : undefined;
+    await clickConsent("Confirm choices", true, preview);
+    await completed();
+    const bits = await run(`(async()=>{
+      const s = await consentE2E.readAndroidConsentSignals();
+      return {consents:s.IABTCF_PurposeConsents, interests:s.IABTCF_PurposeLegitimateInterests};
+    })()`);
+    assert.match(bits.consents, /^10{6,}$/);
+    for (const purpose of [2, 7])
+      assert.equal(bits.interests[purpose - 1], interests.includes(purpose) ? "1" : "0");
+    assert.equal((await probe()).status, expected);
+    const before = await run("consentTest.requests.length");
+    assert.equal(await loadAd(), expected === "allowed");
+    if (expected === "denied") {
+      assert.equal(await run("consentTest.requests.length"), before);
+      assert.equal(await run("localStorage.getItem('elo_visitor_id')"), null);
+    }
+    console.log(`PASS: Purpose 1 consent + LI for [${interests}] -> ${expected}`, bits);
+  }
+  // Restore an allowed request so withdrawal below must clear an existing identifier.
+  await startForm("showOptions()");
+  await clickConsent("Consent");
+  await completed();
+  assert.equal(await loadAd(), true);
 
   await startForm("showOptions()");
   const before = await run("consentTest.requests.length");
@@ -141,48 +218,105 @@ async function completed() {
   assert(!result.error, result.error);
   return result.value;
 }
-async function clickConsent(label, required = true) {
+async function clickConsent(label, required = true, preview) {
+  const capture = Boolean(screenshots && preview);
+  const button = (click) => `(() => {
+    if (!document.body.textContent.includes('Publisher Test Ads')) return false;
+    const button=[...document.querySelectorAll('button')].find(b=>b.innerText.trim()===${JSON.stringify(label)}&&b.getClientRects().length);
+    if(button && ${click})button.click();return !!button;
+  })()`;
   const attempt = async () => {
     for (const page of await pages()) {
+      let found;
       try {
         if (page.url !== "about:blank" || !JSON.parse(page.description).attached) continue;
-        const clicked = await evaluate(
-          page,
-          `(() => {
-          if (!document.body.innerText.includes('Publisher Test Ads')) return false;
-          const button=[...document.querySelectorAll('button')].find(b=>b.innerText.trim()===${JSON.stringify(label)}&&b.getClientRects().length);
-          if(button)button.click();return !!button;
-        })()`,
-        );
-        if (clicked) return true;
+        found = await evaluate(page, button(!capture));
       } catch {
         /* A closed UMP WebView can disappear during enumeration. */
+        continue;
       }
+      if (!found) continue;
+      if (!capture) return true;
+      await capturePreview(page, preview);
+      return evaluate(page, button(true));
     }
     return false;
   };
-  return required ? until(attempt) : attempt();
+  return required ? until(attempt, `UMP button: ${label}`) : attempt();
 }
-async function until(check) {
-  const deadline = Date.now() + 30000;
+async function capturePreview(page, name) {
+  const purpose = name === "li-only" ? 7 : name === "purpose-2-refused" ? 2 : undefined;
+  if (purpose) {
+    await evaluate(
+      page,
+      `document.querySelector('input.purpose[data-id="${purpose}"]')?.scrollIntoView({block:'center'})`,
+    );
+  }
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  mkdirSync(screenshots, { recursive: true });
+  const file = path.join(screenshots, `${name}.png`);
+  writeFileSync(
+    file,
+    execFileSync(
+      "adb",
+      ["-s", process.env.ANDROID_SERIAL || "emulator-5580", "exec-out", "screencap", "-p"],
+      { timeout: 10_000 },
+    ),
+  );
+  console.log(`PREVIEW: ${file}`);
+  await new Promise((resolve) => setTimeout(resolve, 6000));
+}
+async function choosePurposes(consents, interests) {
+  await until(async () => {
+    for (const page of await pages()) {
+      if (page.url !== "about:blank" || !JSON.parse(page.description).attached) continue;
+      const changed = await evaluate(
+        page,
+        `(() => {
+          if (!document.body.textContent.includes('Publisher Test Ads') || !document.body.innerText.includes('Manage your data')) return false;
+          const inputs = [...document.querySelectorAll('input.purpose')].filter(input=>input.getClientRects().length);
+          if (!inputs.length) return false;
+          const consents = ${JSON.stringify(consents)}, interests = ${JSON.stringify(interests)};
+          for (const input of inputs) {
+            const granted = input.classList.contains('fc-preference-consent') ? consents : interests;
+            if (input.checked !== granted.includes(Number(input.dataset.id))) input.click();
+          }
+          return true;
+        })()`,
+      );
+      if (changed) return true;
+    }
+    return false;
+  });
+}
+async function until(check, description = "Google's test consent form/callback", timeout = 30_000) {
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const result = await check();
     if (result) return result;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw Error("Timed out waiting for Google's test consent form/callback");
+  throw Error(`Timed out waiting for ${description}`);
 }
-async function evaluate(page, expression) {
+async function evaluate(page, expression, timeout = 10_000) {
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(Error("CDP evaluation timed out")), 10000);
+    let settled = false;
+    const timer = setTimeout(
+      () => finish(new CdpUnavailableError("CDP evaluation timed out")),
+      timeout,
+    );
     const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       ws.close();
       if (error) reject(error);
       else resolve(value);
     };
-    ws.onerror = () => finish(Error("WebView connection failed"));
+    ws.onerror = () => finish(new CdpUnavailableError("WebView connection failed"));
+    ws.onclose = () =>
+      finish(new CdpUnavailableError("WebView connection closed before responding"));
     ws.onopen = () =>
       ws.send(
         JSON.stringify({
@@ -195,7 +329,15 @@ async function evaluate(page, expression) {
       const message = JSON.parse(event.data);
       if (message.id !== 1) return;
       const error = message.error || message.result?.exceptionDetails;
-      finish(error ? Error(JSON.stringify(error)) : null, message.result?.result?.value);
+      const transient =
+        message.error &&
+        /context.*destroyed|cannot find context|target.*closed|session.*closed/i.test(
+          message.error.message,
+        );
+      finish(
+        error ? new (transient ? CdpUnavailableError : Error)(JSON.stringify(error)) : null,
+        message.result?.result?.value,
+      );
     };
   });
 }

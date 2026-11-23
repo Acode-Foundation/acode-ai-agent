@@ -41,7 +41,11 @@ jobs:
           ELO_AD_UNIT_ID: ci-android
       - name: Check packaged documentation, SDK attribution, and environment files
         run: |
-          unzip -p plugin.zip contributing.md | cmp - contributing.md
+          for key in readme changelogs; do
+            file=$(bun -p "require('./plugin.json').$key")
+            unzip -p plugin.zip "$file" | cmp - "$file"
+          done
+          if unzip -Z1 plugin.zip | grep -Eq '(^|/)contributing\.md$'; then exit 1; fi
           for file in LICENSE NOTICE; do
             unzip -p plugin.zip "licenses/elo/$file" | cmp - "node_modules/@elo-ads/web-sdk/$file"
           done

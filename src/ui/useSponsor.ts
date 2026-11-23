@@ -172,7 +172,7 @@ export function useSponsor(
     if (!card || !shell) return;
     const claim = () => {
       if (card.isConnected && !document.hidden && isTabActive() && !obscuredRef.current)
-        budget.optInChatId ??= chatId;
+        budget.offerOptIn(chatId);
     };
     const checkBounds = () => {
       if (halfVisible(card, shell)) claim();

@@ -455,8 +455,8 @@ test("host entitlement and unavailable consent storage fail closed", () => {
 test("forgetting a chat notifies for its unanswered offer or cached card only", () => {
   const budget = new SponsorBudget();
   const changed = vi.fn();
+  budget.offerOptIn("offered");
   budget.changes.subscribe(changed);
-  budget.optInChatId = "offered";
   budget.forgetChat("unrelated");
   expect(changed).not.toHaveBeenCalled();
   budget.forgetChat("offered");
@@ -504,4 +504,49 @@ test("a deleted chat cannot regain its ad from a late response", async () => {
   await Promise.resolve();
   expect(f.budget.card("chat")).toBeUndefined();
   f.session.dispose();
+});
+
+test("the first chat to show the opt-in keeps it and other tabs are notified once", () => {
+  const budget = new SponsorBudget();
+  const changed = vi.fn();
+  budget.changes.subscribe(changed);
+  budget.offerOptIn("first");
+  budget.offerOptIn("first");
+  budget.offerOptIn("second");
+  budget.offerOptIn("");
+  expect(budget.optInChatId).toBe("first");
+  expect(changed).toHaveBeenCalledOnce();
+  budget.forgetChat("first");
+  budget.offerOptIn("second");
+  expect(budget.optInChatId).toBe("second");
+  expect(changed).toHaveBeenCalledTimes(3);
+});
+
+test("releasing an offer preserves cached ads and pending requests", () => {
+  let now = 0;
+  const budget = new SponsorBudget(() => now);
+  const card = { chatId: "owner", turnId: "cached", sponsor };
+  expect(budget.claim("owner:cached")).toBe(0);
+  budget.add(card);
+  now = 30_000;
+  expect(budget.claim("owner:pending")).toBe(0);
+  budget.offerOptIn("owner");
+  const changed = vi.fn();
+  const forgotten = vi.fn();
+  budget.changes.subscribe(changed);
+  budget.forgotten.subscribe(forgotten);
+  budget.releaseOptIn("other");
+  expect(changed).not.toHaveBeenCalled();
+  budget.releaseOptIn("owner");
+  budget.releaseOptIn("owner");
+  expect(changed).toHaveBeenCalledOnce();
+  expect(forgotten).not.toHaveBeenCalled();
+  expect(budget.optInChatId).toBeUndefined();
+  expect(budget.card("owner")).toBe(card);
+  expect(budget.claim("other:turn")).toBeUndefined();
+  const pending = { ...card, turnId: "pending" };
+  budget.add(pending);
+  expect(budget.card("owner")).toBe(pending);
+  budget.offerOptIn("other");
+  expect(budget.optInChatId).toBe("other");
 });

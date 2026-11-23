@@ -7,7 +7,7 @@ import {
 import { readSponsorConsent, withSponsorConsent } from "../src/suggestions/consent";
 
 const accepted =
-  '<map><int name="IABTCF_gdprApplies" value="1"/><string name="IABTCF_TCString">TC</string><string name="IABTCF_PurposeConsents">100000000000000000000000</string></map>';
+  '<map><int name="IABTCF_gdprApplies" value="1"/><string name="IABTCF_TCString">TC</string><string name="IABTCF_PurposeConsents">110000100000000000000000</string></map>';
 let readFile: ReturnType<typeof vi.fn>;
 let getState: ReturnType<typeof vi.fn>;
 let fs: ReturnType<typeof vi.fn>;
@@ -62,7 +62,7 @@ test("refusal clears identity even when UMP still allows limited ads", async () 
   expect((await read()).status).toBe("allowed");
   localStorage.setItem("elo_visitor_id", "old-identity");
   readFile.mockResolvedValue(
-    accepted.replace("100000000000000000000000", "000000000000000000000000"),
+    accepted.replace("110000100000000000000000", "000000000000000000000000"),
   );
   expect(await read()).toEqual({ status: "denied" });
   expect(localStorage.getItem("elo_visitor_id")).toBeNull();
@@ -70,7 +70,7 @@ test("refusal clears identity even when UMP still allows limited ads", async () 
 
 test.each([
   accepted.replace('<string name="IABTCF_TCString">TC</string>', ""),
-  accepted.replace('<string name="IABTCF_PurposeConsents">100000000000000000000000</string>', ""),
+  accepted.replace('<string name="IABTCF_PurposeConsents">110000100000000000000000</string>', ""),
   accepted.replace('value="1"', 'value="2"'),
   accepted.replace("</map>", '<string name="IABGPP_HDR_GppString">GPP</string></map>'),
   accepted.replace("</map>", '<string name="IABGPP_GppSID">7</string></map>'),
@@ -221,7 +221,7 @@ test("GPP without explicit GDPR applicability remains unavailable", async () => 
 });
 
 test.each(["", "1x"])("rejects an invalid purpose bit string %s", async (purposes) => {
-  readFile.mockResolvedValue(accepted.replace("100000000000000000000000", purposes));
+  readFile.mockResolvedValue(accepted.replace("110000100000000000000000", purposes));
   expect(await read()).toEqual({ status: "unavailable" });
 });
 
@@ -244,10 +244,10 @@ test("unrelated preference changes do not invalidate unchanged IAB values", asyn
   expect((await read()).status).toBe("allowed");
 });
 
-test.each(["1", "11111111111", "100000000000000000000000"])(
-  "checks Purpose 1 without assuming a fixed length: %s",
+test.each(["1100001", "11111111111", "110000100000000000000000"])(
+  "checks Purposes 1, 2 and 7 without assuming a fixed length: %s",
   async (purposes) => {
-    readFile.mockResolvedValue(accepted.replace("100000000000000000000000", purposes));
+    readFile.mockResolvedValue(accepted.replace("110000100000000000000000", purposes));
     expect((await read()).status).toBe("allowed");
   },
 );
@@ -276,4 +276,92 @@ test.each([
   expect(result.status).toBe(expected);
   expect(readFile).not.toHaveBeenCalled();
   if (result.status === "allowed") expect(result.signals).toEqual([null, null, null, null, null]);
+});
+
+test.each(["1", "100000100000", "110000000000"])(
+  "denies basic ads without consent or legitimate interest for Purposes 2 and 7: %s",
+  async (purposes) => {
+    localStorage.setItem("elo_visitor_id", "old-identity");
+    readFile.mockResolvedValue(
+      accepted
+        .replace("110000100000000000000000", purposes)
+        .replace(
+          "</map>",
+          '<string name="IABTCF_PurposeLegitimateInterests">0000000000000</string></map>',
+        ),
+    );
+    expect(await read()).toEqual({ status: "denied" });
+    expect(localStorage.getItem("elo_visitor_id")).toBeNull();
+  },
+);
+
+test("accepts legitimate interest for Purposes 2 and 7 but not for Purpose 1", async () => {
+  const withInterests = (consents: string, interests: string) =>
+    accepted
+      .replace("110000100000000000000000", consents)
+      .replace(
+        "</map>",
+        `<string name="IABTCF_PurposeLegitimateInterests">${interests}</string></map>`,
+      );
+  readFile.mockResolvedValue(withInterests("1000000", "0100001"));
+  expect((await read()).status).toBe("allowed");
+  readFile.mockResolvedValue(withInterests("0000000", "1100001"));
+  expect((await read()).status).toBe("denied");
+  readFile.mockResolvedValue(withInterests("1100001", "1x"));
+  expect((await read()).status).toBe("unavailable");
+});
+
+test("a host snapshot with purpose bits must allow basic ads", async () => {
+  const snapshot = (IABTCF_PurposeConsents: string) => ({
+    consentStatus: "obtained",
+    canRequestAds: true,
+    iabSignals: {
+      IABTCF_gdprApplies: "1",
+      IABTCF_TCString: "TC",
+      IABTCF_PurposeConsents,
+      IABTCF_PurposeLegitimateInterests: "0000000",
+    },
+  });
+  localStorage.setItem("elo_visitor_id", "old-identity");
+  getState.mockResolvedValue(snapshot("1000000"));
+  expect(await read()).toEqual({ status: "denied" });
+  expect(localStorage.getItem("elo_visitor_id")).toBeNull();
+  getState.mockResolvedValue(snapshot("1100001"));
+  expect((await read()).status).toBe("allowed");
+  expect(readFile).not.toHaveBeenCalled();
+});
+
+test("missing LI bits pause ads without clearing the identity when Purposes 2/7 lack consent", async () => {
+  localStorage.setItem("elo_visitor_id", "old-identity");
+  readFile.mockResolvedValue(accepted.replace("110000100000000000000000", "1000000"));
+  expect(await read()).toEqual({ status: "unavailable" });
+  expect(localStorage.getItem("elo_visitor_id")).toBe("old-identity");
+});
+
+test("host snapshot purpose bits must be strings and LI gaps pause instead of denying", async () => {
+  const snapshot = (signals: Record<string, unknown>) => ({
+    consentStatus: "obtained",
+    canRequestAds: true,
+    iabSignals: { IABTCF_gdprApplies: "1", IABTCF_TCString: "TC", ...signals },
+  });
+  localStorage.setItem("elo_visitor_id", "old-identity");
+  // 0110001 as a number would lose its leading zero and shift every purpose.
+  getState.mockResolvedValue(snapshot({ IABTCF_PurposeConsents: 110001 }));
+  expect(await read()).toEqual({ status: "unavailable" });
+  getState.mockResolvedValue(
+    snapshot({ IABTCF_PurposeConsents: "1100001", IABTCF_PurposeLegitimateInterests: 1 }),
+  );
+  expect(await read()).toEqual({ status: "unavailable" });
+  // Purposes present, LI absent or empty: Purpose 2/7 gaps pause ads and keep the identifier.
+  getState.mockResolvedValue(snapshot({ IABTCF_PurposeConsents: "1000000" }));
+  expect(await read()).toEqual({ status: "unavailable" });
+  getState.mockResolvedValue(
+    snapshot({ IABTCF_PurposeConsents: "1000000", IABTCF_PurposeLegitimateInterests: " " }),
+  );
+  expect(await read()).toEqual({ status: "unavailable" });
+  expect(localStorage.getItem("elo_visitor_id")).toBe("old-identity");
+  // Untrimmed host values are accepted once trimmed.
+  getState.mockResolvedValue(snapshot({ IABTCF_PurposeConsents: " 1100001 " }));
+  expect((await read()).status).toBe("allowed");
+  expect(readFile).not.toHaveBeenCalled();
 });

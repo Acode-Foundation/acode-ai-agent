@@ -68,6 +68,18 @@ async function readNativeConsent(signal: AbortSignal): Promise<ConsentResult> {
     const [applies, tcString, , gpp, sections] = signals;
     if ((applies !== null || status === "obtained") && applies !== "0" && applies !== "1")
       return { status: "unavailable" };
+    // The Android file always carries purpose bits; a host snapshot is checked when it does.
+    // A native snapshot without IABTCF_PurposeConsents is trusted as already validated by the
+    // host. Supplied purpose values must be bit strings. LI is optional when consent covers
+    // Purposes 2/7; missing or empty LI cannot establish refusal of those purposes.
+    if (applies === "1" && state.iabSignals?.IABTCF_PurposeConsents != null) {
+      const purposes = basicAdPurposes(state.iabSignals);
+      if (purposes === "invalid") return { status: "unavailable" };
+      if (purposes === "denied") {
+        clearSponsorIdentity();
+        return { status: "denied" };
+      }
+    }
     if (applies === "1" && !tcString) return { status: "unavailable" };
     if (
       Boolean(gpp) !== Boolean(sections) ||
@@ -82,6 +94,29 @@ async function readNativeConsent(signal: AbortSignal): Promise<ConsentResult> {
     clearTimeout(timer);
     signal.removeEventListener("abort", cancel);
   }
+}
+
+// Basic ads need Purpose 1 (store and/or access information on a device) by consent, plus
+// Purposes 2 (use limited data to select advertising) and 7 (measure advertising
+// performance) by consent or legitimate interest.
+// Vendor consent for Elo and Purposes 3/4 still need confirmation from Elo.
+function basicAdPurposes(signals: IabSignals): "allowed" | "denied" | "invalid" {
+  const rawPurposes = signals.IABTCF_PurposeConsents;
+  const rawInterests = signals.IABTCF_PurposeLegitimateInterests;
+  // Bit strings only: a numeric value would drop leading zeros and shift purpose positions.
+  if (typeof rawPurposes !== "string") return "invalid";
+  if (rawInterests != null && typeof rawInterests !== "string") return "invalid";
+  const purposes = rawPurposes.trim();
+  // An empty LI value carries no decision, the same as a missing key.
+  const interests = rawInterests?.trim() ?? "";
+  if (!/^[01]+$/.test(purposes) || !/^[01]*$/.test(interests)) return "invalid";
+  if (purposes[0] !== "1") return "denied";
+  const granted = (purpose: number) =>
+    purposes[purpose - 1] === "1" || interests[purpose - 1] === "1";
+  if (granted(2) && granted(7)) return "allowed";
+  // Without the LI bits, a missing Purpose 2/7 consent is not a definite refusal:
+  // pause ads and keep the identifier rather than clearing it.
+  return interests ? "denied" : "invalid";
 }
 
 function normalizedStatus(state: NativePrivacyState): string {
@@ -114,11 +149,8 @@ async function readConsentState(read: () => Promise<NativePrivacyState>, signal:
   const applies = String(iabSignals.IABTCF_gdprApplies);
   if (!["0", "1"].includes(applies)) return null;
   if (applies === "1") {
-    const purposes = iabSignals.IABTCF_PurposeConsents;
-    // This gates Elo's device storage only. Full purpose/vendor enforcement remains
-    // downstream; production release requires confirming that behavior with Elo.
-    if (typeof purposes !== "string" || !/^[01]+$/.test(purposes)) return null;
-    if (purposes[0] !== "1") return { ...latest, canRequestAds: false };
+    // Purpose bits are checked with the other signals once the native state is final.
+    if (iabSignals.IABTCF_PurposeConsents == null) return null;
   }
   return { ...latest, iabSignals };
 }
