@@ -99,7 +99,8 @@ async function readNativeConsent(signal: AbortSignal): Promise<ConsentResult> {
 // Basic ads need Purpose 1 (store and/or access information on a device) by consent, plus
 // Purposes 2 (use limited data to select advertising) and 7 (measure advertising
 // performance) by consent or legitimate interest.
-// Vendor consent for Elo and Purposes 3/4 still need confirmation from Elo.
+// Elo confirmed Purposes 1, 2 and 7 are sufficient; Purposes 3/4 are not required, and
+// Elo has no IAB vendor ID, so no vendor-level consent check applies.
 function basicAdPurposes(signals: IabSignals): "allowed" | "denied" | "invalid" {
   const rawPurposes = signals.IABTCF_PurposeConsents;
   const rawInterests = signals.IABTCF_PurposeLegitimateInterests;
