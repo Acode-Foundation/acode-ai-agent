@@ -17,6 +17,9 @@ export function bindPromptKeyboard(element: HTMLElement): () => void {
     try {
       const mode = acode.require("settings").value.keyboardMode;
       if (typeof mode !== "string" || typeof system?.setInputType !== "function") return;
+      // The connection this focus opened already uses the normal IME; reconnecting would
+      // only flicker the keyboard and reset the selection.
+      if (mode === "NORMAL") return;
       restoreMode = mode;
       const request = ++generation;
       const reconnect = () => {

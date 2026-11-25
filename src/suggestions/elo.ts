@@ -74,6 +74,24 @@ sponsorPreferencesChanged.subscribe((consent) => {
   if (consent !== "allowed") session = undefined;
 });
 
+const IMPRESSION_CONSENT_RETRIES = 2;
+const IMPRESSION_CONSENT_RETRY_MS = 500;
+
+/** Resolves true after `ms`, or false at once when `signal` is missing or aborts first. */
+function pause(ms: number, signal: AbortSignal | undefined): Promise<boolean> {
+  if (!signal || signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const done = (value: boolean) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", aborted);
+      resolve(value);
+    };
+    const aborted = () => done(false);
+    const timer = setTimeout(() => done(true), ms);
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
 // UMP can change in a native dialog without a WebView focus or visibility event.
 class SponsorSDK extends EloSDK {
   #views = new WeakMap<AdCreative, { signal: AbortSignal; onViewed?: () => void }>();
@@ -91,24 +109,38 @@ class SponsorSDK extends EloSDK {
   }
 
   async canTrack(ad: AdCreative): Promise<boolean> {
+    return (await this.#consent(ad)) === "allowed";
+  }
+
+  // "unavailable" means the native read did not complete (a file race, the deadline or a
+  // bridge error), not a refusal, so a caller may try again while the view is live.
+  async #consent(ad: AdCreative): Promise<"allowed" | "blocked" | "unavailable"> {
     try {
       const signal = this.#views.get(ad)?.signal;
       const eligible = () =>
         !signal?.aborted && !document.hidden && canRequestSponsors() && session?.sdk === this;
-      if (!signal || !eligible()) return false;
+      if (!signal || !eligible()) return "blocked";
       const result = await readSponsorConsent(signal);
-      return (
-        eligible() &&
-        result.status === "allowed" &&
-        JSON.stringify(result.signals) === this.consentKey
-      );
+      if (!eligible()) return "blocked";
+      if (result.status === "unavailable") return "unavailable";
+      return result.status === "allowed" && JSON.stringify(result.signals) === this.consentKey
+        ? "allowed"
+        : "blocked";
     } catch {
-      return false;
+      return "blocked";
     }
   }
 
   override async trackImpression(ad: AdCreative) {
-    if (!(await this.canTrack(ad))) return false;
+    // mountEloAd calls this once per visible stretch and re-arms its dwell only when the
+    // card crosses 50% again. The view has already qualified, so retry an incomplete
+    // consent read instead of dropping the impression while the card stays on screen.
+    for (let attempt = 0; ; attempt++) {
+      const consent = await this.#consent(ad);
+      if (consent === "allowed") break;
+      if (consent === "blocked" || attempt >= IMPRESSION_CONSENT_RETRIES) return false;
+      if (!(await pause(IMPRESSION_CONSENT_RETRY_MS, this.#views.get(ad)?.signal))) return false;
+    }
     // The SDK calls this after a continuous second at least 50% visible.
     // Start the local frequency cap even if the tracking request later fails.
     this.#views.get(ad)?.onViewed?.();

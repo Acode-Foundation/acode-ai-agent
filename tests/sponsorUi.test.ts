@@ -1123,6 +1123,61 @@ test("the real SDK view starts the cooldown after dwell, even if impression deli
   expect(budget.claim("chat:second")).toBe(300_000);
 });
 
+test("an incomplete consent read after dwell retries instead of dropping the impression", async () => {
+  setSponsorConsent("allowed");
+  const integration =
+    await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");
+  const native = { canRequestAds: true, consentStatus: "notRequired" };
+  const getState = vi.fn(async () => native);
+  vi.stubGlobal("admob", { privacy: { getState } });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/request")
+        ? Response.json({
+            request_id: "retry-impression",
+            ad: { ...ad, render_url: "/render", impression_url: "/impression" },
+          })
+        : new Response(null, { status: 204 }),
+    ),
+  );
+  const result = await integration.loadSponsor(["Hosting"], new AbortController().signal, {
+    maxHeight: 72,
+    maxWidth: 320,
+  });
+  expect(result).toBeTruthy();
+  const { EloSDK } = await import("@elo-ads/web-sdk/core");
+  const delivered = vi.spyOn(EloSDK.prototype, "trackImpression").mockResolvedValue(true);
+  vi.useFakeTimers();
+  let intersect!: (ratio: number) => void;
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(callback: (entries: object[]) => void) {
+        intersect = (ratio) => callback([{ isIntersecting: ratio > 0, intersectionRatio: ratio }]);
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const placement = { chatId: "chat", turnId: "first", sponsor: result! };
+  expect(budget.claim("chat:first")).toBe(0);
+  budget.add(placement);
+  const viewed = vi.spyOn(budget, "viewed");
+  await act(async () => render(h(SponsoredCard, { placement, budget }), root));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(root.querySelector(".sponsor-card a")).toBeTruthy();
+  // The bridge fails once while the card stays in view; the SDK will not re-arm its dwell.
+  getState.mockRejectedValueOnce(new Error("Bridge busy"));
+  intersect(0.5);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(delivered).not.toHaveBeenCalled();
+  expect(viewed).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(delivered).toHaveBeenCalledOnce();
+  expect(viewed).toHaveBeenCalledExactlyOnceWith(placement);
+});
+
 test("a native consent change without a lifecycle event suppresses impression and click notices", async () => {
   const integration =
     await vi.importActual<typeof import("../src/suggestions/elo")>("../src/suggestions/elo");

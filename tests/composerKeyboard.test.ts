@@ -51,6 +51,18 @@ test("normal IME is scoped to prompt focus and cleanup restores the preference",
   expect(modes()).toHaveLength(2);
 });
 
+test("an editor already in NORMAL mode keeps the focused connection", () => {
+  settings.keyboardMode = "NORMAL";
+  const blurred = vi.fn();
+  input.addEventListener("blur", blurred);
+  input.focus();
+  input.blur();
+  input.focus();
+  expect(modes()).toEqual([]);
+  expect(blurred).toHaveBeenCalledOnce(); // only the explicit blur above
+  expect((input.getRootNode() as ShadowRoot).activeElement).toBe(input);
+});
+
 test("a late native acknowledgement cannot steal focus back after blur", () => {
   input.focus();
   const other = document.createElement("input");
