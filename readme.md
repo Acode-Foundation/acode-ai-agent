@@ -2,7 +2,7 @@
 
 A coding agent for [Acode](https://acode.app). It opens as an editor tab, reads and edits your project, searches the web, and runs shell commands on Terminal-backed folders. You connect your own model provider.
 
-The agent core comes from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-durable` and `@earendil-works/pi-ai` 1.0.4): providers, durable sessions, compaction, queues, retries, and the `read`, `write`, `edit` and `bash` tools. This plugin adds the Acode side: the editor UI, the workspace sandbox, approvals, and everything needed to run in an Android WebView without Node.
+The agent core comes from [Pi](https://github.com/earendil-works/pi) (`@earendil-works/pi-durable` and `@earendil-works/pi-ai` 1.5.2): providers, durable sessions, compaction, queues, retries, and the `read`, `write`, `edit` and `bash` tools. This plugin adds the Acode side: the editor UI, the workspace sandbox, approvals, and everything needed to run in an Android WebView without Node.
 
 If you use Pi on a desktop, most of it carries over:
 
@@ -47,6 +47,8 @@ Acode commands:
 | `AI Agent: Open`               | Open the agent tab                           |
 | `AI Agent: New conversation`   | Start a session in the current folder        |
 | `AI Agent: New Random project` | Create a starter project in Home and open it |
+
+In the sidebar, **Spin up new session** suggests a project name. Keep it or enter your own, then confirm to create the folder in Home and start its first session. Cancel dismisses the prompt.
 
 Sessions are stored per project. The sidebar lists and searches them and can open one in its own tab.
 
@@ -279,48 +281,17 @@ Folder walks on remote storage are sequential and capped (200 files by default, 
 - `fetch_content` refuses localhost, private networks and URLs with embedded credentials.
 - A run keeps going when the app is in the background. If Android kills the app, the chat offers to resume from the last saved step.
 
-## Extension API
+### Sponsored suggestions
 
-Other Acode plugins can extend the agent once it has loaded:
+Configured builds can show an occasional **Sponsored · Elo** card to users without Acode Pro, after they allow sponsored suggestions. Turn this off in **⋯ → Sponsored suggestions**. Provider subscriptions and API keys do not determine Acode Pro status.
 
-```js
-const runtime = acode.require("acode.ai.agent.runtime");
+When an eligible ad request is about to start, the current prompt and up to four recent user prompts from the same chat are classified locally, with the newest task taking priority. The ad request contains up to three predefined task topics (for example, “Web development”), never the chat transcript, source code, attachments, tool output, or account details. Elo also receives device/network information and an anonymous advertising identifier. Ads stay outside model context and saved chats. A missing ad or failed network request leaves chat working normally.
 
-runtime.registerTool(myPiAgentTool);
-runtime.registerTool(myRarelyUsedTool, { exposure: "deferred" });
-runtime.registerProvider(myPiProvider);
-runtime.registerContext("my-plugin:context", async () => "Extra project context");
-runtime.registerFeature({
-  id: "my-plugin:feature",
-  label: "Feature",
-  description: "Declared capability",
-  available: ({ workspace }) => Boolean(workspace),
-});
-runtime.open();
-runtime.selectProvider("openrouter");
-```
+Suggestions appear as a compact card above the message input after you opt in, stay through the reply, and hide while you compose. You can dismiss them or turn them off in AI settings. If Acode cannot supply the required advertising consent signals, suggestions stay off. Turning suggestions off clears advertising identities and cached cards.
 
-- `registerTool` takes a Pi durable tool (`defineTool` from `@earendil-works/pi-durable`, with `execute(args, api, context)`). It applies to running chats immediately. With `{ exposure: "deferred" }` the tool is loaded through `tool_search` instead of sent with every request; use it for large or rarely needed tools.
-- `registerProvider` takes a Pi provider. Open sessions pick it up.
-- `registerContext` adds a section to the system prompt, rebuilt before each request and re-sent only when it changes.
-- `registerFeature` only records metadata for now and isn't shown in the UI.
+## Contributing
 
-Each `register*` call returns a function that unregisters it. Tools have to come from another Acode plugin; the agent never evaluates project JavaScript.
-
-## Development
-
-```sh
-npm install
-npm run typecheck
-npm test
-npm run build
-```
-
-`npm run build` typechecks, bundles for Chrome 90 WebView, rejects Node imports, enforces a 2.5 MB limit on `dist/main.js`, and writes `plugin.zip`.
-
-`npm run dev` serves on port 3000 and rebuilds on change for plugin reload.
-
-The code must stay WebView-compatible: no Node built-ins, child processes, IPC or process `cwd`.
+See [contributing.md](https://github.com/Acode-Foundation/acode-ai-agent/blob/main/contributing.md) for development setup, the extension API, advertising configuration, and release checks.
 
 ## License
 

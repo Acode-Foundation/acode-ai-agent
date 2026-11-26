@@ -31,6 +31,7 @@ import {
 } from "../platform/deviceImage";
 import { attachmentFromMediaFile, pickAcodeFile } from "../platform/deviceFile";
 import { pickMediaFile } from "../platform/mediaPicker";
+import { bindPromptKeyboard } from "./composerKeyboard";
 import { Sheet } from "./Sheet";
 import { imageContentFromFile } from "../platform/promptImages";
 import { fileDir, fileName, type MentionFile } from "../workspace/fileMentions";
@@ -89,6 +90,7 @@ type Props = {
   contextWindow?: number;
   queued: QueuedPrompt[];
   onFocusComposer: () => void;
+  onDraftChange?: (hasDraft: boolean) => void;
   onSubmit: (draft: ComposerDraft, mode: "steer" | "followUp") => Promise<void>;
   /** Set while the draft is an earlier prompt being edited; sending replaces that prompt. */
   editing?: { onCancel: () => void };
@@ -103,6 +105,9 @@ type Props = {
 
 export const Composer = forwardRef<ComposerHandle, Props>(function Composer(props, ref) {
   const editor = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!props.disabled && editor.current) return bindPromptKeyboard(editor.current);
+  }, [props.disabled]);
   const attachments = useRef(new Map<string, DraftImage | DraftFile>());
   const [empty, setEmpty] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -125,6 +130,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
     0,
     props.autocompleteMaxVisible,
   );
+
+  useLayoutEffect(() => {
+    props.onDraftChange?.(!empty);
+  }, [empty, props.onDraftChange]);
 
   const sync = useCallback(() => {
     const root = editor.current;
@@ -480,7 +489,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(prop
               aria-label="Message"
               inputMode="text"
               enterkeyhint="enter"
-              spellcheck={false}
+              spellcheck={true}
+              autocorrect="on"
               onInput={refresh}
               onKeyUp={refresh}
               onCompositionEnd={refresh}

@@ -173,10 +173,14 @@ class AcodeAiAgentPlugin {
     file.onclose = () => {
       unmountApp(root);
       this.#tabs.delete(tabId);
+      const chatId = record.binding.chatId;
+      if (chatId && ![...this.#tabs.values()].some((tab) => tab.binding.chatId === chatId))
+        controller.sponsorBudget.releaseOptIn(chatId);
     };
     mountApp(
       root,
       controller,
+      () => editorManager.activeFile === file,
       (activeChatId) => {
         if (editorManager.activeFile !== file) return;
         record.binding.chatId = activeChatId;
@@ -332,7 +336,7 @@ class AcodeAiAgentPlugin {
             this.open();
             await controller.newConversation(workspaceId);
           },
-          onCreateProject: () => this.#createRandomProject(),
+          onCreateProject: (name) => this.#createRandomProject(name),
           onDeleteSession: (chatId) => this.#deleteSession(chatId),
         });
       },
@@ -350,10 +354,10 @@ class AcodeAiAgentPlugin {
     this.#sidebarApps = null;
   }
 
-  async #createRandomProject() {
+  async #createRandomProject(name?: string) {
     const controller = this.#controller;
     if (!controller) throw new Error("The AI Agent is still starting.");
-    const workspace = await createHomeProject();
+    const workspace = await createHomeProject(name);
     this.open();
     await controller.selectWorkspace(workspace.id);
     return workspace;

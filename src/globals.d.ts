@@ -32,6 +32,7 @@ interface SDcard {
 
 interface SystemPlugin {
   getFilesDir(success: (dir: string) => void, error?: (err: unknown) => void): void;
+  setInputType?(mode: string, success: () => void, error: (err: unknown) => void): void;
 }
 
 interface BuildInfoPlugin {

@@ -1,6 +1,6 @@
 {
   "name": "acode-ai-agent",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Coding agent for Acode",
   "license": "MIT",
   "author": "Acode Foundation",
@@ -26,9 +26,11 @@
     "@earendil-works/pi-codemode": "1.5.2",
     "@earendil-works/pi-durable": "1.5.2",
     "@earendil-works/pi-schema": "1.5.2",
+    "@elo-ads/web-sdk": "0.8.1",
     "acode-plugin-types": "^1.12.9",
     "diff": "8.0.4",
     "dompurify": "^3.4.17",
+    "js-cookie": "^3.0.8",
     "lucide-preact": "^1.61.0",
     "marked": "^18.1.1",
     "motion": "^13.5.1",
@@ -39,6 +41,7 @@
   },
   "devDependencies": {
     "@types/dompurify": "^3.2.0",
+    "@types/js-cookie": "^3.0.6",
     "@types/picomatch": "^4.0.3",
     "esbuild": "^0.28.2",
     "fake-indexeddb": "^6.2.6",

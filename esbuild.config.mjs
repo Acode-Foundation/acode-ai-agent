@@ -3,6 +3,12 @@ import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 
+try {
+  process.loadEnvFile?.(".env.local");
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+
 function serveUrls(hosts, port) {
   const names = new Set(
     (hosts?.length ? hosts : ["127.0.0.1"]).flatMap((host) => {
@@ -102,6 +108,11 @@ const buildConfig = {
   format: "iife",
   jsx: "automatic",
   jsxImportSource: "preact",
+  define: {
+    ELO_PUBLISHER_ID: JSON.stringify(process.env.ELO_PUBLISHER_ID ?? ""),
+    ELO_AD_UNIT_ID: JSON.stringify(process.env.ELO_AD_UNIT_ID ?? ""),
+    ELO_IOS_AD_UNIT_ID: JSON.stringify(process.env.ELO_IOS_AD_UNIT_ID ?? ""),
+  },
   logLevel: "info",
   color: true,
   metafile: true,

@@ -58,15 +58,19 @@ import { showToast } from "../platform/toast";
 import { useProviderCredential } from "./useProviderCredential";
 import { CHATGPT_USAGE_URL, type ChatGPTRegistration } from "../providers/chatgptOAuth";
 import { AgentIcon } from "./AgentIcon";
+import { useSponsor } from "./useSponsor";
+import { SponsoredCard, SponsorOptIn } from "./SponsoredCard";
+import { SponsorSettings } from "./SponsorSettings";
 
 type Props = {
   controller: AgentController;
+  isTabActive(): boolean;
   onActiveChatChange?: (chatId: string) => void;
   /** Requests from the editor and terminal menus. */
   inbox?: Mailbox<ComposerRequest>;
 };
 
-export function App({ controller, onActiveChatChange, inbox }: Props) {
+export function App({ controller, isTabActive, onActiveChatChange, inbox }: Props) {
   const [state, setState] = useState<PublicAgentState>(controller.state);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [piSettingsOpen, setPiSettingsOpen] = useState(false);
@@ -85,6 +89,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
   const [retrying, setRetrying] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [composing, setComposing] = useState(false);
   const composerRef = useRef<ComposerHandle>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   // File rows use Acode's own (or the icon theme's) file icons inside the tab's shadow root.
@@ -105,7 +110,6 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     state.settings.customEndpoints,
   );
   const provider = controller.listProviders().find((item) => item.id === state.settings.providerId);
-  const providerName = provider?.name ?? state.settings.providerId;
   const running = state.status === "running";
   const waitingOnAsk = Boolean(state.questionnaire);
   const workingLabel = state.retry
@@ -149,6 +153,28 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
     entryId: string;
     saved: ComposerDraft;
   }>();
+  const sponsor = useSponsor(
+    scrollRef,
+    state.activeChatId,
+    running,
+    turns,
+    Boolean(
+      settingsOpen ||
+      piSettingsOpen ||
+      configView ||
+      chatsOpen ||
+      commandPanel ||
+      treeMode ||
+      preview ||
+      tasksOpen ||
+      state.approval ||
+      state.questionnaire ||
+      editing,
+    ),
+    isTabActive,
+    controller.sponsorBudget,
+    composing,
+  );
   useEffect(() => setEditing(undefined), [state.activeChatId]);
 
   const send = useCallback(
@@ -660,16 +686,17 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
 
       <div class="agent-dock">
         <div class="agent-dock-panels">
-          {connected === false &&
+          {provider &&
+            connected === false &&
             !state.settings.customEndpoints.some(
               (endpoint) => endpoint.id === state.settings.providerId,
             ) && (
               <div class="provider-setup">
                 <AgentIcon size={22} />
                 <div>
-                  <b>Connect to {providerName}</b>
+                  <b>Connect to {provider.name}</b>
                   <span>
-                    {provider?.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
+                    {provider.subscriptionLabel ? "Sign in" : "Add an API key"} to start chatting.
                   </span>
                 </div>
                 <button type="button" onClick={() => setSettingsOpen(true)}>
@@ -700,6 +727,10 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           )}
         </div>
 
+        {sponsor.placement && (
+          <SponsoredCard placement={sponsor.placement} budget={controller.sponsorBudget} />
+        )}
+        {sponsor.showOptIn && <SponsorOptIn cardRef={sponsor.optInRef} />}
         <Composer
           ref={composerRef}
           controller={controller}
@@ -724,6 +755,7 @@ export function App({ controller, onActiveChatChange, inbox }: Props) {
           contextWindow={state.model?.contextWindow}
           queued={state.queued}
           onFocusComposer={captureThread}
+          onDraftChange={setComposing}
           onSubmit={send}
           onStop={() => void stop()}
           onToast={showToast}
@@ -1447,6 +1479,7 @@ function SettingsSheet({
                 }
               />
             </label>
+            <SponsorSettings />
             <button
               class="config-nav"
               type="button"

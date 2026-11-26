@@ -1,6 +1,8 @@
 import type { AuthEvent, AuthPrompt, ImageContent, Model, Provider } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import type { ToolExposure } from "../tools/toolSearch";
+import { sponsorIdentityCleared, sponsorPreferencesChanged } from "../suggestions/preferences";
+import { SponsorBudget } from "../suggestions/session";
 import { Signal } from "../core/events";
 import { BUILT_IN_SLASH_COMMANDS } from "../core/slashCommands";
 import { ExtensionRegistry, type ContextContribution } from "../core/extensionRegistry";
@@ -49,6 +51,7 @@ import { subscribeToSourceFiles } from "../workspace/sourceFile";
 
 export class AgentController {
   readonly changes = new Signal<PublicAgentState>();
+  readonly sponsorBudget = new SponsorBudget();
   readonly settings = new SettingsStore();
   readonly credentials: PortableCredentialStore;
   readonly providers: ProviderRegistry;
@@ -98,6 +101,8 @@ export class AgentController {
       this.#emit();
     });
     this.#hostUnsubscribers = [
+      sponsorPreferencesChanged.subscribe((value) => this.sponsorBudget.consentChanged(value)),
+      sponsorIdentityCleared.subscribe(() => this.sponsorBudget.clearCards()),
       subscribeToSidebarFolders(() => {
         void this.#syncWorkspaces().catch((error) => {
           console.warn("AI workspace list could not be refreshed", error);
@@ -497,6 +502,7 @@ export class AgentController {
     this.#sessions.delete(chatId);
     await session?.dispose();
     await this.#sessionStore.remove(chatId);
+    this.sponsorBudget.forgetChat(chatId);
     if (this.#activeId === chatId) {
       this.#activeId = undefined;
       const next = this.#sessionStore.list()[0];

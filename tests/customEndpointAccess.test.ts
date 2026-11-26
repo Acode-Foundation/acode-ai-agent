@@ -55,7 +55,7 @@ afterEach(async () => {
 });
 
 async function openAccess() {
-  await act(() => render(h(App, { controller }), root));
+  await act(() => render(h(App, { controller, isTabActive: () => true }), root));
   await act(() => root.querySelector<HTMLButtonElement>('[aria-label="Provider access"]')!.click());
   await vi.waitFor(() => expect(root.textContent).not.toContain("Checking credentials…"));
 }

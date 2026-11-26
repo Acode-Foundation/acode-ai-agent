@@ -1,12 +1,13 @@
 .acode-agent-sidebar-host {
   --as-bg: var(--primary-color, #1b1e24);
   --as-surface: var(--secondary-color, #121418);
+  --as-surface-fg: var(--secondary-text-color, #e8eaed);
   --as-fg: var(--primary-text-color, #e8eaed);
-  --as-muted: var(--secondary-text-color, #8b919a);
+  --as-muted: var(--as-fg);
   --as-border: var(--border-color, #343941);
   --as-accent: var(--active-color, #6aa4ff);
-  --as-button: var(--button-background, var(--as-accent));
-  --as-button-text: var(--button-text, #0c1118);
+  --as-button: var(--button-background-color, var(--as-accent));
+  --as-button-text: var(--button-text-color, #fff);
   --as-danger: var(--error-text-color, #d46a6a);
   height: 100%;
   min-height: 0;
@@ -14,13 +15,17 @@
   color: var(--as-fg);
   font: inherit;
 }
+@supports (color: color-mix(in srgb, black, white)) {
+  .acode-agent-sidebar-host {
+    --as-muted: color-mix(in srgb, var(--as-fg) 85%, var(--as-bg));
+  }
+}
 .acode-agent-sidebar-host *,
 .acode-agent-sidebar-host *::before,
 .acode-agent-sidebar-host *::after {
   box-sizing: border-box;
 }
-.acode-agent-sidebar-host button,
-.acode-agent-sidebar-host input {
+.acode-agent-sidebar-host :where(button, input) {
   border: 0;
   color: inherit;
   font: inherit;
@@ -32,6 +37,13 @@
 .acode-agent-sidebar-host svg {
   display: block;
   flex: none;
+}
+/* Cards on the secondary surface need its matching foreground, not sidebar text. */
+.as-create-project,
+.as-scope {
+  --as-fg: var(--as-surface-fg);
+  --as-muted: var(--as-fg);
+  color: var(--as-fg);
 }
 .acode-agent-sidebar {
   position: relative;
@@ -147,7 +159,7 @@
   padding: 1px 5px;
   border-radius: 999px;
   background: var(--as-surface);
-  color: var(--as-muted);
+  color: var(--as-surface-fg);
   font-size: 8px;
   text-align: center;
 }
@@ -354,6 +366,7 @@
   outline: none !important;
   box-shadow: none !important;
   background: transparent !important;
+  color: var(--as-fg);
   font-size: 10px;
 }
 .as-search input::placeholder {
@@ -374,6 +387,7 @@
 .as-session-list {
   flex: 1;
   min-height: 0;
+  margin-inline-end: -4px;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -385,12 +399,12 @@
 }
 .as-session-open {
   display: grid;
-  grid-template-columns: 9px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 5px;
   min-width: 0;
   min-height: 39px;
-  padding: 4px 3px 4px 5px;
+  padding: 4px 0 4px 3px;
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -399,12 +413,16 @@
   color: var(--as-muted);
 }
 .as-status {
+  display: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  opacity: 0;
+}
+.as-session.running .as-session-open {
+  grid-template-columns: 6px minmax(0, 1fr);
 }
 .as-session.running .as-status {
+  display: block;
   background: var(--as-accent);
   opacity: 1;
   animation: as-pulse 1.5s ease-in-out infinite;
@@ -412,14 +430,13 @@
 .as-session-actions {
   display: flex;
   align-items: center;
-  padding-right: 2px;
 }
 .as-session-actions button {
   display: grid;
   place-items: center;
-  min-width: 25px;
+  min-width: 20px;
   height: 25px;
-  padding: 0 4px;
+  padding: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--as-muted);
@@ -428,14 +445,8 @@
 .as-session-actions button:hover {
   color: var(--as-accent);
 }
-.as-session-actions .as-delete:hover,
-.as-session-actions .as-delete.confirm {
+.as-session-actions .as-delete:hover {
   color: var(--as-danger);
-}
-.as-delete.confirm {
-  min-width: 39px;
-  font-size: 8px;
-  font-weight: 700;
 }
 .as-empty-sessions {
   display: grid;

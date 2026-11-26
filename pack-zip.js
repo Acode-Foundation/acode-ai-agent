@@ -27,6 +27,18 @@ if (fs.existsSync(licenseFile)) {
   zip.file("LICENSE", fs.readFileSync(licenseFile));
 }
 
+for (const file of ["LICENSE", "NOTICE"]) {
+  zip.file(
+    `licenses/elo/${file}`,
+    fs.readFileSync(path.join(__dirname, "node_modules/@elo-ads/web-sdk", file)),
+  );
+}
+
+zip.file(
+  "licenses/js-cookie/LICENSE",
+  fs.readFileSync(path.join(__dirname, "node_modules/js-cookie/LICENSE")),
+);
+
 if (readmeDotMd) {
   zip.file(json.readme || path.basename(readmeDotMd), fs.readFileSync(readmeDotMd));
 }

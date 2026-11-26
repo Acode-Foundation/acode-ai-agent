@@ -25,7 +25,7 @@ const NOUNS = [
   "relay",
   "studio",
 ] as const;
-const FALLBACK_TERMINAL_HOME = "file:///data/user/0/com.foxdebug.acode/files/public/";
+const HOME_DIRECTORY = "public";
 const WORKSPACE_WAIT_MS = 12_000;
 
 export function randomProjectName(random: () => number = Math.random): string {
@@ -36,48 +36,68 @@ export function randomProjectName(random: () => number = Math.random): string {
   return `${adj}-${noun}-${suffix}`;
 }
 
-export async function terminalHomeUrl(): Promise<string> {
+function validProjectName(value: string): boolean {
+  const name = value.trim();
+  // Acode uses the folder name as a single file URL segment.
+  return (
+    !!name &&
+    name !== "." &&
+    name !== ".." &&
+    !/[\\/%?#:]/.test(name) &&
+    new TextEncoder().encode(name).length <= 255 &&
+    !Array.from(name).some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+  );
+}
+
+export async function promptProjectName(): Promise<string | null> {
+  // Acode pushes this entry synchronously and removes it on Back, even on
+  // hosts where Back closes the dialog without settling its promise.
+  if (acode.require("actionStack")?.has?.("prompt")) return null;
+  const options = { required: true, capitalize: false, test: validProjectName };
+  return acode.prompt("New project name", randomProjectName(), "text", options);
+}
+
+export async function terminalFilesUrl(): Promise<string> {
   if (typeof globalThis.system?.getFilesDir === "function") {
     try {
       const filesDir = await new Promise<string>((resolve, reject) =>
         globalThis.system?.getFilesDir(resolve, reject),
       );
-      if (filesDir) return acode.joinUrl(`file://${filesDir}`, "public");
+      if (filesDir) return `file://${filesDir}`;
     } catch {}
   }
 
-  if (typeof globalThis.BuildInfo?.packageName === "string") {
-    return `file:///data/user/0/${globalThis.BuildInfo.packageName}/files/public/`;
-  }
-
-  return FALLBACK_TERMINAL_HOME;
+  const packageName = globalThis.BuildInfo?.packageName ?? "com.foxdebug.acode";
+  return `file:///data/user/0/${packageName}/files`;
 }
 
 export async function createHomeProject(requestedName?: string): Promise<WorkspaceInfo> {
-  let name = requestedName ?? randomProjectName();
+  let name = requestedName?.trim() ?? randomProjectName();
+  if (!validProjectName(name)) throw new Error("Enter a valid project folder name.");
   const fs = acode.require("fs") ?? acode.fsOperation;
   const openFolder = acode.require("openFolder") ?? acode.require("openfolder");
   if (!fs || !openFolder) throw new Error("Acode filesystem and Open Folder APIs are required.");
 
-  const homeUrl = await terminalHomeUrl();
-  let projectUrl = acode.joinUrl(homeUrl, name);
-
-  for (let i = 0; i < 5; i++) {
-    try {
-      if (!(await fs(projectUrl).exists())) {
-        await fs(homeUrl).createDirectory(name);
-        break;
-      }
-    } catch {}
-    if (requestedName) throw new Error(`Project ${name} already exists.`);
-    name = randomProjectName();
-    projectUrl = acode.joinUrl(homeUrl, name);
+  const filesUrl = await terminalFilesUrl();
+  const homeUrl = acode.joinUrl(filesUrl, HOME_DIRECTORY);
+  // On a fresh installation the terminal may not have created Home yet.
+  const home = fs(homeUrl);
+  if (!(await home.exists())) {
+    await fs(filesUrl).createDirectory(HOME_DIRECTORY);
   }
-
-  const before = new Set(getAvailableWorkspaces().map((w) => w.id));
-  const waiting = waitForWorkspace(name, projectUrl, before);
-  openFolder(projectUrl, { name, saveState: true });
-  return waiting;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const projectUrl = acode.joinUrl(homeUrl, name);
+    if (await fs(projectUrl).exists()) {
+      if (requestedName !== undefined) throw new Error(`Project ${name} already exists.`);
+      name = randomProjectName();
+      continue;
+    }
+    await home.createDirectory(name);
+    const before = new Set(getAvailableWorkspaces().map((w) => w.id));
+    openFolder(projectUrl, { name, saveState: true });
+    return waitForWorkspace(name, projectUrl, before);
+  }
+  throw new Error("Could not find an unused project name.");
 }
 
 export function formatPlatformError(error: unknown): string {
@@ -119,7 +139,7 @@ function waitForWorkspace(
     };
 
     const unsubscribe = subscribeToSidebarFolders(check);
-    const timer = setInterval(check, 100);
+    const timer = setInterval(check, 250);
     const timeout = setTimeout(() => {
       cleanup();
       reject(new Error(`Project created at ${name}, but Acode did not add it to the sidebar.`));

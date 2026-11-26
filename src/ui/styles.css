@@ -70,7 +70,236 @@
 .agent-dock > .composer {
   flex: none;
 }
+.agent-dock > .sponsor {
+  flex: none;
+  margin: 0 10px;
+}
 
+.sponsor-thumbnail {
+  display: none;
+  position: absolute;
+  inset-inline-start: max(10px, var(--sponsor-inset, 0px));
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--line);
+  color: var(--fg);
+  pointer-events: none;
+}
+.sponsor-no-image .sponsor-thumbnail {
+  display: grid;
+  place-items: center;
+}
+.sponsor-no-image .sponsor-card.elo-ad-strip > a {
+  padding-inline-start: max(38px, calc(48px - var(--sponsor-inset, 0px))) !important;
+}
+
+.sponsor,
+.sponsor-consent {
+  color: var(--fg);
+  font-size: 13px;
+}
+.sponsor {
+  margin-top: 14px;
+}
+.sponsor-body {
+  position: relative;
+  isolation: isolate;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .sponsor:not([hidden]) {
+    animation: sponsor-appear 150ms ease-out;
+  }
+  @keyframes sponsor-appear {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+.sponsor[hidden] {
+  display: none;
+}
+/* Paint the full padded frame on its own layer in the Android WebView. */
+.sponsor-body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  transform: translateZ(0);
+}
+.sponsor .sponsor-dismiss {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  z-index: 1;
+  width: 44px;
+  height: 44px;
+  place-items: start end;
+  padding: 6px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.sponsor .sponsor-dismiss:is(:hover, :focus-visible) {
+  color: var(--fg);
+  background: var(--bg);
+}
+.sponsor-consent {
+  margin: 4px 10px 0;
+  max-height: 34vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+.sponsor-consent header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-block: -8px -4px;
+}
+.sponsor-consent strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+}
+.sponsor-consent strong svg {
+  color: var(--active-color, var(--accent));
+}
+.sponsor-consent p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.sponsor-card {
+  display: flow-root;
+  /* The outer frame includes both the SDK content and our dismiss control. */
+  box-shadow: none !important;
+}
+.sponsor-card > a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 12px;
+}
+.sponsor-card.elo-ad-card > a > :first-child {
+  gap: 8px !important;
+  min-height: 44px !important;
+  padding-inline-end: 32px;
+}
+.sponsor-card .elo-ad-chevron {
+  display: none;
+}
+.sponsor-card .elo-ad-description {
+  font-size: 13px !important;
+  line-height: 1.4 !important;
+  overflow-wrap: anywhere;
+}
+.sponsor-card .elo-ad-image {
+  width: 32px !important;
+  height: 32px !important;
+}
+@supports (color: color-mix(in srgb, black, transparent)) {
+  .sponsor .sponsor-dismiss:is(:hover, :focus-visible) {
+    background: color-mix(in srgb, var(--fg) 7%, transparent);
+  }
+}
+.sponsor-card.elo-ad-strip > a {
+  /* Android text scaling enlarges copy independently of the SDK's fixed height. */
+  height: auto !important;
+  min-height: max(0px, calc(44px - 2 * var(--sponsor-inset, 0px)));
+  gap: 6px !important;
+  padding: max(0px, calc(8px - var(--sponsor-inset, 0px)))
+    max(0px, calc(10px - var(--sponsor-inset, 0px))) !important;
+}
+.sponsor-card.elo-ad-strip .elo-ad-title {
+  margin-inline-end: 34px;
+  line-height: 18px;
+}
+.sponsor-label:not(:empty) {
+  margin: 0 10px 3px;
+}
+.sponsor-label .elo-ad-sponsored {
+  display: block;
+  text-align: left;
+  font-size: 9px !important;
+  line-height: 12px;
+  color: var(--muted) !important;
+  opacity: 1 !important;
+}
+.sponsor-card.elo-ad-strip .elo-ad-description {
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+  margin-top: 2px !important;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal !important;
+}
+.sponsor-choices {
+  margin-top: 10px;
+}
+.sponsor-choices button {
+  min-height: 44px;
+}
+.sponsor-choices .primary:active {
+  background: var(--button-active-color, var(--accent));
+}
+.sponsor-consent .sponsor-privacy {
+  min-height: 44px;
+  padding: 0 4px;
+  background: transparent;
+  color: var(--link-text-color, var(--accent));
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.sponsor-consent button:focus-visible {
+  outline: 2px solid var(--active-color, var(--accent));
+  outline-offset: 2px;
+}
+.sponsor-disclosure {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sponsor-settings .sponsor-disclosure {
+  margin: 0 0 12px;
+}
+
+.agent-header,
+.conversation,
+.agent-dock > .sponsor,
+.sponsor-consent,
+.composer {
+  /* These chat controls sit on Acode's secondary canvas. In Legacy, primary
+     text is white, the same color as that canvas. */
+  --fg: var(--secondary-text-color, var(--primary-text-color, #e8eaed));
+  --surface: var(--popup-background-color, var(--bg));
+  color: var(--fg);
+}
+@supports (color: color-mix(in srgb, black, white)) {
+  .agent-header,
+  .conversation,
+  .agent-dock > .sponsor,
+  .sponsor-consent,
+  .composer {
+    --muted: color-mix(in srgb, var(--fg) 80%, var(--bg));
+  }
+}
 .agent-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 36px 36px;
@@ -125,6 +354,8 @@
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface);
+  /* Keep the scrolling dock from painting a seam through the banner on Android. */
+  transform: translateZ(0);
 }
 .provider-setup > div {
   flex: 1;
@@ -171,7 +402,7 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 16px 14px 20px;
+  padding: 16px 14px 8px;
   overscroll-behavior: contain;
   overflow-anchor: none;
   -webkit-overflow-scrolling: touch;
@@ -201,7 +432,8 @@
   place-items: center;
   width: 36px;
   height: 36px;
-  margin: 0 auto;
+  /* Float over the transcript without reserving a row when hidden. */
+  margin: -36px auto 0;
   border: 1px solid var(--line);
   border-radius: 50%;
   background: var(--surface);
@@ -236,11 +468,13 @@
   max-width: 100%;
 }
 .bubble.user {
+  --accent-ink: var(--fg);
   align-self: flex-end;
   max-width: min(88%, 560px);
   padding: 9px 12px;
   border-radius: 14px 14px 4px 14px;
-  background: var(--accent);
+  background: var(--bg);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg));
   color: var(--accent-ink);
 }
 .bubble.user p,
@@ -292,7 +526,6 @@
   background: none;
   color: inherit;
   white-space: nowrap;
-  opacity: 0.72;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -324,7 +557,7 @@
     opacity: 1;
   }
   .message-time:hover {
-    opacity: 1;
+    color: var(--fg);
   }
 }
 @media (pointer: coarse) {
@@ -1286,7 +1519,7 @@
   margin: 14px 0;
 }
 .md a {
-  color: var(--accent);
+  color: var(--link-text-color, var(--accent));
   text-decoration: underline;
   text-underline-offset: 2px;
   text-decoration-thickness: 1px;
@@ -1334,7 +1567,7 @@
     monospace;
   padding: 1px 5px;
   border-radius: 4px;
-  color: var(--accent);
+  color: var(--fg);
   background: color-mix(in srgb, var(--fg) 6%, var(--surface));
 }
 .md-code {
@@ -2306,6 +2539,8 @@
   background: transparent;
 }
 .composer-dock {
+  --fg: var(--popup-text-color, var(--secondary-text-color, #e8eaed));
+  color: var(--fg);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4712,6 +4947,10 @@ label.project-select:hover {
   }
   .composer {
     padding-inline: max(16px, calc((100% - 840px) / 2));
+  }
+  .agent-dock > .sponsor,
+  .sponsor-consent {
+    margin-inline: max(16px, calc((100% - 840px) / 2));
   }
   .approval,
   .task-tray,

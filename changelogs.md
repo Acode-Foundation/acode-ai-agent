@@ -1,5 +1,6 @@
-# Unreleased
+# 0.6.0
 
+- Added: opt-in sponsored suggestions for free Acode users, powered by Elo. Ads appear only with device consent, and ad requests carry only broad topics classified on the device, never your messages, code or files.
 - Fixed: custom endpoints can run without an API key, with key entry and removal available in Provider access.
 - Fixed: editing an endpoint reuses its saved key for model discovery only when the base URL is unchanged.
 - Fixed: reusing a saved key for model discovery no longer overwrites later key changes; changing the endpoint URL reports when its old key is removed.

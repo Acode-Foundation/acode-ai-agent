@@ -10,7 +10,7 @@ type SidebarActions = {
   onOpenSessionInNewTab(chatId: string): Promise<void>;
   onNewSession(workspaceId: string): Promise<void>;
   onDeleteSession(chatId: string): Promise<void>;
-  onCreateProject(): Promise<WorkspaceInfo>;
+  onCreateProject(name: string): Promise<WorkspaceInfo>;
 };
 
 export function mountSidebar(
