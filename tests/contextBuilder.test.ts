@@ -10,3 +10,10 @@ test("adds the codemode guideline only when the tool is offered", () => {
   );
   expect(preamble(workspace)).not.toContain("codemode");
 });
+
+test("tells the model when the workspace has no shell", () => {
+  expect(preamble(workspace, { shell: false })).toContain("no shell");
+  expect(preamble(workspace, { shell: false })).toContain("acode_ui");
+  expect(preamble(workspace, { shell: true })).not.toContain("no shell");
+  expect(preamble(workspace)).not.toContain("no shell");
+});

@@ -130,6 +130,11 @@ export class SponsorBudget {
     }
   }
 
+  /** Let a turn request again when its earlier attempt never left the device. */
+  unskip(key: string) {
+    this.#seen.delete(key);
+  }
+
   viewed(card: SponsorPlacement) {
     if (this.card(card.chatId) !== card || this.#viewed.has(card)) return;
     this.#viewed.add(card);
@@ -218,10 +223,10 @@ export class SponsorSession {
     const waiting =
       this.#running && !!turn?.streaming && !turn.answer && !turn.stopped && !turn.error;
     if (turn?.stopped || turn?.error || this.#request?.turnId !== turn?.id) this.#cancelRequest();
-    if (!this.deps.visible()) {
-      this.#cancelRequest();
-      return;
-    }
+    // Visibility decides whether a request may start, not whether a response
+    // Elo already served is thrown away. An in-flight request keeps its slot and
+    // its ad is cached for this turn, then shown when the view is visible again.
+    if (!this.deps.visible()) return;
     const cached = this.deps.budget.card(chatId);
     if (cached) {
       this.#waitTimer = setTimeout(() => this.refresh(), this.deps.budget.remaining(cached));
@@ -269,11 +274,15 @@ export class SponsorSession {
         this.#turn?.id === turnId &&
         !this.#turn.stopped &&
         !this.#turn.error &&
-        this.deps.visible() &&
         this.deps.eligible() &&
         this.deps.consent() === "allowed"
       ) {
         this.deps.budget.add({ chatId, turnId, sponsor });
+      } else if (!sponsor && !this.deps.visible()) {
+        // The view hid before fetchAds could run, so this turn never spent a
+        // request. Let it try again when the view returns instead of treating it
+        // as a filled, already-requested turn.
+        this.deps.budget.unskip(`${chatId}:${turnId}`);
       }
     } catch {
       // Advertising never changes the chat's status or reports an error to the user.

@@ -333,8 +333,9 @@ test.each(["covered", "inactive before switch notification"])(
     visible = false;
     if (reason === "covered") {
       session.refresh();
-      expect(signal.aborted).toBe(true);
-      visible = true;
+      // Hiding the view keeps the read pending but still stops the request before
+      // fetchAds, so a covered tab never sends one.
+      expect(signal.aborted).toBe(false);
     }
     finish(state);
     expect(await pending).toBeNull();

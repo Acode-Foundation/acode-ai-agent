@@ -11,7 +11,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("maps only Acode Terminal public and Alpine workspace roots", () => {
+test("maps terminal workspaces the Alpine proot can address", () => {
   expect(
     resolveTerminalWorkingDirectory(
       "content://com.foxdebug.acode.documents/tree/%2Fdata%2Fuser%2F0%2Fcom.foxdebug.acode%2Ffiles%2Fpublic::/data/user/0/com.foxdebug.acode/files/public/demo",
@@ -31,11 +31,27 @@ test("maps only Acode Terminal public and Alpine workspace roots", () => {
     ),
   ).toBe("/workspace");
   expect(
+    resolveTerminalWorkingDirectory("alpine://localhost/home/user/projects/amber-pixel-98"),
+  ).toBe("/home/user/projects/amber-pixel-98");
+  expect(resolveTerminalWorkingDirectory("alpine://localhost/")).toBe("/");
+  expect(resolveTerminalWorkingDirectory("file:///storage/emulated/0/project")).toBe(
+    "/storage/emulated/0/project",
+  );
+  expect(resolveTerminalWorkingDirectory("file:///sdcard/project")).toBe("/sdcard/project");
+  // Other apps' private storage is readable only through SAF, not the shell.
+  expect(
+    resolveTerminalWorkingDirectory(
+      "content://com.termux.documents/tree/%2Fdata%2Fdata%2Fcom.termux%2Ffiles%2Fhome::/data/data/com.termux/files/home/project",
+    ),
+  ).toBeUndefined();
+  expect(
+    resolveTerminalWorkingDirectory("file:///data/user/0/com.termux/files/home/project"),
+  ).toBeUndefined();
+  expect(
     resolveTerminalWorkingDirectory(
       "content://com.android.externalstorage.documents/tree/primary%3ADocuments",
     ),
   ).toBeUndefined();
-  expect(resolveTerminalWorkingDirectory("file:///sdcard/project")).toBeUndefined();
   expect(resolveTerminalWorkingDirectory("sftp://example.com/project")).toBeUndefined();
   expect(
     resolveTerminalWorkingDirectory(
@@ -43,13 +59,14 @@ test("maps only Acode Terminal public and Alpine workspace roots", () => {
     ),
   ).toBeUndefined();
   expect(
-    resolveTerminalWorkingDirectory("file:///data/user/0/another.app/files/public/project"),
-  ).toBeUndefined();
-  expect(
     resolveTerminalWorkingDirectory(
       "file:///data/user/0/com.foxdebug.acode/files/alpine/%2e%2e/databases",
     ),
   ).toBeUndefined();
+  expect(
+    resolveTerminalWorkingDirectory("alpine://localhost/home/../../etc/passwd"),
+  ).toBeUndefined();
+  expect(resolveTerminalWorkingDirectory("file:///storage/../data/secret")).toBeUndefined();
 });
 
 test("does not offer a shell outside terminal workspaces", () => {

@@ -17,13 +17,18 @@ export function systemPromptSections(options: {
   extensions: ExtensionRegistry;
   skills: () => readonly Skill[];
   deferredTools?: () => readonly string[];
+  shell?: boolean;
 }): PromptSection[] {
-  const { workspace, settings, extensions, skills, deferredTools } = options;
+  const { workspace, settings, extensions, skills, deferredTools, shell } = options;
   return [
     section(
       "preamble",
       () =>
-        preamble(workspace, { codemode: settings().codemode, deferred: deferredTools?.() ?? [] }),
+        preamble(workspace, {
+          codemode: settings().codemode,
+          deferred: deferredTools?.() ?? [],
+          shell,
+        }),
       {
         tag: false,
       },
@@ -37,7 +42,7 @@ export function systemPromptSections(options: {
 
 export function preamble(
   workspace: AcodeWorkspace,
-  tools: { codemode?: boolean; deferred?: readonly string[] } = {},
+  tools: { codemode?: boolean; deferred?: readonly string[]; shell?: boolean } = {},
 ): string {
   return [
     "You are Acode's in-editor coding agent, powered by the Pi agent runtime.",
@@ -48,6 +53,11 @@ export function preamble(
     "Prefer edit for focused changes and write for new files or deliberate whole-file rewrites.",
     "Never expose credentials, provider keys, hidden workspace URIs, or private values in tool results or responses.",
     `Workspace: ${workspace.info.name}. Storage: ${workspace.info.remote ? "remote; keep walks bounded and sequential" : workspace.info.scheme}.`,
+    ...(tools.shell === false
+      ? [
+          "This workspace has no shell, so the bash tool is unavailable. Do not open the terminal or use acode_ui or acode_run_command to type commands; say so in your reply and continue with the file tools.",
+        ]
+      : []),
     "Use web_search for current docs, APIs, package versions, and recent events instead of guessing. Follow with fetch_content when you need the full page. Cite source URLs.",
     "For 3+ step work, keep a live checklist with todo_write. Do not paste it into chat.",
     "When a decision is underspecified, ask with ask_user_question instead of guessing.",

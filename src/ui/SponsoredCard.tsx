@@ -15,6 +15,32 @@ import type { SponsorPlacement, SponsorBudget } from "../suggestions/session";
 import { openCustomTab } from "../platform/authTab";
 import { showToast } from "../platform/toast";
 
+// A native read that did not complete is not a refusal. Retry a bridge or
+// malformed read while the card is up; a deadline timeout will usually repeat,
+// so hide the card instead of spending another native round trip on it.
+const CONSENT_RETRIES = 2;
+const CONSENT_RETRY_MS = 500;
+
+function retriableConsent(result: Awaited<ReturnType<typeof readSponsorConsent>>): boolean {
+  return (
+    result.status === "unavailable" && result.reason !== "timeout" && result.reason !== "aborted"
+  );
+}
+
+function waitForRetry(ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const done = (value: boolean) => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", aborted);
+      resolve(value);
+    };
+    const aborted = () => done(false);
+    const timer = setTimeout(() => done(true), ms);
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+
 export function SponsoredCard({
   placement,
   budget,
@@ -77,6 +103,12 @@ export function SponsoredCard({
       let result: Awaited<ReturnType<typeof readSponsorConsent>>;
       try {
         result = await readSponsorConsent(current.signal);
+        for (let attempt = 0; attempt < CONSENT_RETRIES && retriableConsent(result); attempt++) {
+          if (document.hidden || !(await waitForRetry(CONSENT_RETRY_MS, current.signal))) break;
+          // The view can hide during the wait; do not start another native read.
+          if (document.hidden || !canRequestSponsors()) break;
+          result = await readSponsorConsent(current.signal);
+        }
       } catch {
         if (view === current) stop();
         return;

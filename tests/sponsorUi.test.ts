@@ -406,6 +406,39 @@ test("fast replies display the same compact ad when its pending request finishes
   expect(loadSponsor).toHaveBeenCalledOnce();
 });
 
+test("an ad that finishes after the chat tab loses focus appears when it returns", async () => {
+  setSponsorConsent("allowed");
+  let active = true;
+  const isTabActive = () => active;
+  let fill!: (value: Sponsor) => void;
+  vi.mocked(loadSponsor).mockReturnValueOnce(
+    new Promise((resolve) => {
+      fill = resolve;
+    }),
+  );
+  const switches = new EventTarget();
+  vi.stubGlobal("editorManager", {
+    on: switches.addEventListener.bind(switches),
+    off: switches.removeEventListener.bind(switches),
+  });
+  const switchTab = (value: boolean) =>
+    act(() => {
+      active = value;
+      switches.dispatchEvent(new Event("switch-file"));
+    });
+  await act(async () =>
+    render(h(Chat, { id: "live", running: true, covered: false, isTabActive }), root),
+  );
+  await vi.waitFor(() => expect(loadSponsor).toHaveBeenCalledOnce());
+  switchTab(false);
+  expect(root.querySelector(".agent-dock > .sponsor")).toBeNull();
+  await act(async () => fill(sponsor));
+  expect(root.querySelector(".agent-dock > .sponsor")).toBeNull();
+  switchTab(true);
+  await vi.waitFor(() => expect(root.querySelector(".agent-dock .sponsor a")).toBeTruthy());
+  expect(budget.card("chat")?.sponsor).toBe(sponsor);
+});
+
 test("the composer reports draft presence for text and attachment-only drafts", async () => {
   const { Composer } = await import("../src/ui/Composer");
   const ref = createRef<import("../src/ui/Composer").ComposerHandle>();
@@ -907,6 +940,76 @@ test("SDK dwell requires a continuous visible second and stops on pause or withd
   expect(sdk.trackImpression).toHaveBeenCalledOnce();
 });
 
+test("an unavailable consent read at mount retries and still renders the ad", async () => {
+  setSponsorConsent("allowed");
+  vi.useFakeTimers();
+  const getState = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Bridge busy"))
+    .mockResolvedValue({ canRequestAds: true, consentStatus: "notRequired" });
+  vi.stubGlobal("admob", { privacy: { getState } });
+  act(() =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: { turnId: "retry", chatId: "chat", sponsor },
+      }),
+      root,
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(sdk.trackRender).not.toHaveBeenCalled();
+  expect(root.querySelector(".sponsor a")).toBeNull();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(sdk.trackRender).toHaveBeenCalledOnce();
+  expect(root.querySelector(".sponsor a")).toBeTruthy();
+});
+
+test("a consent timeout at mount is not retried", async () => {
+  setSponsorConsent("allowed");
+  vi.useFakeTimers();
+  const read = vi
+    .spyOn(nativeConsent, "readSponsorConsent")
+    .mockResolvedValueOnce({ status: "unavailable", reason: "timeout" } as never);
+  act(() =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: { turnId: "timeout", chatId: "chat", sponsor },
+      }),
+      root,
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(read).toHaveBeenCalledOnce();
+  expect(sdk.trackRender).not.toHaveBeenCalled();
+  expect(root.querySelector(".sponsor a")).toBeNull();
+});
+
+test("declining consent during a retry wait stops it without another read", async () => {
+  setSponsorConsent("allowed");
+  vi.useFakeTimers();
+  const read = vi
+    .spyOn(nativeConsent, "readSponsorConsent")
+    .mockResolvedValueOnce({ status: "unavailable", reason: "bridge" } as never);
+  act(() =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: { turnId: "decline", chatId: "chat", sponsor },
+      }),
+      root,
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  act(() => setSponsorConsent("declined"));
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(read).toHaveBeenCalledOnce();
+  expect(sdk.trackRender).not.toHaveBeenCalled();
+  expect(root.querySelector(".sponsor a")).toBeNull();
+});
+
 test("a failed SDK mount removes the ad without throwing into the chat", async () => {
   setSponsorConsent("allowed");
   vi.stubGlobal(
@@ -1291,7 +1394,8 @@ test("the mounted SDK view recovers from an unavailable bridge and cancels a pen
   });
   await expect(result!.sdk.trackImpression(result!.ad)).resolves.toBe(false);
   window.dispatchEvent(new Event("focus"));
-  await vi.waitFor(() => expect(root.querySelector("a")).toBeNull());
+  // The mount path retries an unavailable read twice before hiding the card.
+  await vi.waitFor(() => expect(root.querySelector("a")).toBeNull(), { timeout: 3000 });
   expect(clear).not.toHaveBeenCalled();
   expect(localStorage.getItem("elo_visitor_id")).toBe(visitor);
   vi.stubGlobal("admob", { privacy: { getState } });

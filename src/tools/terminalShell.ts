@@ -81,10 +81,13 @@ export function createTerminalShell(rootUri: string): (Shell & { root: string })
   };
 }
 
-/** Map an Acode Terminal workspace URI to the matching path inside Alpine. */
+/** Map an Acode terminal workspace URI to the matching path inside Alpine. */
 export function resolveTerminalWorkingDirectory(rootUri: string): string | undefined {
   const value = String(rootUri ?? "").split(/[?#]/, 1)[0] ?? "";
   if (!value) return undefined;
+  // iOS Terminal exposes Alpine folders as alpine://localhost/<guest path>.
+  if (/^alpine:\/\/localhost(?:\/|$)/i.test(value))
+    return guestTerminalPath(value.slice("alpine://localhost".length));
   if (/^content:\/\/com\.foxdebug\.acode(?:free)?\.documents\/tree\//i.test(value)) {
     return terminalPublicSafPath(value);
   }
@@ -98,10 +101,22 @@ function terminalCwd(root: string, cwd: string | undefined): string | undefined 
   return relative ? joinTerminalPath(root, relative) : root;
 }
 
-function terminalPublicSafPath(uri: string): string | undefined {
+function guestTerminalPath(path: string): string | undefined {
+  const decoded = decodeSafe(path);
+  if (decoded.split("/").some((part) => part === "..")) return undefined;
+  return normalizeTerminalPath(decoded);
+}
+
+function safDocumentId(uri: string): string | undefined {
   const separator = uri.indexOf("::");
   const raw = separator >= 0 ? uri.slice(separator + 2) : uri.slice(uri.lastIndexOf("/") + 1);
   const docId = decodeSafe(raw).replace(/\/+$/, "");
+  return docId || undefined;
+}
+
+function terminalPublicSafPath(uri: string): string | undefined {
+  const docId = safDocumentId(uri);
+  if (!docId) return undefined;
   const publicMarker = "/files/public";
   const markerIndex = docId.indexOf(publicMarker);
   if (markerIndex >= 0)
@@ -117,18 +132,32 @@ function terminalFilePath(path: string): string | undefined {
   const normalized = path.replace(/\/+$/, "") || "/";
   const filesMarker = "/files/";
   const markerIndex = normalized.lastIndexOf(filesMarker);
-  if (markerIndex < 0) return undefined;
-  const packagePath = normalized.slice(0, markerIndex);
-  if (!/\/data\/(?:user\/0|data)\/com\.foxdebug\.acode(?:free)?$/i.test(packagePath))
-    return undefined;
-  const withinFiles = normalized.slice(markerIndex + filesMarker.length);
-  if (withinFiles === "public" || withinFiles.startsWith("public/")) {
-    return joinTerminalPath("/public", withinFiles.slice("public".length));
+  if (markerIndex >= 0) {
+    const packagePath = normalized.slice(0, markerIndex);
+    if (/\/data\/(?:user\/0|data)\/com\.foxdebug\.acode(?:free)?$/i.test(packagePath)) {
+      const withinFiles = normalized.slice(markerIndex + filesMarker.length);
+      if (withinFiles === "public" || withinFiles.startsWith("public/")) {
+        return joinTerminalPath("/public", withinFiles.slice("public".length));
+      }
+      if (withinFiles === "alpine" || withinFiles.startsWith("alpine/")) {
+        return joinTerminalPath("/", withinFiles.slice("alpine".length));
+      }
+      return undefined;
+    }
   }
-  if (withinFiles === "alpine" || withinFiles.startsWith("alpine/")) {
-    return joinTerminalPath("/", withinFiles.slice("alpine".length));
-  }
-  return undefined;
+  return terminalDevicePath(normalized);
+}
+
+/**
+ * A shared-storage path the proot exposes at the same location. `/storage` and
+ * `/sdcard` are bind mounts. Other apps' private data under `/data` is not
+ * readable with Acode's UID, so it stays unavailable even though `/data` is
+ * mounted.
+ */
+function terminalDevicePath(path: string): string | undefined {
+  if (!/^\/(?:storage|sdcard)(?:\/|$)/.test(path)) return undefined;
+  if (path.split("/").some((part) => part === "..")) return undefined;
+  return normalizeTerminalPath(path);
 }
 
 function fileUriPath(uri: string): string {
