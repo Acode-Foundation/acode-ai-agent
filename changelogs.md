@@ -1,3 +1,8 @@
+# 0.6.1
+
+- Fixed: a sponsored card Elo already served no longer disappears when the chat loses focus, the composer gets a draft, or a panel opens; it appears when the chat is visible again. A transient consent read now retries instead of hiding the card.
+- Fixed: the agent runs commands in shared-storage and iOS Alpine folders instead of trying to type them into the terminal. Folders without shell access now say so instead of opening the terminal.
+
 # 0.6.0
 
 - Added: opt-in sponsored suggestions for free Acode users, powered by Elo. Ads appear only with device consent, and ad requests carry only broad topics classified on the device, never your messages, code or files.
