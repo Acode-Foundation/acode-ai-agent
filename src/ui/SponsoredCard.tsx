@@ -15,9 +15,9 @@ import type { SponsorPlacement, SponsorBudget } from "../suggestions/session";
 import { openCustomTab } from "../platform/authTab";
 import { showToast } from "../platform/toast";
 
-// A native read that did not complete is not a refusal. Retry a bridge or
-// malformed read while the card is up; a deadline timeout will usually repeat,
-// so hide the card instead of spending another native round trip on it.
+// Retry bridge or malformed reads before mounting the SDK view. An existing
+// view must stop immediately when consent cannot be verified. Deadline timeouts
+// are not retried because another native round trip will usually time out too.
 const CONSENT_RETRIES = 2;
 const CONSENT_RETRY_MS = 500;
 
@@ -103,7 +103,11 @@ export function SponsoredCard({
       let result: Awaited<ReturnType<typeof readSponsorConsent>>;
       try {
         result = await readSponsorConsent(current.signal);
-        for (let attempt = 0; attempt < CONSENT_RETRIES && retriableConsent(result); attempt++) {
+        for (
+          let attempt = 0;
+          !unmount && attempt < CONSENT_RETRIES && retriableConsent(result);
+          attempt++
+        ) {
           if (document.hidden || !(await waitForRetry(CONSENT_RETRY_MS, current.signal))) break;
           // The view can hide during the wait; do not start another native read.
           if (document.hidden || !canRequestSponsors()) break;
