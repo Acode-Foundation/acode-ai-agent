@@ -84,6 +84,7 @@ test("requests on the first eligible wait, never from restored history or answer
   expect(f.load).toHaveBeenCalledExactlyOnceWith(
     ["Cloud hosting and deployment"],
     expect.any(AbortSignal),
+    expect.any(Function),
   );
   expect(f.budget.card("chat")?.sponsor).toBe(sponsor);
   f.start("first", { answer: "Starting answer" });
@@ -265,7 +266,7 @@ test("consenting during a wait allows the first ad immediately", async () => {
   expect(denied.load).not.toHaveBeenCalled();
 });
 
-test.each(["chat", "consent", "pro", "dispose", "hidden"])(
+test.each(["chat", "consent", "pro", "dispose"])(
   "ignores pending ad after %s changes",
   async (change) => {
     const f = fixture();
@@ -280,7 +281,6 @@ test.each(["chat", "consent", "pro", "dispose", "hidden"])(
     if (change === "consent") f.consent("declined");
     if (change === "pro") f.eligible(false);
     if (change === "dispose") f.session.dispose();
-    if (change === "hidden") f.visible(false);
     f.session.refresh();
     expect(f.load.mock.calls[0][1].aborted).toBe(true);
     resolve(sponsor);
@@ -288,6 +288,50 @@ test.each(["chat", "consent", "pro", "dispose", "hidden"])(
     expect(f.budget.card("chat")).toBeUndefined();
   },
 );
+
+test("keeps an ad that arrives after the view hides so it can render on return", async () => {
+  const f = fixture();
+  let resolve!: (value: Sponsor) => void;
+  f.load.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  );
+  f.start("1");
+  f.visible(false);
+  f.session.refresh();
+  // A request already sent is not retracted: the response is cached, not dropped.
+  expect(f.load.mock.calls[0][1].aborted).toBe(false);
+  resolve(sponsor);
+  await vi.waitFor(() => expect(f.budget.card("chat")?.sponsor).toBe(sponsor));
+});
+
+test("a turn can try again when its request ended without leaving the device", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  let finish!: (value: null) => void;
+  f.load.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  f.start("1");
+  f.visible(false);
+  f.session.refresh();
+  finish(null);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.load).toHaveBeenCalledOnce();
+  f.visible(true);
+  f.session.refresh();
+  // The shared request backoff still applies before the same turn retries.
+  await vi.advanceTimersByTimeAsync(29_999);
+  expect(f.load).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.load).toHaveBeenCalledTimes(2);
+  f.session.dispose();
+});
 
 test("cached ads expire after five minutes, including during a single long wait", async () => {
   vi.useFakeTimers();
@@ -347,6 +391,7 @@ test("chat history supplies only bounded fixed topics, with current prompts taki
   expect(f.load).toHaveBeenCalledExactlyOnceWith(
     ["Databases and data storage"],
     expect.any(AbortSignal),
+    expect.any(Function),
   );
 });
 
@@ -384,7 +429,7 @@ test("explicit dismissal suppresses ads for five minutes across chats even befor
   expect(b.load).toHaveBeenCalledOnce();
 });
 
-test("backgrounding during a streaming answer cancels the still-pending waiting request", async () => {
+test("an ad finishing after backgrounding is kept for the next visible render", async () => {
   const f = fixture();
   let resolve!: (value: Sponsor) => void;
   f.load.mockImplementationOnce(
@@ -398,10 +443,9 @@ test("backgrounding during a streaming answer cancels the still-pending waiting 
   expect(f.load.mock.calls[0][1].aborted).toBe(false);
   f.visible(false);
   f.session.refresh();
-  expect(f.load.mock.calls[0][1].aborted).toBe(true);
+  expect(f.load.mock.calls[0][1].aborted).toBe(false);
   resolve(sponsor);
-  await Promise.resolve();
-  expect(f.budget.card("chat")).toBeUndefined();
+  await vi.waitFor(() => expect(f.budget.card("chat")?.sponsor).toBe(sponsor));
 });
 
 test("an in-flight response cannot undo a dismissal from another chat", async () => {

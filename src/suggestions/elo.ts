@@ -183,6 +183,7 @@ export async function loadSponsor(
   signal: AbortSignal,
   dimensions: { maxHeight: number; maxWidth: number },
   visible: () => boolean = () => !document.hidden,
+  onRequest?: () => void,
 ): Promise<Sponsor | null> {
   try {
     const eligible = () => !signal.aborted && !document.hidden && visible() && canRequestSponsors();
@@ -203,13 +204,19 @@ export async function loadSponsor(
     }
     if (!stillEligible()) return null;
     const sdk = current.sdk;
+    // No-fill, invalid responses and SDK failures still consume this turn's attempt.
+    onRequest?.();
     const { ad } = await sdk.fetchAds({
       ...dimensions,
       signal,
       messages: [{ role: "summary", content: topics[0] }],
       context: topics.map((description) => ({ type: "topic", description })),
     });
-    if (!ad?.title || !safeAdUrl(ad.click_url) || !stillEligible()) return null;
+    // A sent request is not retracted. Keep the response for its chat even if
+    // the view hid mid-flight, so the card can render when it returns; the
+    // native consent is checked again before the card mounts.
+    const stillCurrent = () => session === current && !signal.aborted && canRequestSponsors();
+    if (!ad?.title || !safeAdUrl(ad.click_url) || !stillCurrent()) return null;
     const trackingUrl = (url: string) =>
       safeAdUrl(url?.startsWith("/") ? `${eloOrigin}${url}` : url);
     if (

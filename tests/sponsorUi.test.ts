@@ -45,7 +45,7 @@ const ad = {
   presentation: { format: "strip", tap_surface: "cta", cta_enabled: false },
 };
 const sdk = {
-  attachView: () => true,
+  attachView: (_ad: unknown, _signal: AbortSignal) => true,
   canTrack: async () => true,
   trackTap: vi.fn(async () => true),
   trackImpression: vi.fn(async () => true),
@@ -67,7 +67,7 @@ beforeEach(() => {
   setSponsorConsent("declined"); // Drop the shared SDK session between integration tests.
   localStorage.clear();
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as DOMRectList);
+  vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(220);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
     width: 320,
@@ -234,6 +234,7 @@ test("offers consent during the first wait and docks the suggestion above the in
     expect.any(AbortSignal),
     { maxHeight: 72, maxWidth: 320 },
     expect.any(Function),
+    expect.any(Function),
   );
   await act(async () => {
     fill(sponsor);
@@ -348,6 +349,7 @@ test("reuses one cached ad across waits until the user dismisses it", async () =
     expect.any(AbortSignal),
     { maxHeight: 72, maxWidth: 320 },
     expect.any(Function),
+    expect.any(Function),
   );
   expect(root.querySelector(".sponsor-thumbnail")).toBeTruthy();
   await draw("first", false);
@@ -404,6 +406,39 @@ test("fast replies display the same compact ad when its pending request finishes
   });
   expect(root.querySelector(".sponsor")).toBeNull();
   expect(loadSponsor).toHaveBeenCalledOnce();
+});
+
+test("an ad that finishes after the chat tab loses focus appears when it returns", async () => {
+  setSponsorConsent("allowed");
+  let active = true;
+  const isTabActive = () => active;
+  let fill!: (value: Sponsor) => void;
+  vi.mocked(loadSponsor).mockReturnValueOnce(
+    new Promise((resolve) => {
+      fill = resolve;
+    }),
+  );
+  const switches = new EventTarget();
+  vi.stubGlobal("editorManager", {
+    on: switches.addEventListener.bind(switches),
+    off: switches.removeEventListener.bind(switches),
+  });
+  const switchTab = (value: boolean) =>
+    act(() => {
+      active = value;
+      switches.dispatchEvent(new Event("switch-file"));
+    });
+  await act(async () =>
+    render(h(Chat, { id: "live", running: true, covered: false, isTabActive }), root),
+  );
+  await vi.waitFor(() => expect(loadSponsor).toHaveBeenCalledOnce());
+  switchTab(false);
+  expect(root.querySelector(".agent-dock > .sponsor")).toBeNull();
+  await act(async () => fill(sponsor));
+  expect(root.querySelector(".agent-dock > .sponsor")).toBeNull();
+  switchTab(true);
+  await vi.waitFor(() => expect(root.querySelector(".agent-dock .sponsor a")).toBeTruthy());
+  expect(budget.card("chat")?.sponsor).toBe(sponsor);
 });
 
 test("the composer reports draft presence for text and attachment-only drafts", async () => {
@@ -732,7 +767,9 @@ test("device consent gates opt-in, and a prior opt-in can always be withdrawn", 
   expect(getState).toHaveBeenCalled();
   expect(root.querySelector(".sponsor-consent, .sponsor-settings")).toBeNull();
   consentStatus = "NOT_REQUIRED";
-  await act(async () => document.dispatchEvent(new Event("resume")));
+  await act(async () => {
+    document.dispatchEvent(new Event("resume"));
+  });
   await vi.waitFor(() => expect(root.querySelector(".sponsor-settings input")).toBeTruthy());
   act(() => setSponsorConsent("allowed"));
   vi.stubGlobal("admob", undefined);
@@ -907,6 +944,116 @@ test("SDK dwell requires a continuous visible second and stops on pause or withd
   expect(sdk.trackImpression).toHaveBeenCalledOnce();
 });
 
+test("an unavailable consent read at mount retries and still renders the ad", async () => {
+  setSponsorConsent("allowed");
+  vi.useFakeTimers();
+  const getState = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Bridge busy"))
+    .mockResolvedValue({ canRequestAds: true, consentStatus: "notRequired" });
+  vi.stubGlobal("admob", { privacy: { getState } });
+  act(() =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: { turnId: "retry", chatId: "chat", sponsor },
+      }),
+      root,
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(sdk.trackRender).not.toHaveBeenCalled();
+  expect(root.querySelector(".sponsor a")).toBeNull();
+  await vi.advanceTimersByTimeAsync(500);
+  expect(sdk.trackRender).toHaveBeenCalledOnce();
+  expect(root.querySelector(".sponsor a")).toBeTruthy();
+});
+
+test("a consent timeout at mount is not retried", async () => {
+  setSponsorConsent("allowed");
+  vi.useFakeTimers();
+  const read = vi
+    .spyOn(nativeConsent, "readSponsorConsent")
+    .mockResolvedValueOnce({ status: "unavailable", reason: "timeout" } as never);
+  act(() =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: { turnId: "timeout", chatId: "chat", sponsor },
+      }),
+      root,
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(read).toHaveBeenCalledOnce();
+  expect(sdk.trackRender).not.toHaveBeenCalled();
+  expect(root.querySelector(".sponsor a")).toBeNull();
+});
+
+test.each([
+  ["focus", "bridge"],
+  ["focus", "invalid"],
+  ["resume", "bridge"],
+  ["resume", "invalid"],
+] as const)("a mounted card stops immediately on %s when consent is %s", async (event, reason) => {
+  setSponsorConsent("allowed");
+  vi.useFakeTimers();
+  const read = vi.spyOn(nativeConsent, "readSponsorConsent");
+  const dismiss = vi.spyOn(budget, "dismiss");
+  act(() =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: { turnId: "recheck", chatId: "chat", sponsor },
+      }),
+      root,
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  const frame = root.querySelector<HTMLElement>(".sponsor")!;
+  expect(frame.hidden).toBe(false);
+  expect(sdk.trackRender).toHaveBeenCalledOnce();
+
+  read.mockClear().mockResolvedValueOnce({ status: "unavailable", reason });
+  (event === "focus" ? window : document).dispatchEvent(new Event(event));
+  await vi.advanceTimersByTimeAsync(32);
+  expect(frame.hidden).toBe(true);
+  expect(root.querySelector(".sponsor a")).toBeNull();
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(read).toHaveBeenCalledOnce();
+  expect(dismiss).not.toHaveBeenCalled();
+
+  document.dispatchEvent(new Event("resume"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(frame.hidden).toBe(false);
+  expect(root.querySelector(".sponsor a")).toBeTruthy();
+  expect(sdk.trackRender).toHaveBeenCalledTimes(2);
+});
+
+test("declining consent during a retry wait stops it without another read", async () => {
+  setSponsorConsent("allowed");
+  vi.useFakeTimers();
+  const read = vi
+    .spyOn(nativeConsent, "readSponsorConsent")
+    .mockResolvedValueOnce({ status: "unavailable", reason: "bridge" } as never);
+  act(() =>
+    render(
+      h(SponsoredCard, {
+        budget,
+        placement: { turnId: "decline", chatId: "chat", sponsor },
+      }),
+      root,
+    ),
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledOnce();
+  act(() => setSponsorConsent("declined"));
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(read).toHaveBeenCalledOnce();
+  expect(sdk.trackRender).not.toHaveBeenCalled();
+  expect(root.querySelector(".sponsor a")).toBeNull();
+});
+
 test("a failed SDK mount removes the ad without throwing into the chat", async () => {
   setSponsorConsent("allowed");
   vi.stubGlobal(
@@ -932,7 +1079,7 @@ test("a failed SDK mount removes the ad without throwing into the chat", async (
 });
 
 test("declining suggestions persists the preference and removes advertising identifiers", async () => {
-  act(() => render(h(SponsorOptIn, {}), root));
+  act(() => render(h(SponsorOptIn, { cardRef: createRef<HTMLElement>() }), root));
   localStorage.setItem("elo_visitor_id", "test-id");
   Cookies.set("_elo_state", "test-id", { path: "" });
   await vi.waitFor(() => expect(root.querySelector(".sponsor-allow")).toBeTruthy());
@@ -1291,6 +1438,7 @@ test("the mounted SDK view recovers from an unavailable bridge and cancels a pen
   });
   await expect(result!.sdk.trackImpression(result!.ad)).resolves.toBe(false);
   window.dispatchEvent(new Event("focus"));
+  // An already-mounted view stops as soon as the consent read is unavailable.
   await vi.waitFor(() => expect(root.querySelector("a")).toBeNull());
   expect(clear).not.toHaveBeenCalled();
   expect(localStorage.getItem("elo_visitor_id")).toBe(visitor);
@@ -1519,6 +1667,7 @@ test("a waiting request classifies the latest history even when its turn ID is u
     ["Cloud hosting and deployment", "Mobile app development"],
     expect.any(AbortSignal),
     { maxHeight: 72, maxWidth: 320 },
+    expect.any(Function),
     expect.any(Function),
   );
 });

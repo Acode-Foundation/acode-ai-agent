@@ -870,6 +870,7 @@ export class AgentSession {
           extensions: this.#extensions,
           skills: () => this.#resources.skills,
           deferredTools: () => this.#deferredTools,
+          shell: Boolean(this.#env.shell),
         }),
         hooks: [
           hook(ToolTask, {

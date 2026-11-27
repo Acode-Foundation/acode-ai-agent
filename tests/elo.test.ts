@@ -299,15 +299,72 @@ test("backgrounding during initialization cancels the opportunity", async () => 
   expect(sdk.fetchAds).not.toHaveBeenCalled();
 });
 
+test.each(["no fill", "network error", "invalid creative"])(
+  "does not retry a sent request that finishes hidden with %s",
+  async (outcome) => {
+    const { loadSponsor } = await import("../src/suggestions/elo");
+    let visible = true;
+    let now = 0;
+    let finish!: () => void;
+    sdk.fetchAds.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          finish = () => {
+            if (outcome === "network error") reject(new Error("Offline"));
+            else
+              resolve({
+                ad:
+                  outcome === "invalid creative"
+                    ? { title: "Unsafe", click_url: "javascript:alert(1)" }
+                    : null,
+              });
+          };
+        }),
+    );
+    let pending!: ReturnType<typeof loadSponsor>;
+    const load = vi.fn(
+      (topics: string[], signal: AbortSignal, onRequest: () => void) =>
+        (pending = loadSponsor(topics, signal, dimensions, () => visible, onRequest)),
+    );
+    const session = new SponsorSession({
+      budget: new SponsorBudget(() => now),
+      consent: () => "allowed",
+      eligible: () => true,
+      visible: () => visible,
+      load,
+    });
+    try {
+      session.update("chat", true, { id: "1", user: "SQL", streaming: true });
+      await vi.waitFor(() => expect(sdk.fetchAds).toHaveBeenCalledOnce());
+      visible = false;
+      session.refresh();
+      finish();
+      expect(await pending).toBeNull();
+      now = 30_001;
+      visible = true;
+      session.refresh();
+      expect(load).toHaveBeenCalledOnce();
+      expect(sdk.fetchAds).toHaveBeenCalledOnce();
+      // A different waiting turn can still use the released request slot.
+      session.update("chat", true, { id: "2", user: "SQL", streaming: true });
+      await vi.waitFor(() => expect(sdk.fetchAds).toHaveBeenCalledTimes(2));
+    } finally {
+      session.dispose();
+    }
+  },
+);
+
 test.each(["covered", "inactive before switch notification"])(
   "a pending consent read cannot send an ad request when %s",
   async (reason) => {
     const { loadSponsor } = await import("../src/suggestions/elo");
     let visible = true;
+    let now = 0;
     let finish!: (state: { consentStatus: string; canRequestAds: boolean }) => void;
     const state = { consentStatus: "notRequired", canRequestAds: true };
     const getState = vi
       .fn()
+      .mockResolvedValue(state)
       .mockResolvedValueOnce(state)
       .mockImplementationOnce(
         () =>
@@ -319,13 +376,13 @@ test.each(["covered", "inactive before switch notification"])(
     let signal!: AbortSignal;
     let pending!: ReturnType<typeof loadSponsor>;
     const session = new SponsorSession({
-      budget: new SponsorBudget(),
+      budget: new SponsorBudget(() => now),
       consent: () => "allowed",
       eligible: () => true,
       visible: () => visible,
-      load: (topics, request) => {
+      load: (topics, request, onRequest) => {
         signal = request;
-        return (pending = loadSponsor(topics, request, dimensions, () => visible));
+        return (pending = loadSponsor(topics, request, dimensions, () => visible, onRequest));
       },
     });
     session.update("chat", true, { id: "1", user: "SQL", streaming: true });
@@ -333,12 +390,22 @@ test.each(["covered", "inactive before switch notification"])(
     visible = false;
     if (reason === "covered") {
       session.refresh();
-      expect(signal.aborted).toBe(true);
-      visible = true;
+      // Hiding the view keeps the read pending but still stops the request before
+      // fetchAds, so a covered tab never sends one.
+      expect(signal.aborted).toBe(false);
     }
     finish(state);
     expect(await pending).toBeNull();
     expect(sdk.fetchAds).not.toHaveBeenCalled();
+    // An unsent attempt remains eligible once visible and past the shared backoff.
+    now = 30_001;
+    visible = true;
+    session.refresh();
+    try {
+      await vi.waitFor(() => expect(sdk.fetchAds).toHaveBeenCalledOnce());
+    } finally {
+      session.dispose();
+    }
   },
 );
 

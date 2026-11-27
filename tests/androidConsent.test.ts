@@ -77,7 +77,7 @@ test.each([
   "<map/>",
 ])("blocks incomplete or malformed signals %s", async (xml) => {
   readFile.mockResolvedValue(xml);
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
 });
 
 test("non-EEA state forwards available GPP without inventing a TC string", async () => {
@@ -138,12 +138,12 @@ test("the three-second deadline covers the file read; cancellation drops late re
   );
   const request = read();
   await vi.advanceTimersByTimeAsync(3000);
-  expect(await request).toEqual({ status: "unavailable" });
+  expect(await request).toMatchObject({ status: "unavailable", reason: "timeout" });
   finish(accepted);
   const abort = new AbortController();
   const next = readSponsorConsent(abort.signal);
   abort.abort();
-  expect(await next).toEqual({ status: "unavailable" });
+  expect(await next).toMatchObject({ status: "unavailable", reason: "aborted" });
 });
 
 test.each([
@@ -204,7 +204,7 @@ test("aborting during file I/O settles promptly and does not start a second read
   const result = readSponsorConsent(controller.signal);
   await pending;
   controller.abort();
-  expect(await result).toEqual({ status: "unavailable" });
+  expect(await result).toMatchObject({ status: "unavailable", reason: "aborted" });
   finish(accepted);
   await Promise.resolve();
   await Promise.resolve();
@@ -217,12 +217,12 @@ test("GPP without explicit GDPR applicability remains unavailable", async () => 
   readFile.mockResolvedValue(
     '<map><string name="IABGPP_HDR_GppString">GPP</string><string name="IABGPP_GppSID">7</string></map>',
   );
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
 });
 
 test.each(["", "1x"])("rejects an invalid purpose bit string %s", async (purposes) => {
   readFile.mockResolvedValue(accepted.replace("110000100000000000000000", purposes));
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
 });
 
 test.each(["7-8", "0"])("rejects malformed GPP sections %s", async (sections) => {
@@ -232,7 +232,7 @@ test.each(["7-8", "0"])("rejects malformed GPP sections %s", async (sections) =>
       `<string name="IABGPP_HDR_GppString">GPP</string><string name="IABGPP_GppSID">${sections}</string></map>`,
     ),
   );
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
 });
 
 test("unrelated preference changes do not invalidate unchanged IAB values", async () => {
@@ -258,7 +258,7 @@ test("a native GPP snapshot must include both the string and section IDs", async
     canRequestAds: true,
     iabSignals: { IABTCF_gdprApplies: "0", IABGPP_HDR_GppString: "GPP" },
   });
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
   expect(readFile).not.toHaveBeenCalled();
 });
 
@@ -334,7 +334,7 @@ test("a host snapshot with purpose bits must allow basic ads", async () => {
 test("missing LI bits pause ads without clearing the identity when Purposes 2/7 lack consent", async () => {
   localStorage.setItem("elo_visitor_id", "old-identity");
   readFile.mockResolvedValue(accepted.replace("110000100000000000000000", "1000000"));
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
   expect(localStorage.getItem("elo_visitor_id")).toBe("old-identity");
 });
 
@@ -347,18 +347,18 @@ test("host snapshot purpose bits must be strings and LI gaps pause instead of de
   localStorage.setItem("elo_visitor_id", "old-identity");
   // 0110001 as a number would lose its leading zero and shift every purpose.
   getState.mockResolvedValue(snapshot({ IABTCF_PurposeConsents: 110001 }));
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
   getState.mockResolvedValue(
     snapshot({ IABTCF_PurposeConsents: "1100001", IABTCF_PurposeLegitimateInterests: 1 }),
   );
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
   // Purposes present, LI absent or empty: Purpose 2/7 gaps pause ads and keep the identifier.
   getState.mockResolvedValue(snapshot({ IABTCF_PurposeConsents: "1000000" }));
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
   getState.mockResolvedValue(
     snapshot({ IABTCF_PurposeConsents: "1000000", IABTCF_PurposeLegitimateInterests: " " }),
   );
-  expect(await read()).toEqual({ status: "unavailable" });
+  expect(await read()).toMatchObject({ status: "unavailable" });
   expect(localStorage.getItem("elo_visitor_id")).toBe("old-identity");
   // Untrimmed host values are accepted once trimmed.
   getState.mockResolvedValue(snapshot({ IABTCF_PurposeConsents: " 1100001 " }));
