@@ -234,6 +234,7 @@ test("offers consent during the first wait and docks the suggestion above the in
     expect.any(AbortSignal),
     { maxHeight: 72, maxWidth: 320 },
     expect.any(Function),
+    expect.any(Function),
   );
   await act(async () => {
     fill(sponsor);
@@ -347,6 +348,7 @@ test("reuses one cached ad across waits until the user dismisses it", async () =
     ["Cloud hosting and deployment", "Databases and data storage"],
     expect.any(AbortSignal),
     { maxHeight: 72, maxWidth: 320 },
+    expect.any(Function),
     expect.any(Function),
   );
   expect(root.querySelector(".sponsor-thumbnail")).toBeTruthy();
@@ -1623,6 +1625,7 @@ test("a waiting request classifies the latest history even when its turn ID is u
     ["Cloud hosting and deployment", "Mobile app development"],
     expect.any(AbortSignal),
     { maxHeight: 72, maxWidth: 320 },
+    expect.any(Function),
     expect.any(Function),
   );
 });

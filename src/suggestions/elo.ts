@@ -183,6 +183,7 @@ export async function loadSponsor(
   signal: AbortSignal,
   dimensions: { maxHeight: number; maxWidth: number },
   visible: () => boolean = () => !document.hidden,
+  onRequest?: () => void,
 ): Promise<Sponsor | null> {
   try {
     const eligible = () => !signal.aborted && !document.hidden && visible() && canRequestSponsors();
@@ -203,6 +204,8 @@ export async function loadSponsor(
     }
     if (!stillEligible()) return null;
     const sdk = current.sdk;
+    // No-fill, invalid responses and SDK failures still consume this turn's attempt.
+    onRequest?.();
     const { ad } = await sdk.fetchAds({
       ...dimensions,
       signal,

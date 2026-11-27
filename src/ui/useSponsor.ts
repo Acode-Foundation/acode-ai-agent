@@ -68,7 +68,7 @@ export function useSponsor(
       consent: sponsorConsent,
       eligible: () => sponsorsConfigured() && isFreeAcode(),
       visible,
-      load: (topics, signal) => {
+      load: (topics, signal, onRequest) => {
         const conversation = host.current.root.current;
         const slot = conversation?.parentElement?.querySelector<HTMLElement>(".composer-dock");
         if (!conversation || !slot) return Promise.resolve(null);
@@ -76,7 +76,7 @@ export function useSponsor(
         const maxHeight = Math.floor(conversation.clientHeight);
         const maxWidth = Math.floor(slot.getBoundingClientRect().width);
         if (maxHeight < 72 || maxWidth <= 0) return Promise.resolve(null);
-        return loadSponsor(topics, signal, { maxHeight: 72, maxWidth }, visible);
+        return loadSponsor(topics, signal, { maxHeight: 72, maxWidth }, visible, onRequest);
       },
     });
   });

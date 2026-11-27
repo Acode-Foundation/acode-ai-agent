@@ -20,7 +20,7 @@ type Dependencies = {
   eligible(): boolean;
   visible(): boolean;
   consent(): SponsorConsent;
-  load(context: string[], signal: AbortSignal): Promise<Sponsor | null>;
+  load(context: string[], signal: AbortSignal, onRequest: () => void): Promise<Sponsor | null>;
   budget: SponsorBudget;
 };
 type SponsorHistory = readonly string[] | (() => readonly string[]);
@@ -266,8 +266,11 @@ export class SponsorSession {
   async #load(chatId: string, turnId: string, topics: string[]) {
     const controller = new AbortController();
     this.#request = { turnId, controller };
+    let requested = false;
     try {
-      const sponsor = await this.deps.load(topics, controller.signal);
+      const sponsor = await this.deps.load(topics, controller.signal, () => {
+        requested = true;
+      });
       if (
         sponsor &&
         !controller.signal.aborted &&
@@ -278,7 +281,7 @@ export class SponsorSession {
         this.deps.consent() === "allowed"
       ) {
         this.deps.budget.add({ chatId, turnId, sponsor });
-      } else if (!sponsor && !this.deps.visible()) {
+      } else if (!sponsor && !requested && !controller.signal.aborted && !this.deps.visible()) {
         // The view hid before fetchAds could run, so this turn never spent a
         // request. Let it try again when the view returns instead of treating it
         // as a filled, already-requested turn.

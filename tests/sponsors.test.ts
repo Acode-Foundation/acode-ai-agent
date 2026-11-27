@@ -84,6 +84,7 @@ test("requests on the first eligible wait, never from restored history or answer
   expect(f.load).toHaveBeenCalledExactlyOnceWith(
     ["Cloud hosting and deployment"],
     expect.any(AbortSignal),
+    expect.any(Function),
   );
   expect(f.budget.card("chat")?.sponsor).toBe(sponsor);
   f.start("first", { answer: "Starting answer" });
@@ -390,6 +391,7 @@ test("chat history supplies only bounded fixed topics, with current prompts taki
   expect(f.load).toHaveBeenCalledExactlyOnceWith(
     ["Databases and data storage"],
     expect.any(AbortSignal),
+    expect.any(Function),
   );
 });
 
